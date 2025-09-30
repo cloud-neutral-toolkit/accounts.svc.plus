@@ -44,6 +44,12 @@ func RegisterRoutes(r *gin.Engine) {
 	v1.POST("/login", h.login)
 	v1.GET("/session", h.session)
 	v1.DELETE("/session", h.deleteSession)
+
+	auth := r.Group("/api/auth")
+	auth.POST("/register", h.register)
+	auth.POST("/login", h.login)
+	auth.GET("/session", h.session)
+	auth.DELETE("/session", h.deleteSession)
 }
 
 type registerRequest struct {
