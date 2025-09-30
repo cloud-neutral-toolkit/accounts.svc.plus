@@ -39,12 +39,6 @@ func RegisterRoutes(r *gin.Engine) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	v1 := r.Group("/v1")
-	v1.POST("/register", h.register)
-	v1.POST("/login", h.login)
-	v1.GET("/session", h.session)
-	v1.DELETE("/session", h.deleteSession)
-
 	auth := r.Group("/api/auth")
 	auth.POST("/register", h.register)
 	auth.POST("/login", h.login)
@@ -61,7 +55,7 @@ type registerRequest struct {
 func (h *handler) register(c *gin.Context) {
 	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request payload"})
+		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
 		return
 	}
 
@@ -69,24 +63,29 @@ func (h *handler) register(c *gin.Context) {
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	password := strings.TrimSpace(req.Password)
 
+	if name == "" {
+		respondError(c, http.StatusBadRequest, "name_required", "name is required")
+		return
+	}
+
 	if email == "" || password == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "email and password are required"})
+		respondError(c, http.StatusBadRequest, "missing_credentials", "email and password are required")
 		return
 	}
 
 	if !strings.Contains(email, "@") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "email must be a valid address"})
+		respondError(c, http.StatusBadRequest, "invalid_email", "email must be a valid address")
 		return
 	}
 
 	if len(password) < 8 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "password must be at least 8 characters"})
+		respondError(c, http.StatusBadRequest, "password_too_short", "password must be at least 8 characters")
 		return
 	}
 
 	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to secure password"})
+		respondError(c, http.StatusInternalServerError, "hash_failure", "failed to secure password")
 		return
 	}
 
@@ -97,15 +96,26 @@ func (h *handler) register(c *gin.Context) {
 	}
 
 	if err := h.store.CreateUser(c.Request.Context(), user); err != nil {
-		if errors.Is(err, store.ErrUserExists) {
-			c.JSON(http.StatusConflict, gin.H{"error": "user already exists"})
+		switch {
+		case errors.Is(err, store.ErrEmailExists):
+			respondError(c, http.StatusConflict, "email_already_exists", "user with this email already exists")
+			return
+		case errors.Is(err, store.ErrNameExists):
+			respondError(c, http.StatusConflict, "name_already_exists", "user with this name already exists")
+			return
+		case errors.Is(err, store.ErrInvalidName):
+			respondError(c, http.StatusBadRequest, "invalid_name", "name is invalid")
+			return
+		default:
+			respondError(c, http.StatusInternalServerError, "user_creation_failed", "failed to create user")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user"})
-		return
 	}
 
-	response := gin.H{"user": sanitizeUser(user)}
+	response := gin.H{
+		"message": "user registered successfully",
+		"user":    sanitizeUser(user),
+	}
 	c.JSON(http.StatusCreated, response)
 }
 
@@ -239,6 +249,13 @@ func sanitizeUser(user *store.User) gin.H {
 		"name":  user.Name,
 		"email": user.Email,
 	}
+}
+
+func respondError(c *gin.Context, status int, code, message string) {
+	c.JSON(status, gin.H{
+		"error":   code,
+		"message": message,
+	})
 }
 
 func extractToken(header string) string {
