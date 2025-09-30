@@ -28,7 +28,9 @@ type Store interface {
 
 // Domain level errors returned by the store implementation.
 var (
-	ErrUserExists   = errors.New("user already exists")
+	ErrEmailExists  = errors.New("email already exists")
+	ErrNameExists   = errors.New("name already exists")
+	ErrInvalidName  = errors.New("invalid user name")
 	ErrUserNotFound = errors.New("user not found")
 )
 
@@ -39,6 +41,7 @@ type memoryStore struct {
 	mu      sync.RWMutex
 	byID    map[string]*User
 	byEmail map[string]*User
+	byName  map[string]*User
 }
 
 // NewMemoryStore creates a new in-memory store implementation.
@@ -46,6 +49,7 @@ func NewMemoryStore() Store {
 	return &memoryStore{
 		byID:    make(map[string]*User),
 		byEmail: make(map[string]*User),
+		byName:  make(map[string]*User),
 	}
 }
 
@@ -54,8 +58,18 @@ func (s *memoryStore) CreateUser(ctx context.Context, user *User) error {
 	_ = ctx
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.byEmail[strings.ToLower(user.Email)]; exists {
-		return ErrUserExists
+	loweredEmail := strings.ToLower(strings.TrimSpace(user.Email))
+	normalizedName := strings.TrimSpace(user.Name)
+
+	if normalizedName == "" {
+		return ErrInvalidName
+	}
+
+	if _, exists := s.byEmail[loweredEmail]; exists {
+		return ErrEmailExists
+	}
+	if _, exists := s.byName[strings.ToLower(normalizedName)]; exists {
+		return ErrNameExists
 	}
 	userCopy := *user
 	if userCopy.ID == "" {
@@ -64,9 +78,12 @@ func (s *memoryStore) CreateUser(ctx context.Context, user *User) error {
 	if userCopy.CreatedAt.IsZero() {
 		userCopy.CreatedAt = time.Now().UTC()
 	}
+	userCopy.Email = loweredEmail
+	userCopy.Name = normalizedName
 	stored := userCopy
 	s.byID[userCopy.ID] = &stored
-	s.byEmail[strings.ToLower(userCopy.Email)] = &stored
+	s.byEmail[loweredEmail] = &stored
+	s.byName[strings.ToLower(normalizedName)] = &stored
 	*user = stored
 	return nil
 }
