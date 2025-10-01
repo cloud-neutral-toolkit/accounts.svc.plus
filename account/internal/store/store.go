@@ -24,6 +24,7 @@ type Store interface {
 	CreateUser(ctx context.Context, user *User) error
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
 	GetUserByID(ctx context.Context, id string) (*User, error)
+	GetUserByName(ctx context.Context, name string) (*User, error)
 }
 
 // Domain level errors returned by the store implementation.
@@ -112,6 +113,27 @@ func (s *memoryStore) GetUserByID(ctx context.Context, id string) (*User, error)
 	if !ok {
 		return nil, ErrUserNotFound
 	}
+	clone := *user
+	return &clone, nil
+}
+
+// GetUserByName fetches a user by case-insensitive username, returning
+// ErrUserNotFound when absent.
+func (s *memoryStore) GetUserByName(ctx context.Context, name string) (*User, error) {
+	_ = ctx
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	if normalized == "" {
+		return nil, ErrUserNotFound
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	user, ok := s.byName[normalized]
+	if !ok {
+		return nil, ErrUserNotFound
+	}
+
 	clone := *user
 	return &clone, nil
 }

@@ -119,47 +119,46 @@ func (h *handler) register(c *gin.Context) {
 	c.JSON(http.StatusCreated, response)
 }
 
-type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
 func (h *handler) login(c *gin.Context) {
-	var req loginRequest
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request payload"})
+		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
 		return
 	}
 
-	email := strings.ToLower(strings.TrimSpace(req.Email))
+	username := strings.TrimSpace(req.Username)
 	password := strings.TrimSpace(req.Password)
-	if email == "" || password == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "email and password are required"})
+	if username == "" || password == "" {
+		respondError(c, http.StatusBadRequest, "missing_credentials", "username and password are required")
 		return
 	}
 
-	user, err := h.store.GetUserByEmail(c.Request.Context(), email)
+	user, err := h.store.GetUserByName(c.Request.Context(), username)
 	if err != nil {
 		if errors.Is(err, store.ErrUserNotFound) {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+			respondError(c, http.StatusNotFound, "user_not_found", "user not found")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to authenticate"})
+		respondError(c, http.StatusInternalServerError, "authentication_failed", "failed to authenticate user")
 		return
 	}
 
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		respondError(c, http.StatusUnauthorized, "invalid_credentials", "invalid credentials")
 		return
 	}
 
 	token, expiresAt, err := h.createSession(user.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
+		respondError(c, http.StatusInternalServerError, "session_creation_failed", "failed to create session")
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"message":   "login successful",
 		"token":     token,
 		"expiresAt": expiresAt.UTC(),
 		"user":      sanitizeUser(user),
@@ -245,9 +244,10 @@ func (h *handler) removeSession(token string) {
 
 func sanitizeUser(user *store.User) gin.H {
 	return gin.H{
-		"id":    user.ID,
-		"name":  user.Name,
-		"email": user.Email,
+		"id":       user.ID,
+		"name":     user.Name,
+		"username": user.Name,
+		"email":    user.Email,
 	}
 }
 
