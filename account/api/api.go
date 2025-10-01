@@ -276,8 +276,10 @@ func (h *handler) removeSession(token string) {
 }
 
 func sanitizeUser(user *store.User) gin.H {
+	identifier := strings.TrimSpace(user.ID)
 	return gin.H{
-		"id":       user.ID,
+		"id":       identifier,
+		"uuid":     identifier,
 		"name":     user.Name,
 		"username": user.Name,
 		"email":    user.Email,

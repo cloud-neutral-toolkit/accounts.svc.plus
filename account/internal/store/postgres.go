@@ -99,8 +99,8 @@ func (s *postgresStore) CreateUser(ctx context.Context, user *User) error {
 	}
 
 	query := `INSERT INTO users (username, email, password)
-              VALUES ($1, $2, $3)
-              RETURNING id, coalesce(created_at, now())`
+          VALUES ($1, $2, $3)
+          RETURNING uuid, coalesce(created_at, now())`
 
 	var idValue any
 	var createdAt time.Time
@@ -141,8 +141,8 @@ func (s *postgresStore) GetUserByEmail(ctx context.Context, email string) (*User
 		return nil, ErrUserNotFound
 	}
 
-	query := `SELECT id, username, email, password, coalesce(created_at, now())
-              FROM users WHERE lower(email) = $1 LIMIT 1`
+	query := `SELECT uuid, username, email, password, coalesce(created_at, now())
+          FROM users WHERE lower(email) = $1 LIMIT 1`
 
 	row := s.db.QueryRowContext(ctx, query, normalized)
 	return scanUser(row)
@@ -154,16 +154,16 @@ func (s *postgresStore) GetUserByName(ctx context.Context, name string) (*User, 
 		return nil, ErrUserNotFound
 	}
 
-	query := `SELECT id, username, email, password, coalesce(created_at, now())
-              FROM users WHERE lower(username) = lower($1) LIMIT 1`
+	query := `SELECT uuid, username, email, password, coalesce(created_at, now())
+          FROM users WHERE lower(username) = lower($1) LIMIT 1`
 
 	row := s.db.QueryRowContext(ctx, query, normalized)
 	return scanUser(row)
 }
 
 func (s *postgresStore) GetUserByID(ctx context.Context, id string) (*User, error) {
-	query := `SELECT id, username, email, password, coalesce(created_at, now())
-              FROM users WHERE id = $1`
+	query := `SELECT uuid, username, email, password, coalesce(created_at, now())
+          FROM users WHERE uuid = $1`
 
 	row := s.db.QueryRowContext(ctx, query, id)
 	return scanUser(row)
@@ -244,6 +244,8 @@ func formatIdentifier(value any) (string, error) {
 		return v, nil
 	case []byte:
 		return string(v), nil
+	case fmt.Stringer:
+		return v.String(), nil
 	case int64:
 		return strconv.FormatInt(v, 10), nil
 	case int32:

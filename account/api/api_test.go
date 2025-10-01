@@ -54,6 +54,14 @@ func TestRegisterEndpoint(t *testing.T) {
 		t.Fatalf("expected email %q, got %#v", payload["email"], response.User["email"])
 	}
 
+	if id, ok := response.User["id"].(string); !ok || id == "" {
+		t.Fatalf("expected user id in response, got %#v", response.User["id"])
+	} else {
+		if uuid, ok := response.User["uuid"].(string); !ok || uuid != id {
+			t.Fatalf("expected uuid to match id, got id=%q uuid=%#v", id, response.User["uuid"])
+		}
+	}
+
 	if response.Message == "" {
 		t.Fatalf("expected success message in response")
 	}
@@ -114,6 +122,14 @@ func TestLoginEndpoint(t *testing.T) {
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &loginResponse); err != nil {
 		t.Fatalf("failed to decode login response: %v", err)
+	}
+
+	if id, ok := loginResponse.User["id"].(string); !ok || id == "" {
+		t.Fatalf("expected user id in login response, got %#v", loginResponse.User["id"])
+	} else {
+		if uuid, ok := loginResponse.User["uuid"].(string); !ok || uuid != id {
+			t.Fatalf("expected login uuid to match id, got id=%q uuid=%#v", id, loginResponse.User["uuid"])
+		}
 	}
 
 	if loginResponse.Message == "" {
