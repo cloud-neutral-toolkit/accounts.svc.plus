@@ -15,7 +15,7 @@ import (
 	"xcontrol/account/internal/store"
 )
 
-const sessionTTL = 24 * time.Hour
+const defaultSessionTTL = 24 * time.Hour
 
 type session struct {
 	userID    string
@@ -23,16 +23,43 @@ type session struct {
 }
 
 type handler struct {
-	store    store.Store
-	sessions map[string]session
-	mu       sync.RWMutex
+	store      store.Store
+	sessions   map[string]session
+	mu         sync.RWMutex
+	sessionTTL time.Duration
+}
+
+// Option configures handler behaviour when registering routes.
+type Option func(*handler)
+
+// WithStore overrides the default in-memory store with the provided implementation.
+func WithStore(st store.Store) Option {
+	return func(h *handler) {
+		if st != nil {
+			h.store = st
+		}
+	}
+}
+
+// WithSessionTTL sets the TTL used for issued sessions.
+func WithSessionTTL(ttl time.Duration) Option {
+	return func(h *handler) {
+		if ttl > 0 {
+			h.sessionTTL = ttl
+		}
+	}
 }
 
 // RegisterRoutes attaches account service endpoints to the router.
-func RegisterRoutes(r *gin.Engine) {
+func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	h := &handler{
-		store:    store.NewMemoryStore(),
-		sessions: make(map[string]session),
+		store:      store.NewMemoryStore(),
+		sessions:   make(map[string]session),
+		sessionTTL: defaultSessionTTL,
+	}
+
+	for _, opt := range opts {
+		opt(h)
 	}
 
 	r.GET("/healthz", func(c *gin.Context) {
@@ -214,7 +241,11 @@ func (h *handler) createSession(userID string) (string, time.Time, error) {
 		return "", time.Time{}, err
 	}
 	token := hex.EncodeToString(buffer)
-	expiresAt := time.Now().Add(sessionTTL)
+	ttl := h.sessionTTL
+	if ttl <= 0 {
+		ttl = defaultSessionTTL
+	}
+	expiresAt := time.Now().Add(ttl)
 
 	h.mu.Lock()
 	defer h.mu.Unlock()

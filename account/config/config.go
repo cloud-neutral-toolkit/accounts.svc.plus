@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -17,7 +18,30 @@ type Log struct {
 
 // Config holds configuration for the account service.
 type Config struct {
-	Log Log `yaml:"log"`
+	Log     Log     `yaml:"log"`
+	Server  Server  `yaml:"server"`
+	Store   Store   `yaml:"store"`
+	Session Session `yaml:"session"`
+}
+
+// Server defines HTTP server configuration.
+type Server struct {
+	Addr         string        `yaml:"addr"`
+	ReadTimeout  time.Duration `yaml:"readTimeout"`
+	WriteTimeout time.Duration `yaml:"writeTimeout"`
+}
+
+// Store defines persistence configuration for the account service.
+type Store struct {
+	Driver       string `yaml:"driver"`
+	DSN          string `yaml:"dsn"`
+	MaxOpenConns int    `yaml:"maxOpenConns"`
+	MaxIdleConns int    `yaml:"maxIdleConns"`
+}
+
+// Session defines session management configuration.
+type Session struct {
+	TTL time.Duration `yaml:"ttl"`
 }
 
 // Load reads the configuration file at the provided path. When path is empty,
