@@ -148,6 +148,19 @@ func (s *postgresStore) GetUserByEmail(ctx context.Context, email string) (*User
 	return scanUser(row)
 }
 
+func (s *postgresStore) GetUserByName(ctx context.Context, name string) (*User, error) {
+	normalized := strings.TrimSpace(name)
+	if normalized == "" {
+		return nil, ErrUserNotFound
+	}
+
+	query := `SELECT id, username, email, password, coalesce(created_at, now())
+              FROM users WHERE lower(username) = lower($1) LIMIT 1`
+
+	row := s.db.QueryRowContext(ctx, query, normalized)
+	return scanUser(row)
+}
+
 func (s *postgresStore) GetUserByID(ctx context.Context, id string) (*User, error) {
 	query := `SELECT id, username, email, password, coalesce(created_at, now())
               FROM users WHERE id = $1`
