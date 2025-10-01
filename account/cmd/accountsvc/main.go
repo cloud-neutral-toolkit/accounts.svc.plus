@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -11,6 +14,7 @@ import (
 
 	"xcontrol/account/api"
 	"xcontrol/account/config"
+	"xcontrol/account/internal/store"
 )
 
 var (
@@ -51,12 +55,50 @@ var rootCmd = &cobra.Command{
 			logger.Info("request", "method", c.Request.Method, "path", c.FullPath(), "status", c.Writer.Status(), "latency", time.Since(start))
 		})
 
-		api.RegisterRoutes(r)
+		ctx := context.Background()
+		storeCfg := store.Config{
+			Driver:       cfg.Store.Driver,
+			DSN:          cfg.Store.DSN,
+			MaxOpenConns: cfg.Store.MaxOpenConns,
+			MaxIdleConns: cfg.Store.MaxIdleConns,
+		}
 
-		logger.Info("starting account service", "addr", ":8080")
-		if err := r.Run(); err != nil {
-			logger.Error("account service shutdown", "err", err)
+		st, cleanup, err := store.New(ctx, storeCfg)
+		if err != nil {
 			return err
+		}
+		defer func() {
+			if cleanup == nil {
+				return
+			}
+			if err := cleanup(context.Background()); err != nil {
+				logger.Error("failed to close store", "err", err)
+			}
+		}()
+
+		api.RegisterRoutes(r,
+			api.WithStore(st),
+			api.WithSessionTTL(cfg.Session.TTL),
+		)
+
+		addr := strings.TrimSpace(cfg.Server.Addr)
+		if addr == "" {
+			addr = ":8080"
+		}
+
+		srv := &http.Server{
+			Addr:         addr,
+			Handler:      r,
+			ReadTimeout:  cfg.Server.ReadTimeout,
+			WriteTimeout: cfg.Server.WriteTimeout,
+		}
+
+		logger.Info("starting account service", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil {
+			if !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("account service shutdown", "err", err)
+				return err
+			}
 		}
 		return nil
 	},
