@@ -74,14 +74,19 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 }
 
 type registerRequest struct {
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Name     string `json:"name" form:"name"`
+	Email    string `json:"email" form:"email"`
+	Password string `json:"password" form:"password"`
+}
+
+type loginRequest struct {
+	Username string `json:"username" form:"username"`
+	Password string `json:"password" form:"password"`
 }
 
 func (h *handler) register(c *gin.Context) {
 	var req registerRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBind(&req); err != nil {
 		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
 		return
 	}
@@ -147,11 +152,8 @@ func (h *handler) register(c *gin.Context) {
 }
 
 func (h *handler) login(c *gin.Context) {
-	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var req loginRequest
+	if err := c.ShouldBind(&req); err != nil {
 		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
 		return
 	}
