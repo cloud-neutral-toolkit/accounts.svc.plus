@@ -94,21 +94,26 @@ var rootCmd = &cobra.Command{
 		keyFile := strings.TrimSpace(tlsSettings.KeyFile)
 		clientCAFile := strings.TrimSpace(tlsSettings.ClientCAFile)
 
-		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
-		if clientCAFile != "" {
-			caBytes, err := os.ReadFile(clientCAFile)
-			if err != nil {
-				return err
-			}
-			pool := x509.NewCertPool()
-			if !pool.AppendCertsFromPEM(caBytes) {
-				return errors.New("failed to parse client CA file")
-			}
-			tlsConfig.ClientCAs = pool
-			tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
-		}
-
 		useTLS := certFile != "" && keyFile != ""
+
+		var tlsConfig *tls.Config
+		if useTLS {
+			tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+			if clientCAFile != "" {
+				caBytes, err := os.ReadFile(clientCAFile)
+				if err != nil {
+					return err
+				}
+				pool := x509.NewCertPool()
+				if !pool.AppendCertsFromPEM(caBytes) {
+					return errors.New("failed to parse client CA file")
+				}
+				tlsConfig.ClientCAs = pool
+				tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+			}
+		} else if clientCAFile != "" {
+			logger.Warn("client CA configured but TLS certificates are missing; ignoring", "clientCAFile", clientCAFile)
+		}
 
 		srv := &http.Server{
 			Addr:         addr,

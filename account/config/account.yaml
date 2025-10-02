@@ -6,8 +6,10 @@ server:
   readTimeout: 15s
   writeTimeout: 15s
   tls:
+    # Provide PEM-encoded certificate and key files to enable HTTPS.
     certFile: ""
     keyFile: ""
+    # Optional CA bundle to enforce mutual TLS with clients.
     clientCAFile: ""
     redirectHttp: false
 
