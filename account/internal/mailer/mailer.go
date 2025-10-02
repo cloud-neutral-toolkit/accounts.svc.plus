@@ -23,11 +23,36 @@ type TLSMode string
 const (
 	// TLSModeNone disables TLS.
 	TLSModeNone TLSMode = "none"
-	// TLSModeStartTLS upgrades a plain connection via STARTTLS.
+	// TLSModeStartTLS upgrades a plain connection via STARTTLS and fails when unsupported.
 	TLSModeStartTLS TLSMode = "starttls"
 	// TLSModeImplicit establishes the connection over TLS immediately.
 	TLSModeImplicit TLSMode = "implicit"
+	// TLSModeAuto attempts STARTTLS when supported and gracefully falls back to plain SMTP otherwise.
+	TLSModeAuto TLSMode = "auto"
 )
+
+// ParseTLSMode normalises the provided value to a supported TLSMode. Unrecognised values
+// default to TLSModeAuto in order to support both secure and non-secure transports when
+// testing against simple SMTP servers.
+func ParseTLSMode(value string) TLSMode {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "", "auto", "automatic", "detect":
+		return TLSModeAuto
+	case "none", "disable", "disabled", "off", "plain", "plaintext":
+		return TLSModeNone
+	case "implicit", "smtps":
+		return TLSModeImplicit
+	case "starttls", "start_tls", "start-tls":
+		return TLSModeStartTLS
+	default:
+		return TLSModeAuto
+	}
+}
+
+func normalizeTLSMode(mode TLSMode) TLSMode {
+	return ParseTLSMode(string(mode))
+}
 
 // Config contains the information required to send email via SMTP.
 type Config struct {
@@ -95,10 +120,7 @@ func New(cfg Config) (Sender, error) {
 		}
 	}
 
-	mode := TLSMode(strings.ToLower(strings.TrimSpace(string(cfg.TLSMode))))
-	if mode == "" {
-		mode = TLSModeStartTLS
-	}
+	mode := normalizeTLSMode(cfg.TLSMode)
 
 	sender := &smtpSender{
 		host:               host,
@@ -152,10 +174,18 @@ func (s *smtpSender) Send(ctx context.Context, msg Message) error {
 	}
 	defer client.Close()
 
-	if s.tlsMode == TLSModeStartTLS {
+	switch s.tlsMode {
+	case TLSModeStartTLS:
 		tlsCfg := s.tlsConfig()
 		if err := client.StartTLS(tlsCfg); err != nil {
 			return err
+		}
+	case TLSModeAuto:
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			tlsCfg := s.tlsConfig()
+			if err := client.StartTLS(tlsCfg); err != nil {
+				return err
+			}
 		}
 	}
 

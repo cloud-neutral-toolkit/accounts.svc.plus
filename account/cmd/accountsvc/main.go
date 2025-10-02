@@ -101,7 +101,7 @@ var rootCmd = &cobra.Command{
 
 		var emailSender api.EmailSender
 		if strings.TrimSpace(cfg.SMTP.Host) != "" {
-			tlsMode := mailer.TLSMode(strings.ToLower(strings.TrimSpace(cfg.SMTP.TLS.Mode)))
+			tlsMode := mailer.ParseTLSMode(cfg.SMTP.TLS.Mode)
 			sender, err := mailer.New(mailer.Config{
 				Host:               cfg.SMTP.Host,
 				Port:               cfg.SMTP.Port,
