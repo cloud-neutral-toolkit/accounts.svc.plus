@@ -2,16 +2,14 @@ log:
   level: info
 
 server:
-  addr: ":8080"
+  addr: ":8443"
   readTimeout: 15s
   writeTimeout: 15s
   tls:
-    # Provide PEM-encoded certificate and key files to enable HTTPS.
-    certFile: ""
-    keyFile: ""
-    # Optional CA bundle to enforce mutual TLS with clients.
+    certFile: "/etc/ssl/svc.plus.pem"
+    keyFile: "/etc/ssl/svc.plus.rsa.key"
     clientCAFile: ""
-    redirectHttp: false
+    redirectHttp: true
 
 store:
   driver: "postgres"
