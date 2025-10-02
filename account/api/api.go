@@ -578,7 +578,17 @@ func (h *handler) verifyTOTP(c *gin.Context) {
 		return
 	}
 
-	if !totp.Validate(code, user.MFATOTPSecret) {
+	valid, err := totp.ValidateCustom(code, user.MFATOTPSecret, time.Now().UTC(), totp.ValidateOpts{
+		Period:    30,
+		Skew:      1,
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
+	})
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "invalid_mfa_code", "invalid totp code")
+		return
+	}
+	if !valid {
 		respondError(c, http.StatusUnauthorized, "invalid_mfa_code", "invalid totp code")
 		return
 	}

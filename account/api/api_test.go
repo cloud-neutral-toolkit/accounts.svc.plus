@@ -34,6 +34,19 @@ func decodeResponse(t *testing.T, rr *httptest.ResponseRecorder) apiResponse {
 	return resp
 }
 
+func waitForStableTOTPWindow(t *testing.T) {
+	t.Helper()
+	const period int64 = 30
+	remainder := time.Now().Unix() % period
+	const buffer int64 = 10
+	if remainder > period-buffer {
+		sleep := (period - remainder) + 2
+		if sleep > 0 {
+			time.Sleep(time.Duration(sleep) * time.Second)
+		}
+	}
+}
+
 func TestRegisterEndpoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -178,7 +191,8 @@ func TestMFATOTPFlow(t *testing.T) {
 		return code
 	}
 
-	code := generateCode(0)
+	waitForStableTOTPWindow(t)
+	code := generateCode(-30 * time.Second)
 
 	verifyPayload := map[string]string{
 		"token": resp.MFAToken,
@@ -239,8 +253,8 @@ func TestMFATOTPFlow(t *testing.T) {
 		return recorder
 	}
 
-	time.Sleep(1 * time.Second)
-	totpCode := generateCode(0)
+	waitForStableTOTPWindow(t)
+	totpCode := generateCode(-30 * time.Second)
 	if ok, _ := totp.ValidateCustom(totpCode, secret, time.Now().UTC(), totp.ValidateOpts{
 		Period:    30,
 		Skew:      1,
@@ -259,7 +273,7 @@ func TestMFATOTPFlow(t *testing.T) {
 		t.Fatalf("expected mfa login success, got %d: %s", rr.Code, rr.Body.String())
 	}
 
-	time.Sleep(1 * time.Second)
+	waitForStableTOTPWindow(t)
 	totpCode = generateCode(0)
 	if ok, _ := totp.ValidateCustom(totpCode, secret, time.Now().UTC(), totp.ValidateOpts{
 		Period:    30,
