@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -94,11 +95,24 @@ var rootCmd = &cobra.Command{
 		keyFile := strings.TrimSpace(tlsSettings.KeyFile)
 		clientCAFile := strings.TrimSpace(tlsSettings.ClientCAFile)
 
-		useTLS := certFile != "" && keyFile != ""
+		useTLS := tlsSettings.IsEnabled()
 
 		var tlsConfig *tls.Config
 		if useTLS {
-			tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+			if certFile == "" || keyFile == "" {
+				return fmt.Errorf("tls is enabled but certFile (%q) or keyFile (%q) is empty", certFile, keyFile)
+			}
+
+			cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+			if err != nil {
+				return fmt.Errorf("failed to load tls certificate: %w", err)
+			}
+
+			tlsConfig = &tls.Config{
+				MinVersion:   tls.VersionTLS12,
+				Certificates: []tls.Certificate{cert},
+			}
+
 			if clientCAFile != "" {
 				caBytes, err := os.ReadFile(clientCAFile)
 				if err != nil {
@@ -111,8 +125,13 @@ var rootCmd = &cobra.Command{
 				tlsConfig.ClientCAs = pool
 				tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
 			}
-		} else if clientCAFile != "" {
-			logger.Warn("client CA configured but TLS certificates are missing; ignoring", "clientCAFile", clientCAFile)
+		} else {
+			if certFile != "" || keyFile != "" {
+				logger.Info("TLS disabled; certificate paths will be ignored", "certFile", certFile, "keyFile", keyFile)
+			}
+			if clientCAFile != "" {
+				logger.Warn("client CA configured but TLS is disabled; ignoring", "clientCAFile", clientCAFile)
+			}
 		}
 
 		srv := &http.Server{

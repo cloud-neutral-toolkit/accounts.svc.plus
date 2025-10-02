@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -26,18 +27,29 @@ type Config struct {
 
 // Server defines HTTP server configuration.
 type Server struct {
-        Addr         string        `yaml:"addr"`
-        ReadTimeout  time.Duration `yaml:"readTimeout"`
-        WriteTimeout time.Duration `yaml:"writeTimeout"`
-        TLS          TLS           `yaml:"tls"`
+	Addr         string        `yaml:"addr"`
+	ReadTimeout  time.Duration `yaml:"readTimeout"`
+	WriteTimeout time.Duration `yaml:"writeTimeout"`
+	TLS          TLS           `yaml:"tls"`
 }
 
 // TLS describes TLS configuration for the server listener.
 type TLS struct {
-        CertFile     string `yaml:"certFile"`
-        KeyFile      string `yaml:"keyFile"`
-        ClientCAFile string `yaml:"clientCAFile"`
-        RedirectHTTP bool   `yaml:"redirectHttp"`
+	Enabled      *bool  `yaml:"enabled"`
+	CertFile     string `yaml:"certFile"`
+	KeyFile      string `yaml:"keyFile"`
+	ClientCAFile string `yaml:"clientCAFile"`
+	RedirectHTTP bool   `yaml:"redirectHttp"`
+}
+
+// IsEnabled reports whether TLS should be enabled for the server listener. When the
+// configuration explicitly sets the Enabled field it is respected. Otherwise TLS is
+// considered enabled only if both the certificate and key paths are non-empty.
+func (t TLS) IsEnabled() bool {
+	if t.Enabled != nil {
+		return *t.Enabled
+	}
+	return strings.TrimSpace(t.CertFile) != "" && strings.TrimSpace(t.KeyFile) != ""
 }
 
 // Store defines persistence configuration for the account service.
