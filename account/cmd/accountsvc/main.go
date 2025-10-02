@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
 
@@ -71,6 +72,29 @@ var rootCmd = &cobra.Command{
 		slog.SetDefault(logger)
 
 		r := gin.New()
+		corsConfig := cors.Config{
+			AllowOrigins: []string{
+				"http://localhost:3001",
+				"http://127.0.0.1:3001",
+			},
+			AllowMethods: []string{
+				http.MethodOptions,
+				http.MethodPost,
+			},
+			AllowHeaders: []string{
+				"Authorization",
+				"Content-Type",
+				"Accept",
+				"Origin",
+				"X-Requested-With",
+			},
+			ExposeHeaders: []string{
+				"Content-Length",
+			},
+			AllowCredentials: true,
+			MaxAge:           12 * time.Hour,
+		}
+		r.Use(cors.New(corsConfig))
 		r.Use(gin.Recovery())
 		r.Use(func(c *gin.Context) {
 			start := time.Now()
