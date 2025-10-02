@@ -222,6 +222,7 @@ var rootCmd = &cobra.Command{
 
 		logger.Info("starting account service", "addr", addr, "tls", useTLS)
 
+		var listenCertFile, listenKeyFile string
 		if useTLS {
 			if tlsSettings.RedirectHTTP {
 				go func() {
@@ -243,7 +244,15 @@ var rootCmd = &cobra.Command{
 				}()
 			}
 
-			if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil {
+			if tlsConfig != nil && len(tlsConfig.Certificates) > 0 {
+				listenCertFile = ""
+				listenKeyFile = ""
+			} else {
+				listenCertFile = certFile
+				listenKeyFile = keyFile
+			}
+
+			if err := srv.ListenAndServeTLS(listenCertFile, listenKeyFile); err != nil {
 				if !errors.Is(err, http.ErrServerClosed) {
 					logger.Error("account service shutdown", "err", err)
 					return err
