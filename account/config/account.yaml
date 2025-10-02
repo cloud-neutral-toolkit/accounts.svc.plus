@@ -5,6 +5,11 @@ server:
   addr: ":8080"
   readTimeout: 15s
   writeTimeout: 15s
+  tls:
+    certFile: ""
+    keyFile: ""
+    clientCAFile: ""
+    redirectHttp: false
 
 store:
   driver: "postgres"

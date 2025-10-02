@@ -4,121 +4,99 @@
 
 ## 1. 配置加载策略
 
-当前服务入口（`account/cmd/accountsvc/main.go`）直接创建 Gin 引擎并注册路由，尚未接入统一的配置加载逻辑。【F:account/cmd/accountsvc/main.go†L1-L12】
+账号服务入口（`account/cmd/accountsvc/main.go`）会调用 `config.Load` 读取 YAML 配置，并允许通过命令行参数覆盖默认路径。当未提供配置文件时，服务会以零值启动，此时可结合环境变量填充关键字段。
 
-为满足生产需求，建议按以下优先级加载配置：
+当前推荐的覆盖顺序如下：
 
-1. **命令行参数**：覆盖性最高，用于临时指定端口或配置文件路径。
-2. **环境变量**：适用于容器化部署，通过 `ACCOUNT_*` 前缀管理。
-3. **配置文件**：默认从 `config/account.yaml` 或 `config/account.json` 中读取。
-4. **内置默认值**：在 `account/config/config.go` 中定义结构体并赋予默认值，保证在缺省配置下仍可运行。【F:account/config/config.go†L1-L5】
+1. **命令行参数**：用于指定配置文件路径或运行模式。
+2. **配置文件**：默认从 `account/config/account.yaml` 读取，适合提交到仓库或挂载到容器内。
+3. **代码默认值**：`config.Config` 结构体中的零值，保证最小可运行。
 
-## 2. 建议的配置结构
+> 注：目前服务尚未内置环境变量映射逻辑，如需按环境注入配置，可在部署流程中提前生成 YAML 文件或扩展 `config.Load`。
 
-未来扩展时，可按以下结构扩充 `Config`：
+## 2. 配置字段参考
 
-```yaml
-server:
-  addr: ":8080"
-  readTimeout: 10s
-  writeTimeout: 10s
-  idleTimeout: 60s
-
-store:
-  driver: "memory"   # 可选：memory、postgres、mysql
-  dsn: "postgres://user:pass@host:5432/account?sslmode=disable"
-  maxOpenConns: 20
-  maxIdleConns: 5
-  connMaxLifetime: 30m
-
-session:
-  ttl: 24h
-  cache: "memory"   # 可选：memory、redis
-  redis:
-    addr: "redis:6379"
-    password: ""
-    db: 0
-
-authProviders:
-  - name: "oidc"
-    issuer: "https://idp.example.com"
-    clientID: "xcontrol"
-    clientSecret: "${OIDC_CLIENT_SECRET}"
-  - name: "ldap"
-    addr: "ldap://ldap.example.com:389"
-    baseDN: "dc=example,dc=com"
-    bindDN: "cn=admin,dc=example,dc=com"
-    bindPassword: "${LDAP_BIND_PASSWORD}"
-```
-
-## 3. 环境变量示例
-
-| 变量名 | 说明 | 示例 |
-| ------ | ---- | ---- |
-| `ACCOUNT_SERVER_ADDR` | 服务监听地址 | `:8080` |
-| `ACCOUNT_STORE_DRIVER` | 存储驱动类型 | `postgres` |
-| `ACCOUNT_STORE_DSN` | 存储连接串 | `postgres://user:pass@db:5432/account` |
-| `ACCOUNT_SESSION_TTL` | 会话有效期（秒或 Go duration） | `24h` |
-| `ACCOUNT_REDIS_ADDR` | Redis 地址（当 cache=redis 时使用） | `redis:6379` |
-| `ACCOUNT_LOG_LEVEL` | 日志级别 | `info` |
-
-在容器或 CI/CD 中，可借助 Secret/ConfigMap 注入敏感值，避免直接写入镜像。
-
-## 4. 配置示例
-
-### 4.1 开发环境
+`account/config/config.go` 定义了配置结构，主要包含以下几个部分：
 
 ```yaml
+log:
+  level: info            # 可选：debug、info、warn、error
+
 server:
-  addr: ":8080"
+  addr: ":8080"          # 监听地址
+  readTimeout: 15s        # 读取超时
+  writeTimeout: 15s       # 写入超时
+  tls:                    # 启用 HTTPS 时的证书配置
+    certFile: "/etc/ssl/certs/account.pem"
+    keyFile: "/etc/ssl/private/account.key"
+    clientCAFile: ""      # （可选）双向 TLS CA
+    redirectHttp: false    # 当启用 TLS 时是否同时监听 HTTP 做 301 重定向
 
 store:
-  driver: "memory"
-
-session:
-  ttl: 24h
-  cache: "memory"
-```
-
-### 4.2 测试/预生产环境
-
-```yaml
-server:
-  addr: ":8080"
-  readTimeout: 15s
-  writeTimeout: 15s
-
-store:
-  driver: "postgres"
-  dsn: "postgres://acct:acctpass@postgres:5432/account?sslmode=disable"
+  driver: "postgres"      # 可选：memory、postgres
+  dsn: "postgres://user:pass@db:5432/account?sslmode=disable"
   maxOpenConns: 30
   maxIdleConns: 10
 
 session:
-  ttl: 24h
-  cache: "redis"
-  redis:
-    addr: "redis:6379"
-    password: "${REDIS_PASSWORD}"
-
-authProviders:
-  - name: "oidc"
-    issuer: "https://idp-pre.example.com"
-    clientID: "xcontrol"
-    clientSecret: "${OIDC_SECRET}"
+  ttl: 24h                # 登录会话有效期
 ```
 
-## 5. 配置校验与回滚
+**TLS 提示**：当 `certFile` 和 `keyFile` 都非空时，`accountsvc` 会调用 `ListenAndServeTLS` 启动 HTTPS。如果同时希望保留 80 端口，可将 `redirectHttp` 置为 `true`，服务会开启一个额外的明文监听，将请求 301 重定向到 HTTPS。
 
-- 在服务启动时验证必需字段是否填写，例如当 `driver=postgres` 时必须提供 `dsn`。
-- 提供配置热加载或版本化策略，例如通过 GitOps 将配置存储于仓库，变更可回滚。
-- 通过单元测试验证不同配置组合的解析结果，确保新字段向下兼容。
+**MFA 相关接口**：账号服务在 `/api/auth/mfa/*` 下提供 MFA 绑定与验证接口，默认无需额外配置即可使用，但生产环境建议将 `server.tls` 打开，确保 MFA 秘钥与 TOTP 码在传输过程中被加密。
 
-## 6. 与代码协同
+## 3. 配置示例
 
-- 在 `account/api` 中读取 `session.ttl` 替换硬编码的 `24 * time.Hour`，实现配置化。【F:account/api/api.go†L18-L171】
-- 在 `account/internal/store` 中根据 `store.driver` 实例化不同实现，实现从内存到数据库的无缝切换。【F:account/internal/store/store.go†L31-L109】
-- 在 `account/internal/auth` 中根据 `authProviders` 列表注册外部认证方式，实现多身份源并行校验。【F:account/internal/auth/auth.go†L1-L6】
+### 3.1 开发环境（HTTP + 内存存储）
 
----
-随着服务演进，应持续完善 `Config` 结构与加载逻辑，并在此文档中同步更新字段说明。
+```yaml
+log:
+  level: debug
+server:
+  addr: ":8080"
+  readTimeout: 0s
+  writeTimeout: 0s
+store:
+  driver: "memory"
+session:
+  ttl: 8h
+```
+
+### 3.2 生产环境（PostgreSQL + HTTPS + MFA）
+
+```yaml
+log:
+  level: info
+server:
+  addr: ":8443"
+  readTimeout: 15s
+  writeTimeout: 15s
+  tls:
+    certFile: "/etc/ssl/certs/account.pem"
+    keyFile: "/etc/ssl/private/account.key"
+    redirectHttp: true
+store:
+  driver: "postgres"
+  dsn: "postgres://account:strongpass@db:5432/account?sslmode=require"
+  maxOpenConns: 50
+  maxIdleConns: 10
+session:
+  ttl: 24h
+```
+
+在生产环境中，建议通过 Kubernetes Secret、Vault 等方式挂载证书文件，并使用 `redirectHttp` 确保历史链接能够自动切换到 HTTPS。
+
+## 4. 配置校验与回滚
+
+- 启动时若启用 PostgreSQL，请确保 `dsn` 可用，否则服务会在初始化阶段返回错误。
+- TLS 文件路径错误会导致启动失败，建议在 CI/CD 中加入探针验证。
+- 通过 Git 管理配置文件，配合版本标签可实现快速回滚。
+
+## 5. 与其他模块的协同
+
+- 登录会话 TTL 会同步影响 `/api/auth/login`、`/api/auth/session` 等接口返回的 cookie 过期时间。
+- 新增的 MFA 接口（`/api/auth/mfa/totp/provision`、`/api/auth/mfa/totp/verify`、`/api/auth/mfa/status`）在 HTTPS 环境下可与前端 MFA 向导配合使用，保证首次登录后必须完成绑定。
+- 如果部署了前端 Next.js 应用，请确保其 `.env` 中的 `ACCOUNT_API_BASE` 指向启用了 TLS 的账号服务地址。
+
+随着服务演进，请在更新配置结构或新字段时同步维护本文档。

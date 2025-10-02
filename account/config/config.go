@@ -26,9 +26,18 @@ type Config struct {
 
 // Server defines HTTP server configuration.
 type Server struct {
-	Addr         string        `yaml:"addr"`
-	ReadTimeout  time.Duration `yaml:"readTimeout"`
-	WriteTimeout time.Duration `yaml:"writeTimeout"`
+        Addr         string        `yaml:"addr"`
+        ReadTimeout  time.Duration `yaml:"readTimeout"`
+        WriteTimeout time.Duration `yaml:"writeTimeout"`
+        TLS          TLS           `yaml:"tls"`
+}
+
+// TLS describes TLS configuration for the server listener.
+type TLS struct {
+        CertFile     string `yaml:"certFile"`
+        KeyFile      string `yaml:"keyFile"`
+        ClientCAFile string `yaml:"clientCAFile"`
+        RedirectHTTP bool   `yaml:"redirectHttp"`
 }
 
 // Store defines persistence configuration for the account service.
