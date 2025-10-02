@@ -9,6 +9,7 @@ server:
     enabled: true
     certFile: "/etc/ssl/svc.plus.pem"
     keyFile: "/etc/ssl/svc.plus.rsa.key"
+    caFile: "/etc/ssl/svc.plus.ca.pem"
     clientCAFile: ""
     redirectHttp: true
 

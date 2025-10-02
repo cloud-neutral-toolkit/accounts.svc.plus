@@ -38,6 +38,7 @@ type TLS struct {
 	Enabled      *bool  `yaml:"enabled"`
 	CertFile     string `yaml:"certFile"`
 	KeyFile      string `yaml:"keyFile"`
+	CAFile       string `yaml:"caFile"`
 	ClientCAFile string `yaml:"clientCAFile"`
 	RedirectHTTP bool   `yaml:"redirectHttp"`
 }
