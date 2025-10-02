@@ -99,21 +99,6 @@ func hasQueryParameter(c *gin.Context, keys ...string) bool {
 	return false
 }
 
-func hasQueryParameter(c *gin.Context, keys ...string) bool {
-	if len(keys) == 0 {
-		return false
-	}
-
-	values := c.Request.URL.Query()
-	for _, key := range keys {
-		if _, ok := values[key]; ok {
-			return true
-		}
-	}
-
-	return false
-}
-
 func (h *handler) register(c *gin.Context) {
 	if hasQueryParameter(c, "password", "email", "confirmPassword") {
 		respondError(c, http.StatusBadRequest, "credentials_in_query", "sensitive credentials must not be sent in the query string")
