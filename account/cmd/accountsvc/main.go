@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -93,6 +94,7 @@ var rootCmd = &cobra.Command{
 		tlsSettings := cfg.Server.TLS
 		certFile := strings.TrimSpace(tlsSettings.CertFile)
 		keyFile := strings.TrimSpace(tlsSettings.KeyFile)
+		caFile := strings.TrimSpace(tlsSettings.CAFile)
 		clientCAFile := strings.TrimSpace(tlsSettings.ClientCAFile)
 
 		useTLS := tlsSettings.IsEnabled()
@@ -106,6 +108,37 @@ var rootCmd = &cobra.Command{
 			cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 			if err != nil {
 				return fmt.Errorf("failed to load tls certificate: %w", err)
+			}
+
+			if caFile != "" {
+				caPEM, err := os.ReadFile(caFile)
+				if err != nil {
+					return fmt.Errorf("failed to read ca file %q: %w", caFile, err)
+				}
+
+				var block *pem.Block
+				existing := make(map[string]struct{}, len(cert.Certificate))
+				for _, c := range cert.Certificate {
+					existing[string(c)] = struct{}{}
+				}
+
+				for len(caPEM) > 0 {
+					block, caPEM = pem.Decode(caPEM)
+					if block == nil {
+						break
+					}
+					if block.Type != "CERTIFICATE" || len(block.Bytes) == 0 {
+						continue
+					}
+					if _, ok := existing[string(block.Bytes)]; ok {
+						continue
+					}
+					cert.Certificate = append(cert.Certificate, block.Bytes)
+				}
+
+				if len(cert.Certificate) == 0 {
+					return fmt.Errorf("ca file %q did not contain any certificates", caFile)
+				}
 			}
 
 			tlsConfig = &tls.Config{
