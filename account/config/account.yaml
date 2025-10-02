@@ -5,6 +5,12 @@ server:
   addr: ":8443"
   readTimeout: 15s
   writeTimeout: 15s
+  publicUrl: "https://account.svc.plus"
+  allowedOrigins:
+    - "https://account.svc.plus"
+    - "https://localhost:8443"
+    - "http://localhost:3001"
+    - "http://127.0.0.1:3001"
   tls:
     enabled: true
     certFile: "/etc/ssl/svc.plus.pem"

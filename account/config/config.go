@@ -28,10 +28,12 @@ type Config struct {
 
 // Server defines HTTP server configuration.
 type Server struct {
-	Addr         string        `yaml:"addr"`
-	ReadTimeout  time.Duration `yaml:"readTimeout"`
-	WriteTimeout time.Duration `yaml:"writeTimeout"`
-	TLS          TLS           `yaml:"tls"`
+	Addr           string        `yaml:"addr"`
+	ReadTimeout    time.Duration `yaml:"readTimeout"`
+	WriteTimeout   time.Duration `yaml:"writeTimeout"`
+	TLS            TLS           `yaml:"tls"`
+	PublicURL      string        `yaml:"publicUrl"`
+	AllowedOrigins []string      `yaml:"allowedOrigins"`
 }
 
 // TLS describes TLS configuration for the server listener.
