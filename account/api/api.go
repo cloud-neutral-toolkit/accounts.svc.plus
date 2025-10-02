@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -10,12 +11,16 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pquerna/otp"
+	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 
 	"xcontrol/account/internal/store"
 )
 
 const defaultSessionTTL = 24 * time.Hour
+const defaultMFAChallengeTTL = 10 * time.Minute
+const defaultTOTPIssuer = "XControl Account"
 
 type session struct {
 	userID    string
@@ -23,10 +28,19 @@ type session struct {
 }
 
 type handler struct {
-	store      store.Store
-	sessions   map[string]session
-	mu         sync.RWMutex
-	sessionTTL time.Duration
+	store           store.Store
+	sessions        map[string]session
+	mu              sync.RWMutex
+	sessionTTL      time.Duration
+	mfaChallenges   map[string]mfaChallenge
+	mfaMu           sync.RWMutex
+	mfaChallengeTTL time.Duration
+	totpIssuer      string
+}
+
+type mfaChallenge struct {
+	userID    string
+	expiresAt time.Time
 }
 
 // Option configures handler behaviour when registering routes.
@@ -53,9 +67,12 @@ func WithSessionTTL(ttl time.Duration) Option {
 // RegisterRoutes attaches account service endpoints to the router.
 func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	h := &handler{
-		store:      store.NewMemoryStore(),
-		sessions:   make(map[string]session),
-		sessionTTL: defaultSessionTTL,
+		store:           store.NewMemoryStore(),
+		sessions:        make(map[string]session),
+		sessionTTL:      defaultSessionTTL,
+		mfaChallenges:   make(map[string]mfaChallenge),
+		mfaChallengeTTL: defaultMFAChallengeTTL,
+		totpIssuer:      defaultTOTPIssuer,
 	}
 
 	for _, opt := range opts {
@@ -71,6 +88,9 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	auth.POST("/login", h.login)
 	auth.GET("/session", h.session)
 	auth.DELETE("/session", h.deleteSession)
+	auth.POST("/mfa/totp/provision", h.provisionTOTP)
+	auth.POST("/mfa/totp/verify", h.verifyTOTP)
+	auth.GET("/mfa/status", h.mfaStatus)
 }
 
 type registerRequest struct {
@@ -80,8 +100,11 @@ type registerRequest struct {
 }
 
 type loginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Identifier string `json:"identifier"`
+	Username   string `json:"username"`
+	Email      string `json:"email"`
+	Password   string `json:"password"`
+	TOTPCode   string `json:"totpCode"`
 }
 
 func hasQueryParameter(c *gin.Context, keys ...string) bool {
@@ -172,7 +195,7 @@ func (h *handler) register(c *gin.Context) {
 }
 
 func (h *handler) login(c *gin.Context) {
-	if hasQueryParameter(c, "username", "password") {
+	if hasQueryParameter(c, "username", "password", "identifier", "totp") {
 		respondError(c, http.StatusBadRequest, "credentials_in_query", "sensitive credentials must not be sent in the query string")
 		return
 	}
@@ -183,14 +206,23 @@ func (h *handler) login(c *gin.Context) {
 		return
 	}
 
-	username := strings.TrimSpace(req.Username)
+	identifier := strings.TrimSpace(req.Identifier)
+	if identifier == "" {
+		identifier = strings.TrimSpace(req.Username)
+	}
+	if identifier == "" {
+		identifier = strings.TrimSpace(req.Email)
+	}
+
 	password := strings.TrimSpace(req.Password)
-	if username == "" || password == "" {
-		respondError(c, http.StatusBadRequest, "missing_credentials", "username and password are required")
+	totpCode := strings.TrimSpace(req.TOTPCode)
+
+	if identifier == "" {
+		respondError(c, http.StatusBadRequest, "missing_credentials", "identifier is required")
 		return
 	}
 
-	user, err := h.store.GetUserByName(c.Request.Context(), username)
+	user, err := h.findUserByIdentifier(c.Request.Context(), identifier)
 	if err != nil {
 		if errors.Is(err, store.ErrUserNotFound) {
 			respondError(c, http.StatusNotFound, "user_not_found", "user not found")
@@ -200,8 +232,53 @@ func (h *handler) login(c *gin.Context) {
 		return
 	}
 
-	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
-		respondError(c, http.StatusUnauthorized, "invalid_credentials", "invalid credentials")
+	if password != "" {
+		if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
+			respondError(c, http.StatusUnauthorized, "invalid_credentials", "invalid credentials")
+			return
+		}
+	} else {
+		if totpCode == "" {
+			respondError(c, http.StatusBadRequest, "missing_credentials", "totp code is required")
+			return
+		}
+		if !strings.EqualFold(strings.TrimSpace(user.Email), identifier) {
+			respondError(c, http.StatusUnauthorized, "password_required", "password required for this identifier")
+			return
+		}
+	}
+
+	if !user.MFAEnabled {
+		challengeToken, err := h.createMFAChallenge(user.ID)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "mfa_challenge_failed", "failed to prepare mfa challenge")
+			return
+		}
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":    "mfa_setup_required",
+			"mfaToken": challengeToken,
+			"user":     sanitizeUser(user),
+		})
+		return
+	}
+
+	if totpCode == "" {
+		respondError(c, http.StatusBadRequest, "mfa_code_required", "totp code is required")
+		return
+	}
+
+	valid, err := totp.ValidateCustom(totpCode, user.MFATOTPSecret, time.Now().UTC(), totp.ValidateOpts{
+		Period:    30,
+		Skew:      1,
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
+	})
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "invalid_mfa_code", "invalid totp code")
+		return
+	}
+	if !valid {
+		respondError(c, http.StatusUnauthorized, "invalid_mfa_code", "invalid totp code")
 		return
 	}
 
@@ -217,6 +294,17 @@ func (h *handler) login(c *gin.Context) {
 		"expiresAt": expiresAt.UTC(),
 		"user":      sanitizeUser(user),
 	})
+}
+
+func (h *handler) findUserByIdentifier(ctx context.Context, identifier string) (*store.User, error) {
+	user, err := h.store.GetUserByName(ctx, identifier)
+	if err == nil {
+		return user, nil
+	}
+	if err != nil && !errors.Is(err, store.ErrUserNotFound) {
+		return nil, err
+	}
+	return h.store.GetUserByEmail(ctx, identifier)
 }
 
 func (h *handler) session(c *gin.Context) {
@@ -263,11 +351,10 @@ func (h *handler) deleteSession(c *gin.Context) {
 }
 
 func (h *handler) createSession(userID string) (string, time.Time, error) {
-	buffer := make([]byte, 32)
-	if _, err := rand.Read(buffer); err != nil {
+	token, err := h.newRandomToken()
+	if err != nil {
 		return "", time.Time{}, err
 	}
-	token := hex.EncodeToString(buffer)
 	ttl := h.sessionTTL
 	if ttl <= 0 {
 		ttl = defaultSessionTTL
@@ -300,15 +387,299 @@ func (h *handler) removeSession(token string) {
 	h.mu.Unlock()
 }
 
+func (h *handler) newRandomToken() (string, error) {
+	buffer := make([]byte, 32)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buffer), nil
+}
+
+func (h *handler) createMFAChallenge(userID string) (string, error) {
+	token, err := h.newRandomToken()
+	if err != nil {
+		return "", err
+	}
+	ttl := h.mfaChallengeTTL
+	if ttl <= 0 {
+		ttl = defaultMFAChallengeTTL
+	}
+	challenge := mfaChallenge{userID: userID, expiresAt: time.Now().Add(ttl)}
+	h.mfaMu.Lock()
+	h.mfaChallenges[token] = challenge
+	h.mfaMu.Unlock()
+	return token, nil
+}
+
+func (h *handler) lookupMFAChallenge(token string) (mfaChallenge, bool) {
+	h.mfaMu.RLock()
+	challenge, ok := h.mfaChallenges[token]
+	h.mfaMu.RUnlock()
+	if !ok {
+		return mfaChallenge{}, false
+	}
+	if time.Now().After(challenge.expiresAt) {
+		h.removeMFAChallenge(token)
+		return mfaChallenge{}, false
+	}
+	return challenge, true
+}
+
+func (h *handler) refreshMFAChallenge(token string) (mfaChallenge, bool) {
+	ttl := h.mfaChallengeTTL
+	if ttl <= 0 {
+		ttl = defaultMFAChallengeTTL
+	}
+	h.mfaMu.Lock()
+	challenge, ok := h.mfaChallenges[token]
+	if ok {
+		challenge.expiresAt = time.Now().Add(ttl)
+		h.mfaChallenges[token] = challenge
+	}
+	h.mfaMu.Unlock()
+	if !ok {
+		return mfaChallenge{}, false
+	}
+	if time.Now().After(challenge.expiresAt) {
+		h.removeMFAChallenge(token)
+		return mfaChallenge{}, false
+	}
+	return challenge, true
+}
+
+func (h *handler) removeMFAChallenge(token string) {
+	h.mfaMu.Lock()
+	delete(h.mfaChallenges, token)
+	h.mfaMu.Unlock()
+}
+
+func (h *handler) provisionTOTP(c *gin.Context) {
+	var req struct {
+		Token   string `json:"token"`
+		Issuer  string `json:"issuer"`
+		Account string `json:"account"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
+		return
+	}
+
+	token := strings.TrimSpace(req.Token)
+	if token == "" {
+		respondError(c, http.StatusBadRequest, "mfa_token_required", "mfa token is required")
+		return
+	}
+
+	challenge, ok := h.refreshMFAChallenge(token)
+	if !ok {
+		respondError(c, http.StatusUnauthorized, "invalid_mfa_token", "mfa token is invalid or expired")
+		return
+	}
+
+	ctx := c.Request.Context()
+	user, err := h.store.GetUserByID(ctx, challenge.userID)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "mfa_user_lookup_failed", "failed to load user for mfa provisioning")
+		return
+	}
+
+	if user.MFAEnabled {
+		respondError(c, http.StatusBadRequest, "mfa_already_enabled", "mfa already enabled for this account")
+		return
+	}
+
+	issuer := strings.TrimSpace(req.Issuer)
+	if issuer == "" {
+		issuer = h.totpIssuer
+	}
+
+	accountName := strings.TrimSpace(req.Account)
+	if accountName == "" {
+		accountName = strings.TrimSpace(user.Email)
+	}
+	if accountName == "" {
+		accountName = strings.TrimSpace(user.Name)
+	}
+	if accountName == "" {
+		accountName = strings.TrimSpace(user.ID)
+	}
+
+	key, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      issuer,
+		AccountName: accountName,
+		Period:      30,
+		Digits:      otp.DigitsSix,
+		Algorithm:   otp.AlgorithmSHA1,
+	})
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "mfa_secret_generation_failed", "failed to generate totp secret")
+		return
+	}
+
+	user.MFATOTPSecret = key.Secret()
+	user.MFAEnabled = false
+	user.MFASecretIssuedAt = time.Now().UTC()
+	user.MFAConfirmedAt = time.Time{}
+
+	if err := h.store.UpdateUser(ctx, user); err != nil {
+		respondError(c, http.StatusInternalServerError, "mfa_secret_persist_failed", "failed to persist totp secret")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"secret":   user.MFATOTPSecret,
+		"uri":      key.URL(),
+		"issuer":   issuer,
+		"account":  accountName,
+		"mfaToken": token,
+		"user":     sanitizeUser(user),
+	})
+}
+
+func (h *handler) verifyTOTP(c *gin.Context) {
+	var req struct {
+		Token string `json:"token"`
+		Code  string `json:"code"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
+		return
+	}
+
+	token := strings.TrimSpace(req.Token)
+	if token == "" {
+		respondError(c, http.StatusBadRequest, "mfa_token_required", "mfa token is required")
+		return
+	}
+
+	challenge, ok := h.lookupMFAChallenge(token)
+	if !ok {
+		respondError(c, http.StatusUnauthorized, "invalid_mfa_token", "mfa token is invalid or expired")
+		return
+	}
+
+	ctx := c.Request.Context()
+	user, err := h.store.GetUserByID(ctx, challenge.userID)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "mfa_user_lookup_failed", "failed to load user for verification")
+		return
+	}
+
+	if strings.TrimSpace(user.MFATOTPSecret) == "" {
+		respondError(c, http.StatusBadRequest, "mfa_secret_missing", "mfa secret has not been provisioned")
+		return
+	}
+
+	code := strings.TrimSpace(req.Code)
+	if code == "" {
+		respondError(c, http.StatusBadRequest, "mfa_code_required", "totp code is required")
+		return
+	}
+
+	if !totp.Validate(code, user.MFATOTPSecret) {
+		respondError(c, http.StatusUnauthorized, "invalid_mfa_code", "invalid totp code")
+		return
+	}
+
+	user.MFAEnabled = true
+	user.MFAConfirmedAt = time.Now().UTC()
+
+	if err := h.store.UpdateUser(ctx, user); err != nil {
+		respondError(c, http.StatusInternalServerError, "mfa_update_failed", "failed to enable mfa")
+		return
+	}
+
+	h.removeMFAChallenge(token)
+
+	sessionToken, expiresAt, err := h.createSession(user.ID)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "session_creation_failed", "failed to create session")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "mfa_verified",
+		"token":     sessionToken,
+		"expiresAt": expiresAt.UTC(),
+		"user":      sanitizeUser(user),
+	})
+}
+
+func (h *handler) mfaStatus(c *gin.Context) {
+	token := strings.TrimSpace(c.Query("token"))
+	if token == "" {
+		token = strings.TrimSpace(c.GetHeader("X-MFA-Token"))
+	}
+
+	authToken := extractToken(c.GetHeader("Authorization"))
+
+	var (
+		user *store.User
+		err  error
+	)
+
+	ctx := c.Request.Context()
+
+	if authToken != "" {
+		if sess, ok := h.lookupSession(authToken); ok {
+			user, err = h.store.GetUserByID(ctx, sess.userID)
+			if err != nil {
+				respondError(c, http.StatusInternalServerError, "mfa_status_failed", "failed to load user for status")
+				return
+			}
+		} else if token == "" {
+			token = authToken
+		}
+	}
+
+	if user == nil && token != "" {
+		if challenge, ok := h.lookupMFAChallenge(token); ok {
+			user, err = h.store.GetUserByID(ctx, challenge.userID)
+			if err != nil {
+				respondError(c, http.StatusInternalServerError, "mfa_status_failed", "failed to load user for status")
+				return
+			}
+		}
+	}
+
+	if user == nil {
+		respondError(c, http.StatusUnauthorized, "mfa_token_required", "valid session or mfa token is required")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"mfa":  buildMFAState(user),
+		"user": sanitizeUser(user),
+	})
+}
+
 func sanitizeUser(user *store.User) gin.H {
 	identifier := strings.TrimSpace(user.ID)
 	return gin.H{
-		"id":       identifier,
-		"uuid":     identifier,
-		"name":     user.Name,
-		"username": user.Name,
-		"email":    user.Email,
+		"id":         identifier,
+		"uuid":       identifier,
+		"name":       user.Name,
+		"username":   user.Name,
+		"email":      user.Email,
+		"mfaEnabled": user.MFAEnabled,
+		"mfa":        buildMFAState(user),
 	}
+}
+
+func buildMFAState(user *store.User) gin.H {
+	state := gin.H{
+		"totpEnabled": user.MFAEnabled,
+		"totpPending": strings.TrimSpace(user.MFATOTPSecret) != "" && !user.MFAEnabled,
+	}
+	if !user.MFASecretIssuedAt.IsZero() {
+		state["totpSecretIssuedAt"] = user.MFASecretIssuedAt.UTC()
+	}
+	if !user.MFAConfirmedAt.IsZero() {
+		state["totpConfirmedAt"] = user.MFAConfirmedAt.UTC()
+	}
+	return state
 }
 
 func respondError(c *gin.Context, status int, code, message string) {

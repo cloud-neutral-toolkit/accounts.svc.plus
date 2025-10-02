@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -86,6 +89,27 @@ var rootCmd = &cobra.Command{
 			addr = ":8080"
 		}
 
+		tlsSettings := cfg.Server.TLS
+		certFile := strings.TrimSpace(tlsSettings.CertFile)
+		keyFile := strings.TrimSpace(tlsSettings.KeyFile)
+		clientCAFile := strings.TrimSpace(tlsSettings.ClientCAFile)
+
+		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+		if clientCAFile != "" {
+			caBytes, err := os.ReadFile(clientCAFile)
+			if err != nil {
+				return err
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(caBytes) {
+				return errors.New("failed to parse client CA file")
+			}
+			tlsConfig.ClientCAs = pool
+			tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		}
+
+		useTLS := certFile != "" && keyFile != ""
+
 		srv := &http.Server{
 			Addr:         addr,
 			Handler:      r,
@@ -93,11 +117,45 @@ var rootCmd = &cobra.Command{
 			WriteTimeout: cfg.Server.WriteTimeout,
 		}
 
-		logger.Info("starting account service", "addr", addr)
-		if err := srv.ListenAndServe(); err != nil {
-			if !errors.Is(err, http.ErrServerClosed) {
-				logger.Error("account service shutdown", "err", err)
-				return err
+		if useTLS {
+			srv.TLSConfig = tlsConfig
+		}
+
+		logger.Info("starting account service", "addr", addr, "tls", useTLS)
+
+		if useTLS {
+			if tlsSettings.RedirectHTTP {
+				go func() {
+					redirectAddr := deriveRedirectAddr(addr)
+					redirectSrv := &http.Server{
+						Addr: redirectAddr,
+						Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							host := r.Host
+							if host == "" {
+								host = redirectAddr
+							}
+							target := "https://" + host + r.URL.RequestURI()
+							http.Redirect(w, r, target, http.StatusPermanentRedirect)
+						}),
+					}
+					if err := redirectSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+						logger.Error("http redirect listener exited", "err", err)
+					}
+				}()
+			}
+
+			if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil {
+				if !errors.Is(err, http.ErrServerClosed) {
+					logger.Error("account service shutdown", "err", err)
+					return err
+				}
+			}
+		} else {
+			if err := srv.ListenAndServe(); err != nil {
+				if !errors.Is(err, http.ErrServerClosed) {
+					logger.Error("account service shutdown", "err", err)
+					return err
+				}
 			}
 		}
 		return nil
@@ -113,4 +171,23 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+func deriveRedirectAddr(addr string) string {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		trimmed := strings.TrimSpace(addr)
+		if strings.HasPrefix(trimmed, ":") {
+			port = strings.TrimPrefix(trimmed, ":")
+			if port == "" || port == "443" {
+				return ":80"
+			}
+			return ":" + port
+		}
+		return ":80"
+	}
+	if port == "" || port == "443" {
+		port = "80"
+	}
+	return net.JoinHostPort(host, port)
 }

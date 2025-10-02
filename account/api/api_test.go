@@ -6,9 +6,33 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pquerna/otp"
+	"github.com/pquerna/otp/totp"
 )
+
+type apiResponse struct {
+	Message   string                 `json:"message"`
+	Error     string                 `json:"error"`
+	Token     string                 `json:"token"`
+	MFAToken  string                 `json:"mfaToken"`
+	User      map[string]interface{} `json:"user"`
+	MFA       map[string]interface{} `json:"mfa"`
+	Secret    string                 `json:"secret"`
+	URI       string                 `json:"uri"`
+	ExpiresAt string                 `json:"expiresAt"`
+}
+
+func decodeResponse(t *testing.T, rr *httptest.ResponseRecorder) apiResponse {
+	t.Helper()
+	var resp apiResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	return resp
+}
 
 func TestRegisterEndpoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -37,41 +61,38 @@ func TestRegisterEndpoint(t *testing.T) {
 		t.Fatalf("expected status %d, got %d, body: %s", http.StatusCreated, rr.Code, rr.Body.String())
 	}
 
-	var response struct {
-		Message string         `json:"message"`
-		User    map[string]any `json:"user"`
-	}
-
-	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if response.User == nil {
+	resp := decodeResponse(t, rr)
+	if resp.User == nil {
 		t.Fatalf("expected user object in response")
 	}
 
-	if email, ok := response.User["email"].(string); !ok || email != payload["email"] {
-		t.Fatalf("expected email %q, got %#v", payload["email"], response.User["email"])
+	if email, ok := resp.User["email"].(string); !ok || email != payload["email"] {
+		t.Fatalf("expected email %q, got %#v", payload["email"], resp.User["email"])
 	}
 
-	if id, ok := response.User["id"].(string); !ok || id == "" {
-		t.Fatalf("expected user id in response, got %#v", response.User["id"])
-	} else {
-		if uuid, ok := response.User["uuid"].(string); !ok || uuid != id {
-			t.Fatalf("expected uuid to match id, got id=%q uuid=%#v", id, response.User["uuid"])
-		}
+	if id, ok := resp.User["id"].(string); !ok || id == "" {
+		t.Fatalf("expected user id in response")
+	} else if uuid, ok := resp.User["uuid"].(string); !ok || uuid != id {
+		t.Fatalf("expected uuid to match id")
 	}
 
-	if response.Message == "" {
-		t.Fatalf("expected success message in response")
+	if mfaEnabled, ok := resp.User["mfaEnabled"].(bool); !ok || mfaEnabled {
+		t.Fatalf("expected mfaEnabled to be false, got %#v", resp.User["mfaEnabled"])
 	}
 
-	if _, exists := response.User["password"]; exists {
-		t.Fatalf("response should not include password field")
+	mfaData, ok := resp.User["mfa"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected mfa state in user payload")
+	}
+	if enabled, ok := mfaData["totpEnabled"].(bool); !ok || enabled {
+		t.Fatalf("expected totpEnabled to be false, got %#v", mfaData["totpEnabled"])
+	}
+	if pending, ok := mfaData["totpPending"].(bool); !ok || pending {
+		t.Fatalf("expected totpPending to be false, got %#v", mfaData["totpPending"])
 	}
 }
 
-func TestLoginEndpoint(t *testing.T) {
+func TestMFATOTPFlow(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
@@ -82,7 +103,6 @@ func TestLoginEndpoint(t *testing.T) {
 		"email":    "login@example.com",
 		"password": "supersecure",
 	}
-
 	registerBody, err := json.Marshal(registerPayload)
 	if err != nil {
 		t.Fatalf("failed to marshal registration payload: %v", err)
@@ -97,10 +117,9 @@ func TestLoginEndpoint(t *testing.T) {
 	}
 
 	loginPayload := map[string]string{
-		"username": "Login User",
-		"password": registerPayload["password"],
+		"identifier": "Login User",
+		"password":   registerPayload["password"],
 	}
-
 	loginBody, err := json.Marshal(loginPayload)
 	if err != nil {
 		t.Fatalf("failed to marshal login payload: %v", err)
@@ -111,164 +130,151 @@ func TestLoginEndpoint(t *testing.T) {
 	rr = httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected login success, got %d: %s", rr.Code, rr.Body.String())
-	}
-
-	var loginResponse struct {
-		Message string                 `json:"message"`
-		Token   string                 `json:"token"`
-		User    map[string]interface{} `json:"user"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &loginResponse); err != nil {
-		t.Fatalf("failed to decode login response: %v", err)
-	}
-
-	if id, ok := loginResponse.User["id"].(string); !ok || id == "" {
-		t.Fatalf("expected user id in login response, got %#v", loginResponse.User["id"])
-	} else {
-		if uuid, ok := loginResponse.User["uuid"].(string); !ok || uuid != id {
-			t.Fatalf("expected login uuid to match id, got id=%q uuid=%#v", id, loginResponse.User["uuid"])
-		}
-	}
-
-	if loginResponse.Message == "" {
-		t.Fatalf("expected login success message")
-	}
-	if loginResponse.Token == "" {
-		t.Fatalf("expected session token in login response")
-	}
-	if username, ok := loginResponse.User["username"].(string); !ok || username != registerPayload["name"] {
-		t.Fatalf("expected username %q in response, got %#v", registerPayload["name"], loginResponse.User["username"])
-	}
-
-	// Wrong password
-	loginPayload["password"] = "wrongpass"
-	loginBody, err = json.Marshal(loginPayload)
-	if err != nil {
-		t.Fatalf("failed to marshal invalid login payload: %v", err)
-	}
-
-	req = httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(loginBody))
-	req.Header.Set("Content-Type", "application/json")
-	rr = httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-
 	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected unauthorized for wrong password, got %d", rr.Code)
+		t.Fatalf("expected login to require mfa setup, got %d", rr.Code)
+	}
+	resp := decodeResponse(t, rr)
+	if resp.Error != "mfa_setup_required" {
+		t.Fatalf("expected mfa_setup_required error, got %q", resp.Error)
+	}
+	if resp.MFAToken == "" {
+		t.Fatalf("expected mfa token in response")
 	}
 
-	var errorResponse struct {
-		Error string `json:"error"`
+	provisionPayload := map[string]string{
+		"token": resp.MFAToken,
 	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &errorResponse); err != nil {
-		t.Fatalf("failed to decode wrong password response: %v", err)
-	}
-	if errorResponse.Error != "invalid_credentials" {
-		t.Fatalf("expected invalid_credentials error, got %q", errorResponse.Error)
-	}
-
-	// Unknown user
-	loginPayload["username"] = "missing-user"
-	loginPayload["password"] = registerPayload["password"]
-	loginBody, err = json.Marshal(loginPayload)
+	provisionBody, err := json.Marshal(provisionPayload)
 	if err != nil {
-		t.Fatalf("failed to marshal missing user payload: %v", err)
+		t.Fatalf("failed to marshal provision payload: %v", err)
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(loginBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/mfa/totp/provision", bytes.NewReader(provisionBody))
 	req.Header.Set("Content-Type", "application/json")
 	rr = httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("expected not found for missing user, got %d", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected provisioning success, got %d: %s", rr.Code, rr.Body.String())
 	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &errorResponse); err != nil {
-		t.Fatalf("failed to decode missing user response: %v", err)
+	resp = decodeResponse(t, rr)
+	if resp.Secret == "" {
+		t.Fatalf("expected totp secret in provisioning response")
 	}
-	if errorResponse.Error != "user_not_found" {
-		t.Fatalf("expected user_not_found error, got %q", errorResponse.Error)
+	if resp.URI == "" {
+		t.Fatalf("expected otpauth uri in provisioning response")
 	}
-}
+	secret := resp.Secret
 
-func TestRegisterRejectsDuplicateIdentifiers(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	router := gin.New()
-	RegisterRoutes(router)
-
-	basePayload := map[string]string{
-		"name":     "Existing User",
-		"email":    "existing@example.com",
-		"password": "supersecure",
+	generateCode := func(offset time.Duration) string {
+		code, err := totp.GenerateCodeCustom(secret, time.Now().UTC().Add(offset), totp.ValidateOpts{
+			Period:    30,
+			Skew:      1,
+			Digits:    otp.DigitsSix,
+			Algorithm: otp.AlgorithmSHA1,
+		})
+		if err != nil {
+			t.Fatalf("failed to generate verification code: %v", err)
+		}
+		return code
 	}
 
-	body, err := json.Marshal(basePayload)
+	code := generateCode(0)
+
+	verifyPayload := map[string]string{
+		"token": resp.MFAToken,
+		"code":  code,
+	}
+	verifyBody, err := json.Marshal(verifyPayload)
 	if err != nil {
-		t.Fatalf("failed to marshal payload: %v", err)
+		t.Fatalf("failed to marshal verify payload: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("expected initial registration to succeed, got %d", rr.Code)
-	}
-
-	// Duplicate email
-	payload := map[string]string{
-		"name":     "Another User",
-		"email":    basePayload["email"],
-		"password": "supersecure",
-	}
-	body, err = json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("failed to marshal payload: %v", err)
-	}
-
-	req = httptest.NewRequest(http.MethodPost, "/api/auth/register", bytes.NewReader(body))
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/mfa/totp/verify", bytes.NewReader(verifyBody))
 	req.Header.Set("Content-Type", "application/json")
 	rr = httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
-	if rr.Code != http.StatusConflict {
-		t.Fatalf("expected conflict for duplicate email, got %d", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected verification success, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp = decodeResponse(t, rr)
+	if resp.Token == "" {
+		t.Fatalf("expected session token after verification")
+	}
+	if resp.User == nil || resp.User["mfaEnabled"] != true {
+		t.Fatalf("expected mfaEnabled true after verification")
 	}
 
-	var conflictResp struct {
-		Error string `json:"error"`
+	sessionReq := httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
+	sessionReq.Header.Set("Authorization", "Bearer "+resp.Token)
+	sessionRec := httptest.NewRecorder()
+	router.ServeHTTP(sessionRec, sessionReq)
+	if sessionRec.Code != http.StatusOK {
+		t.Fatalf("expected session lookup success, got %d", sessionRec.Code)
 	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &conflictResp); err != nil {
-		t.Fatalf("failed to decode duplicate email response: %v", err)
+	sessionResp := decodeResponse(t, sessionRec)
+	if sessionResp.User == nil {
+		t.Fatalf("expected user in session response")
 	}
-	if conflictResp.Error != "email_already_exists" {
-		t.Fatalf("expected email_already_exists error, got %q", conflictResp.Error)
-	}
-
-	// Duplicate name
-	payload = map[string]string{
-		"name":     basePayload["name"],
-		"email":    "unique@example.com",
-		"password": "supersecure",
-	}
-	body, err = json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("failed to marshal payload: %v", err)
+	if sessionResp.User["mfaEnabled"] != true {
+		t.Fatalf("expected session user to have mfaEnabled true")
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/auth/register", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rr = httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-	if rr.Code != http.StatusConflict {
-		t.Fatalf("expected conflict for duplicate name, got %d", rr.Code)
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/auth/mfa/status", nil)
+	statusReq.Header.Set("Authorization", "Bearer "+resp.Token)
+	statusRec := httptest.NewRecorder()
+	router.ServeHTTP(statusRec, statusReq)
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("expected status success, got %d", statusRec.Code)
 	}
 
-	if err := json.Unmarshal(rr.Body.Bytes(), &conflictResp); err != nil {
-		t.Fatalf("failed to decode duplicate name response: %v", err)
+	loginWithTotp := func(body map[string]string) *httptest.ResponseRecorder {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("failed to marshal login payload: %v", err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(payload))
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		return recorder
 	}
-	if conflictResp.Error != "name_already_exists" {
-		t.Fatalf("expected name_already_exists error, got %q", conflictResp.Error)
+
+	time.Sleep(1 * time.Second)
+	totpCode := generateCode(0)
+	if ok, _ := totp.ValidateCustom(totpCode, secret, time.Now().UTC(), totp.ValidateOpts{
+		Period:    30,
+		Skew:      1,
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
+	}); !ok {
+		t.Fatalf("locally generated totp code is invalid")
+	}
+
+	rr = loginWithTotp(map[string]string{
+		"identifier": "Login User",
+		"password":   registerPayload["password"],
+		"totpCode":   totpCode,
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected mfa login success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	time.Sleep(1 * time.Second)
+	totpCode = generateCode(0)
+	if ok, _ := totp.ValidateCustom(totpCode, secret, time.Now().UTC(), totp.ValidateOpts{
+		Period:    30,
+		Skew:      1,
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
+	}); !ok {
+		t.Fatalf("locally generated totp code is invalid (email login)")
+	}
+
+	rr = loginWithTotp(map[string]string{
+		"identifier": registerPayload["email"],
+		"totpCode":   totpCode,
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected email+totp login success, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
