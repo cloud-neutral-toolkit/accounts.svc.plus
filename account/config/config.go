@@ -23,6 +23,7 @@ type Config struct {
 	Server  Server  `yaml:"server"`
 	Store   Store   `yaml:"store"`
 	Session Session `yaml:"session"`
+	SMTP    SMTP    `yaml:"smtp"`
 }
 
 // Server defines HTTP server configuration.
@@ -64,6 +65,24 @@ type Store struct {
 // Session defines session management configuration.
 type Session struct {
 	TTL time.Duration `yaml:"ttl"`
+}
+
+// SMTP defines outbound SMTP configuration used for transactional email.
+type SMTP struct {
+	Host     string        `yaml:"host"`
+	Port     int           `yaml:"port"`
+	Username string        `yaml:"username"`
+	Password string        `yaml:"password"`
+	From     string        `yaml:"from"`
+	ReplyTo  string        `yaml:"replyTo"`
+	Timeout  time.Duration `yaml:"timeout"`
+	TLS      SMTPTLS       `yaml:"tls"`
+}
+
+// SMTPTLS describes TLS settings for SMTP connections.
+type SMTPTLS struct {
+	Mode               string `yaml:"mode"`
+	InsecureSkipVerify bool   `yaml:"insecureSkipVerify"`
 }
 
 // Load reads the configuration file at the provided path. When path is empty,

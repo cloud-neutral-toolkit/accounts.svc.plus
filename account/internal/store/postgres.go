@@ -98,14 +98,15 @@ func (s *postgresStore) CreateUser(ctx context.Context, user *User) error {
 		}
 	}
 
-	query := `INSERT INTO users (username, email, password)
-          VALUES ($1, $2, $3)
-          RETURNING uuid, coalesce(created_at, now()), coalesce(updated_at, now())`
+	query := `INSERT INTO users (username, email, password, email_verified)
+          VALUES ($1, $2, $3, $4)
+          RETURNING uuid, coalesce(created_at, now()), coalesce(updated_at, now()), email_verified`
 
 	var idValue any
 	var createdAt time.Time
 	var updatedAt time.Time
-	err = s.db.QueryRowContext(ctx, query, normalizedName, normalizedEmail, user.PasswordHash).Scan(&idValue, &createdAt, &updatedAt)
+	var emailVerified sql.NullBool
+	err = s.db.QueryRowContext(ctx, query, normalizedName, normalizedEmail, user.PasswordHash, user.EmailVerified).Scan(&idValue, &createdAt, &updatedAt, &emailVerified)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrUserNotFound
@@ -134,6 +135,7 @@ func (s *postgresStore) CreateUser(ctx context.Context, user *User) error {
 	user.Email = normalizedEmail
 	user.CreatedAt = createdAt.UTC()
 	user.UpdatedAt = updatedAt.UTC()
+	user.EmailVerified = emailVerified.Bool
 	return nil
 }
 
@@ -143,7 +145,7 @@ func (s *postgresStore) GetUserByEmail(ctx context.Context, email string) (*User
 		return nil, ErrUserNotFound
 	}
 
-	query := `SELECT uuid, username, email, password, mfa_totp_secret, coalesce(mfa_enabled, false),
+	query := `SELECT uuid, username, email, email_verified, password, mfa_totp_secret, coalesce(mfa_enabled, false),
           mfa_secret_issued_at, mfa_confirmed_at, coalesce(created_at, now()), coalesce(updated_at, now())
           FROM users WHERE lower(email) = $1 LIMIT 1`
 
@@ -157,7 +159,7 @@ func (s *postgresStore) GetUserByName(ctx context.Context, name string) (*User, 
 		return nil, ErrUserNotFound
 	}
 
-	query := `SELECT uuid, username, email, password, mfa_totp_secret, coalesce(mfa_enabled, false),
+	query := `SELECT uuid, username, email, email_verified, password, mfa_totp_secret, coalesce(mfa_enabled, false),
           mfa_secret_issued_at, mfa_confirmed_at, coalesce(created_at, now()), coalesce(updated_at, now())
           FROM users WHERE lower(username) = lower($1) LIMIT 1`
 
@@ -166,7 +168,7 @@ func (s *postgresStore) GetUserByName(ctx context.Context, name string) (*User, 
 }
 
 func (s *postgresStore) GetUserByID(ctx context.Context, id string) (*User, error) {
-	query := `SELECT uuid, username, email, password, mfa_totp_secret, coalesce(mfa_enabled, false),
+	query := `SELECT uuid, username, email, email_verified, password, mfa_totp_secret, coalesce(mfa_enabled, false),
           mfa_secret_issued_at, mfa_confirmed_at, coalesce(created_at, now()), coalesce(updated_at, now())
           FROM users WHERE uuid = $1`
 
@@ -215,6 +217,7 @@ func scanUser(row rowScanner) (*User, error) {
 		idValue         any
 		username        sql.NullString
 		email           sql.NullString
+		emailVerified   sql.NullBool
 		password        sql.NullString
 		mfaSecret       sql.NullString
 		mfaEnabled      sql.NullBool
@@ -224,7 +227,7 @@ func scanUser(row rowScanner) (*User, error) {
 		updatedAt       time.Time
 	)
 
-	if err := row.Scan(&idValue, &username, &email, &password, &mfaSecret, &mfaEnabled, &mfaSecretIssued, &mfaConfirmed, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&idValue, &username, &email, &emailVerified, &password, &mfaSecret, &mfaEnabled, &mfaSecretIssued, &mfaConfirmed, &createdAt, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrUserNotFound
 		}
@@ -240,6 +243,7 @@ func scanUser(row rowScanner) (*User, error) {
 		ID:                identifier,
 		Name:              strings.TrimSpace(username.String),
 		Email:             strings.ToLower(strings.TrimSpace(email.String)),
+		EmailVerified:     emailVerified.Bool,
 		PasswordHash:      password.String,
 		MFATOTPSecret:     strings.TrimSpace(mfaSecret.String),
 		MFAEnabled:        mfaEnabled.Bool,
@@ -270,18 +274,19 @@ func (s *postgresStore) UpdateUser(ctx context.Context, user *User) error {
 	query := `UPDATE users
           SET username = $1,
               email = $2,
-              password = $3,
-              mfa_totp_secret = $4,
-              mfa_enabled = $5,
-              mfa_secret_issued_at = $6,
-              mfa_confirmed_at = $7,
+              email_verified = $3,
+              password = $4,
+              mfa_totp_secret = $5,
+              mfa_enabled = $6,
+              mfa_secret_issued_at = $7,
+              mfa_confirmed_at = $8,
               updated_at = now()
-          WHERE uuid = $8
+          WHERE uuid = $9
           RETURNING coalesce(created_at, now()), coalesce(updated_at, now())`
 
 	var createdAt time.Time
 	var updatedAt time.Time
-	err := s.db.QueryRowContext(ctx, query, normalizedName, normalizedEmail, user.PasswordHash, nullForEmpty(user.MFATOTPSecret), user.MFAEnabled, issuedAt, confirmedAt, user.ID).Scan(&createdAt, &updatedAt)
+	err := s.db.QueryRowContext(ctx, query, normalizedName, normalizedEmail, user.EmailVerified, user.PasswordHash, nullForEmpty(user.MFATOTPSecret), user.MFAEnabled, issuedAt, confirmedAt, user.ID).Scan(&createdAt, &updatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrUserNotFound

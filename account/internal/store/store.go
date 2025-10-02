@@ -15,6 +15,7 @@ type User struct {
 	ID                string
 	Name              string
 	Email             string
+	EmailVerified     bool
 	PasswordHash      string
 	MFATOTPSecret     string
 	MFAEnabled        bool
@@ -197,6 +198,7 @@ func (s *memoryStore) UpdateUser(ctx context.Context, user *User) error {
 	updated := *existing
 	updated.Name = normalizedName
 	updated.Email = loweredEmail
+	updated.EmailVerified = user.EmailVerified
 	updated.PasswordHash = user.PasswordHash
 	updated.MFATOTPSecret = user.MFATOTPSecret
 	updated.MFAEnabled = user.MFAEnabled

@@ -5,6 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"html"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -21,6 +24,8 @@ import (
 const defaultSessionTTL = 24 * time.Hour
 const defaultMFAChallengeTTL = 10 * time.Minute
 const defaultTOTPIssuer = "XControl Account"
+const defaultEmailVerificationTTL = 24 * time.Hour
+const defaultPasswordResetTTL = 30 * time.Minute
 
 type session struct {
 	userID    string
@@ -36,10 +41,29 @@ type handler struct {
 	mfaMu           sync.RWMutex
 	mfaChallengeTTL time.Duration
 	totpIssuer      string
+	emailSender     EmailSender
+	verificationTTL time.Duration
+	verifications   map[string]emailVerification
+	verificationMu  sync.RWMutex
+	resetTTL        time.Duration
+	passwordResets  map[string]passwordReset
+	resetMu         sync.RWMutex
 }
 
 type mfaChallenge struct {
 	userID    string
+	expiresAt time.Time
+}
+
+type emailVerification struct {
+	userID    string
+	email     string
+	expiresAt time.Time
+}
+
+type passwordReset struct {
+	userID    string
+	email     string
 	expiresAt time.Time
 }
 
@@ -64,6 +88,33 @@ func WithSessionTTL(ttl time.Duration) Option {
 	}
 }
 
+// WithEmailSender configures the handler to use the provided EmailSender for outbound notifications.
+func WithEmailSender(sender EmailSender) Option {
+	return func(h *handler) {
+		if sender != nil {
+			h.emailSender = sender
+		}
+	}
+}
+
+// WithEmailVerificationTTL overrides the default TTL for email verification tokens.
+func WithEmailVerificationTTL(ttl time.Duration) Option {
+	return func(h *handler) {
+		if ttl > 0 {
+			h.verificationTTL = ttl
+		}
+	}
+}
+
+// WithPasswordResetTTL overrides the default TTL for password reset tokens.
+func WithPasswordResetTTL(ttl time.Duration) Option {
+	return func(h *handler) {
+		if ttl > 0 {
+			h.resetTTL = ttl
+		}
+	}
+}
+
 // RegisterRoutes attaches account service endpoints to the router.
 func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	h := &handler{
@@ -73,6 +124,11 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 		mfaChallenges:   make(map[string]mfaChallenge),
 		mfaChallengeTTL: defaultMFAChallengeTTL,
 		totpIssuer:      defaultTOTPIssuer,
+		emailSender:     noopEmailSender,
+		verificationTTL: defaultEmailVerificationTTL,
+		verifications:   make(map[string]emailVerification),
+		resetTTL:        defaultPasswordResetTTL,
+		passwordResets:  make(map[string]passwordReset),
 	}
 
 	for _, opt := range opts {
@@ -85,12 +141,15 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 
 	auth := r.Group("/api/auth")
 	auth.POST("/register", h.register)
+	auth.POST("/register/verify", h.verifyEmail)
 	auth.POST("/login", h.login)
 	auth.GET("/session", h.session)
 	auth.DELETE("/session", h.deleteSession)
 	auth.POST("/mfa/totp/provision", h.provisionTOTP)
 	auth.POST("/mfa/totp/verify", h.verifyTOTP)
 	auth.GET("/mfa/status", h.mfaStatus)
+	auth.POST("/password/reset", h.requestPasswordReset)
+	auth.POST("/password/reset/confirm", h.confirmPasswordReset)
 }
 
 type registerRequest struct {
@@ -105,6 +164,19 @@ type loginRequest struct {
 	Email      string `json:"email"`
 	Password   string `json:"password"`
 	TOTPCode   string `json:"totpCode"`
+}
+
+type tokenRequest struct {
+	Token string `json:"token"`
+}
+
+type passwordResetRequestBody struct {
+	Email string `json:"email"`
+}
+
+type passwordResetConfirmRequest struct {
+	Token    string `json:"token"`
+	Password string `json:"password"`
 }
 
 func hasQueryParameter(c *gin.Context, keys ...string) bool {
@@ -187,11 +259,195 @@ func (h *handler) register(c *gin.Context) {
 		}
 	}
 
+	if err := h.enqueueEmailVerification(c.Request.Context(), user); err != nil {
+		slog.Error("failed to send verification email", "err", err, "email", user.Email)
+		respondError(c, http.StatusInternalServerError, "verification_email_failed", "failed to send verification email")
+		return
+	}
+
 	response := gin.H{
-		"message": "user registered successfully",
+		"message": "verification email sent",
 		"user":    sanitizeUser(user),
 	}
 	c.JSON(http.StatusCreated, response)
+}
+
+func (h *handler) verifyEmail(c *gin.Context) {
+	if hasQueryParameter(c, "token") {
+		respondError(c, http.StatusBadRequest, "token_in_query", "verification token must be sent in the request body")
+		return
+	}
+
+	var req tokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
+		return
+	}
+
+	token := strings.TrimSpace(req.Token)
+	if token == "" {
+		respondError(c, http.StatusBadRequest, "invalid_token", "verification token is required")
+		return
+	}
+
+	verification, ok := h.lookupEmailVerification(token)
+	if !ok {
+		respondError(c, http.StatusBadRequest, "invalid_token", "verification token is invalid or expired")
+		return
+	}
+
+	user, err := h.store.GetUserByID(c.Request.Context(), verification.userID)
+	if err != nil {
+		slog.Error("failed to load user for email verification", "err", err, "userID", verification.userID)
+		respondError(c, http.StatusInternalServerError, "verification_failed", "failed to verify email")
+		return
+	}
+
+	if !strings.EqualFold(strings.TrimSpace(user.Email), verification.email) {
+		h.removeEmailVerification(token)
+		respondError(c, http.StatusBadRequest, "invalid_token", "verification token is invalid or expired")
+		return
+	}
+
+	if !user.EmailVerified {
+		user.EmailVerified = true
+		if err := h.store.UpdateUser(c.Request.Context(), user); err != nil {
+			slog.Error("failed to update user during email verification", "err", err, "userID", user.ID)
+			respondError(c, http.StatusInternalServerError, "verification_failed", "failed to verify email")
+			return
+		}
+	}
+
+	h.removeEmailVerification(token)
+
+	sessionToken, expiresAt, err := h.createSession(user.ID)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "session_creation_failed", "failed to create session")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "email verified",
+		"token":     sessionToken,
+		"expiresAt": expiresAt.UTC(),
+		"user":      sanitizeUser(user),
+	})
+}
+
+func (h *handler) requestPasswordReset(c *gin.Context) {
+	if hasQueryParameter(c, "email") {
+		respondError(c, http.StatusBadRequest, "email_in_query", "email must be sent in the request body")
+		return
+	}
+
+	var req passwordResetRequestBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
+		return
+	}
+
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	if email == "" {
+		respondError(c, http.StatusBadRequest, "email_required", "email is required")
+		return
+	}
+
+	user, err := h.store.GetUserByEmail(c.Request.Context(), email)
+	if err != nil {
+		if errors.Is(err, store.ErrUserNotFound) {
+			c.JSON(http.StatusAccepted, gin.H{"message": "if the account exists a reset email will be sent"})
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "password_reset_failed", "failed to initiate password reset")
+		return
+	}
+
+	if strings.TrimSpace(user.Email) == "" || !user.EmailVerified {
+		c.JSON(http.StatusAccepted, gin.H{"message": "if the account exists a reset email will be sent"})
+		return
+	}
+
+	if err := h.enqueuePasswordReset(c.Request.Context(), user); err != nil {
+		slog.Error("failed to send password reset email", "err", err, "email", user.Email)
+		respondError(c, http.StatusInternalServerError, "password_reset_failed", "failed to initiate password reset")
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{"message": "if the account exists a reset email will be sent"})
+}
+
+func (h *handler) confirmPasswordReset(c *gin.Context) {
+	if hasQueryParameter(c, "token", "password") {
+		respondError(c, http.StatusBadRequest, "credentials_in_query", "sensitive credentials must not be sent in the query string")
+		return
+	}
+
+	var req passwordResetConfirmRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
+		return
+	}
+
+	token := strings.TrimSpace(req.Token)
+	password := strings.TrimSpace(req.Password)
+
+	if token == "" || password == "" {
+		respondError(c, http.StatusBadRequest, "invalid_request", "token and password are required")
+		return
+	}
+
+	if len(password) < 8 {
+		respondError(c, http.StatusBadRequest, "password_too_short", "password must be at least 8 characters")
+		return
+	}
+
+	reset, ok := h.lookupPasswordReset(token)
+	if !ok {
+		respondError(c, http.StatusBadRequest, "invalid_token", "reset token is invalid or expired")
+		return
+	}
+
+	user, err := h.store.GetUserByID(c.Request.Context(), reset.userID)
+	if err != nil {
+		slog.Error("failed to load user for password reset", "err", err, "userID", reset.userID)
+		respondError(c, http.StatusInternalServerError, "password_reset_failed", "failed to reset password")
+		return
+	}
+
+	if !strings.EqualFold(strings.TrimSpace(user.Email), reset.email) {
+		h.removePasswordReset(token)
+		respondError(c, http.StatusBadRequest, "invalid_token", "reset token is invalid or expired")
+		return
+	}
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "password_reset_failed", "failed to reset password")
+		return
+	}
+
+	user.PasswordHash = string(hashed)
+	user.EmailVerified = true
+	if err := h.store.UpdateUser(c.Request.Context(), user); err != nil {
+		slog.Error("failed to update user during password reset", "err", err, "userID", user.ID)
+		respondError(c, http.StatusInternalServerError, "password_reset_failed", "failed to reset password")
+		return
+	}
+
+	h.removePasswordReset(token)
+
+	sessionToken, expiresAt, err := h.createSession(user.ID)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "session_creation_failed", "failed to create session")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "password reset successful",
+		"token":     sessionToken,
+		"expiresAt": expiresAt.UTC(),
+		"user":      sanitizeUser(user),
+	})
 }
 
 func (h *handler) login(c *gin.Context) {
@@ -246,6 +502,11 @@ func (h *handler) login(c *gin.Context) {
 			respondError(c, http.StatusUnauthorized, "password_required", "password required for this identifier")
 			return
 		}
+	}
+
+	if strings.TrimSpace(user.Email) != "" && !user.EmailVerified {
+		respondError(c, http.StatusUnauthorized, "email_not_verified", "email must be verified before login")
+		return
 	}
 
 	if !user.MFAEnabled {
@@ -445,6 +706,162 @@ func (h *handler) refreshMFAChallenge(token string) (mfaChallenge, bool) {
 		return mfaChallenge{}, false
 	}
 	return challenge, true
+}
+
+func (h *handler) enqueueEmailVerification(ctx context.Context, user *store.User) error {
+	email := strings.TrimSpace(user.Email)
+	if email == "" {
+		return errors.New("user email is empty")
+	}
+
+	token, err := h.newRandomToken()
+	if err != nil {
+		return err
+	}
+
+	ttl := h.verificationTTL
+	if ttl <= 0 {
+		ttl = defaultEmailVerificationTTL
+	}
+
+	expiresAt := time.Now().Add(ttl)
+	verification := emailVerification{
+		userID:    user.ID,
+		email:     strings.ToLower(email),
+		expiresAt: expiresAt,
+	}
+
+	h.verificationMu.Lock()
+	h.verifications[token] = verification
+	h.verificationMu.Unlock()
+
+	name := strings.TrimSpace(user.Name)
+	if name == "" {
+		name = "there"
+	}
+
+	subject := "Verify your XControl account"
+	plainBody := fmt.Sprintf("Hello %s,\n\nUse the following token to verify your XControl account: %s\n\nThis token expires at %s UTC.\nIf you did not request this email you can ignore it.\n", name, token, expiresAt.UTC().Format(time.RFC3339))
+	htmlBody := fmt.Sprintf("<p>Hello %s,</p><p>Use the following token to verify your XControl account:</p><p><strong>%s</strong></p><p>This token expires at %s UTC.</p><p>If you did not request this email you can ignore it.</p>", html.EscapeString(name), token, expiresAt.UTC().Format(time.RFC3339))
+
+	msg := EmailMessage{
+		To:        []string{email},
+		Subject:   subject,
+		PlainBody: plainBody,
+		HTMLBody:  htmlBody,
+	}
+
+	if err := h.emailSender.Send(ctx, msg); err != nil {
+		h.removeEmailVerification(token)
+		return err
+	}
+
+	return nil
+}
+
+func (h *handler) lookupEmailVerification(token string) (emailVerification, bool) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return emailVerification{}, false
+	}
+
+	h.verificationMu.RLock()
+	verification, ok := h.verifications[token]
+	h.verificationMu.RUnlock()
+	if !ok {
+		return emailVerification{}, false
+	}
+
+	if time.Now().After(verification.expiresAt) {
+		h.removeEmailVerification(token)
+		return emailVerification{}, false
+	}
+
+	return verification, true
+}
+
+func (h *handler) removeEmailVerification(token string) {
+	h.verificationMu.Lock()
+	delete(h.verifications, strings.TrimSpace(token))
+	h.verificationMu.Unlock()
+}
+
+func (h *handler) enqueuePasswordReset(ctx context.Context, user *store.User) error {
+	email := strings.TrimSpace(user.Email)
+	if email == "" {
+		return errors.New("user email is empty")
+	}
+
+	token, err := h.newRandomToken()
+	if err != nil {
+		return err
+	}
+
+	ttl := h.resetTTL
+	if ttl <= 0 {
+		ttl = defaultPasswordResetTTL
+	}
+
+	expiresAt := time.Now().Add(ttl)
+	reset := passwordReset{
+		userID:    user.ID,
+		email:     strings.ToLower(email),
+		expiresAt: expiresAt,
+	}
+
+	h.resetMu.Lock()
+	h.passwordResets[token] = reset
+	h.resetMu.Unlock()
+
+	name := strings.TrimSpace(user.Name)
+	if name == "" {
+		name = "there"
+	}
+
+	subject := "Reset your XControl password"
+	plainBody := fmt.Sprintf("Hello %s,\n\nUse the following token to reset your XControl account password: %s\n\nThis token expires at %s UTC.\nIf you did not request a reset you can ignore this email.\n", name, token, expiresAt.UTC().Format(time.RFC3339))
+	htmlBody := fmt.Sprintf("<p>Hello %s,</p><p>Use the following token to reset your XControl account password:</p><p><strong>%s</strong></p><p>This token expires at %s UTC.</p><p>If you did not request a reset you can ignore this email.</p>", html.EscapeString(name), token, expiresAt.UTC().Format(time.RFC3339))
+
+	msg := EmailMessage{
+		To:        []string{email},
+		Subject:   subject,
+		PlainBody: plainBody,
+		HTMLBody:  htmlBody,
+	}
+
+	if err := h.emailSender.Send(ctx, msg); err != nil {
+		h.removePasswordReset(token)
+		return err
+	}
+
+	return nil
+}
+
+func (h *handler) lookupPasswordReset(token string) (passwordReset, bool) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return passwordReset{}, false
+	}
+
+	h.resetMu.RLock()
+	reset, ok := h.passwordResets[token]
+	h.resetMu.RUnlock()
+	if !ok {
+		return passwordReset{}, false
+	}
+
+	if time.Now().After(reset.expiresAt) {
+		h.removePasswordReset(token)
+		return passwordReset{}, false
+	}
+
+	return reset, true
+}
+
+func (h *handler) removePasswordReset(token string) {
+	h.resetMu.Lock()
+	delete(h.passwordResets, strings.TrimSpace(token))
+	h.resetMu.Unlock()
 }
 
 func (h *handler) removeMFAChallenge(token string) {
@@ -668,13 +1085,14 @@ func (h *handler) mfaStatus(c *gin.Context) {
 func sanitizeUser(user *store.User) gin.H {
 	identifier := strings.TrimSpace(user.ID)
 	return gin.H{
-		"id":         identifier,
-		"uuid":       identifier,
-		"name":       user.Name,
-		"username":   user.Name,
-		"email":      user.Email,
-		"mfaEnabled": user.MFAEnabled,
-		"mfa":        buildMFAState(user),
+		"id":            identifier,
+		"uuid":          identifier,
+		"name":          user.Name,
+		"username":      user.Name,
+		"email":         user.Email,
+		"emailVerified": user.EmailVerified,
+		"mfaEnabled":    user.MFAEnabled,
+		"mfa":           buildMFAState(user),
 	}
 }
 

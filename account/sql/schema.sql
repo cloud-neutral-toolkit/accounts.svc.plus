@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT NOT NULL UNIQUE,
     password TEXT NOT NULL,
     email TEXT,
+    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
     mfa_totp_secret TEXT,
     mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     mfa_secret_issued_at TIMESTAMPTZ,
