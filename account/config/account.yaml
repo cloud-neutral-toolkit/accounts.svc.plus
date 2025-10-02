@@ -6,6 +6,7 @@ server:
   readTimeout: 15s
   writeTimeout: 15s
   tls:
+    enabled: true
     certFile: "/etc/ssl/svc.plus.pem"
     keyFile: "/etc/ssl/svc.plus.rsa.key"
     clientCAFile: ""
