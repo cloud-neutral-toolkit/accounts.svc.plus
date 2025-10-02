@@ -44,7 +44,7 @@ session:
 
 **TLS 提示**：当 `certFile` 和 `keyFile` 都非空时，`accountsvc` 会调用 `ListenAndServeTLS` 启动 HTTPS。如果同时希望保留 80 端口，可将 `redirectHttp` 置为 `true`，服务会开启一个额外的明文监听，将请求 301 重定向到 HTTPS。
 
-**MFA 相关接口**：账号服务在 `/api/auth/mfa/*` 下提供 MFA 绑定与验证接口，默认无需额外配置即可使用，但生产环境建议将 `server.tls` 打开，确保 MFA 秘钥与 TOTP 码在传输过程中被加密。
+**MFA 相关接口**：账号服务在 `/api/auth/mfa/*` 下提供 MFA 绑定与验证接口，默认无需额外配置即可使用，但生产环境建议将 `server.tls` 打开，确保 MFA 秘钥与 TOTP 码在传输过程中被加密。MFA 挑战 token 默认 10 分钟过期，服务器会接受 ±1 个 30 秒窗口的 TOTP 漂移，因此务必启用 NTP 等时间同步手段，避免合法验证码因时钟偏差被拒绝。
 
 ## 3. 配置示例
 
