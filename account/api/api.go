@@ -84,7 +84,27 @@ type loginRequest struct {
 	Password string `json:"password" form:"password"`
 }
 
+func hasQueryParameter(c *gin.Context, keys ...string) bool {
+	if len(keys) == 0 {
+		return false
+	}
+
+	values := c.Request.URL.Query()
+	for _, key := range keys {
+		if _, ok := values[key]; ok {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (h *handler) register(c *gin.Context) {
+	if hasQueryParameter(c, "password", "email", "confirmPassword") {
+		respondError(c, http.StatusBadRequest, "credentials_in_query", "sensitive credentials must not be sent in the query string")
+		return
+	}
+
 	var req registerRequest
 	if err := c.ShouldBind(&req); err != nil {
 		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
@@ -152,6 +172,11 @@ func (h *handler) register(c *gin.Context) {
 }
 
 func (h *handler) login(c *gin.Context) {
+	if hasQueryParameter(c, "username", "password") {
+		respondError(c, http.StatusBadRequest, "credentials_in_query", "sensitive credentials must not be sent in the query string")
+		return
+	}
+
 	var req loginRequest
 	if err := c.ShouldBind(&req); err != nil {
 		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
