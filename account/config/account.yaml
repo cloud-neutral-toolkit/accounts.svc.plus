@@ -35,5 +35,5 @@ smtp:
   replyTo: ""
   timeout: 10s
   tls:
-    mode: "starttls"
+    mode: "auto"
     insecureSkipVerify: false

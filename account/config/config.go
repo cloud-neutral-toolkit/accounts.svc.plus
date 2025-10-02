@@ -79,7 +79,10 @@ type SMTP struct {
 	TLS      SMTPTLS       `yaml:"tls"`
 }
 
-// SMTPTLS describes TLS settings for SMTP connections.
+// SMTPTLS describes TLS settings for SMTP connections. Mode supports "auto",
+// "starttls", "implicit", and "none". The "auto" mode negotiates STARTTLS
+// when the server advertises support and otherwise falls back to an unencrypted
+// connection which is useful for local testing.
 type SMTPTLS struct {
 	Mode               string `yaml:"mode"`
 	InsecureSkipVerify bool   `yaml:"insecureSkipVerify"`
