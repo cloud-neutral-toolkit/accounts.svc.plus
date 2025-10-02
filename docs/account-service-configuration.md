@@ -41,6 +41,18 @@ store:
 
 session:
   ttl: 24h                # 登录会话有效期
+
+smtp:
+  host: "smtp.example.com"      # SMTP 服务地址
+  port: 587                      # 端口，587 对应 STARTTLS，465 可用于 SMTPS
+  username: "apikey"            # 登录用户名或 API Key
+  p: "s"         # 登录密码，生产环境建议使用 Secret 管理
+  from: "XControl <no-reply@example.com>"   # 发件人展示名称+地址
+  replyTo: ""                   # （可选）Reply-To 地址
+  timeout: 10s                   # 连接与发送超时
+  tls:
+    mode: "starttls"            # 可选 starttls 或 implicit（SMTPS）
+    insecureSkipVerify: false    # 是否跳过证书校验，默认 false
 ```
 
 **TLS 提示**：当 `tls.enabled` 显式为 `true` 时或 `certFile` 与 `keyFile` 均提供时，`accountsvc` 会调用 `ListenAndServeTLS` 启动 HTTPS。需要在开发环境暂时关闭 TLS，可将 `tls.enabled` 设为 `false`，此时服务会忽略证书路径并仅监听 HTTP。如果同时希望保留 80 端口，可将 `redirectHttp` 置为 `true`，服务会开启一个额外的明文监听，将请求 301 重定向到 HTTPS。
@@ -98,6 +110,7 @@ session:
 ## 5. 与其他模块的协同
 
 - 登录会话 TTL 会同步影响 `/api/auth/login`、`/api/auth/session` 等接口返回的 cookie 过期时间。
+- `smtp` 配置用于注册验证、密码重置等事务性邮件发送，支持 STARTTLS 与 SMTPS（将 `mode` 设为 `implicit` 并将端口改为 465）。在生产环境建议关闭 `insecureSkipVerify` 并使用专用发信账户或 API Key。
 - 新增的 MFA 接口（`/api/auth/mfa/totp/provision`、`/api/auth/mfa/totp/verify`、`/api/auth/mfa/status`）在 HTTPS 环境下可与前端 MFA 向导配合使用，保证首次登录后必须完成绑定。
 - 如果部署了前端 Next.js 应用，请确保其 `.env` 中的 `ACCOUNT_API_BASE` 指向启用了 TLS 的账号服务地址。
 

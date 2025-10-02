@@ -19,6 +19,7 @@ import (
 
 	"xcontrol/account/api"
 	"xcontrol/account/config"
+	"xcontrol/account/internal/mailer"
 	"xcontrol/account/internal/store"
 )
 
@@ -26,6 +27,23 @@ var (
 	configPath string
 	logLevel   string
 )
+
+type mailerAdapter struct {
+	sender mailer.Sender
+}
+
+func (m mailerAdapter) Send(ctx context.Context, msg api.EmailMessage) error {
+	if m.sender == nil {
+		return nil
+	}
+	mail := mailer.Message{
+		To:        append([]string(nil), msg.To...),
+		Subject:   msg.Subject,
+		PlainBody: msg.PlainBody,
+		HTMLBody:  msg.HTMLBody,
+	}
+	return m.sender.Send(ctx, mail)
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "xcontrol-account",
@@ -81,10 +99,34 @@ var rootCmd = &cobra.Command{
 			}
 		}()
 
-		api.RegisterRoutes(r,
+		var emailSender api.EmailSender
+		if strings.TrimSpace(cfg.SMTP.Host) != "" {
+			tlsMode := mailer.TLSMode(strings.ToLower(strings.TrimSpace(cfg.SMTP.TLS.Mode)))
+			sender, err := mailer.New(mailer.Config{
+				Host:               cfg.SMTP.Host,
+				Port:               cfg.SMTP.Port,
+				Username:           cfg.SMTP.Username,
+				Password:           cfg.SMTP.Password,
+				From:               cfg.SMTP.From,
+				ReplyTo:            cfg.SMTP.ReplyTo,
+				Timeout:            cfg.SMTP.Timeout,
+				TLSMode:            tlsMode,
+				InsecureSkipVerify: cfg.SMTP.TLS.InsecureSkipVerify,
+			})
+			if err != nil {
+				return err
+			}
+			emailSender = mailerAdapter{sender: sender}
+		}
+
+		options := []api.Option{
 			api.WithStore(st),
 			api.WithSessionTTL(cfg.Session.TTL),
-		)
+		}
+		if emailSender != nil {
+			options = append(options, api.WithEmailSender(emailSender))
+		}
+		api.RegisterRoutes(r, options...)
 
 		addr := strings.TrimSpace(cfg.Server.Addr)
 		if addr == "" {

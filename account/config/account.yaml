@@ -25,3 +25,15 @@ session:
   redis:
     addr: "127.0.0.1:6379"
     password: ""
+
+smtp:
+  host: "smtp.example.com"
+  port: 587
+  username: "apikey"
+  p: "s"
+  from: "XControl Account <no-reply@example.com>"
+  replyTo: ""
+  timeout: 10s
+  tls:
+    mode: "starttls"
+    insecureSkipVerify: false
