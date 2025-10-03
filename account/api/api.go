@@ -33,21 +33,22 @@ type session struct {
 }
 
 type handler struct {
-	store           store.Store
-	sessions        map[string]session
-	mu              sync.RWMutex
-	sessionTTL      time.Duration
-	mfaChallenges   map[string]mfaChallenge
-	mfaMu           sync.RWMutex
-	mfaChallengeTTL time.Duration
-	totpIssuer      string
-	emailSender     EmailSender
-	verificationTTL time.Duration
-	verifications   map[string]emailVerification
-	verificationMu  sync.RWMutex
-	resetTTL        time.Duration
-	passwordResets  map[string]passwordReset
-	resetMu         sync.RWMutex
+	store                    store.Store
+	sessions                 map[string]session
+	mu                       sync.RWMutex
+	sessionTTL               time.Duration
+	mfaChallenges            map[string]mfaChallenge
+	mfaMu                    sync.RWMutex
+	mfaChallengeTTL          time.Duration
+	totpIssuer               string
+	emailSender              EmailSender
+	emailVerificationEnabled bool
+	verificationTTL          time.Duration
+	verifications            map[string]emailVerification
+	verificationMu           sync.RWMutex
+	resetTTL                 time.Duration
+	passwordResets           map[string]passwordReset
+	resetMu                  sync.RWMutex
 }
 
 type mfaChallenge struct {
@@ -97,6 +98,13 @@ func WithEmailSender(sender EmailSender) Option {
 	}
 }
 
+// WithEmailVerification configures whether user registration requires email verification.
+func WithEmailVerification(enabled bool) Option {
+	return func(h *handler) {
+		h.emailVerificationEnabled = enabled
+	}
+}
+
 // WithEmailVerificationTTL overrides the default TTL for email verification tokens.
 func WithEmailVerificationTTL(ttl time.Duration) Option {
 	return func(h *handler) {
@@ -118,17 +126,18 @@ func WithPasswordResetTTL(ttl time.Duration) Option {
 // RegisterRoutes attaches account service endpoints to the router.
 func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	h := &handler{
-		store:           store.NewMemoryStore(),
-		sessions:        make(map[string]session),
-		sessionTTL:      defaultSessionTTL,
-		mfaChallenges:   make(map[string]mfaChallenge),
-		mfaChallengeTTL: defaultMFAChallengeTTL,
-		totpIssuer:      defaultTOTPIssuer,
-		emailSender:     noopEmailSender,
-		verificationTTL: defaultEmailVerificationTTL,
-		verifications:   make(map[string]emailVerification),
-		resetTTL:        defaultPasswordResetTTL,
-		passwordResets:  make(map[string]passwordReset),
+		store:                    store.NewMemoryStore(),
+		sessions:                 make(map[string]session),
+		sessionTTL:               defaultSessionTTL,
+		mfaChallenges:            make(map[string]mfaChallenge),
+		mfaChallengeTTL:          defaultMFAChallengeTTL,
+		totpIssuer:               defaultTOTPIssuer,
+		emailSender:              noopEmailSender,
+		emailVerificationEnabled: true,
+		verificationTTL:          defaultEmailVerificationTTL,
+		verifications:            make(map[string]emailVerification),
+		resetTTL:                 defaultPasswordResetTTL,
+		passwordResets:           make(map[string]passwordReset),
 	}
 
 	for _, opt := range opts {
@@ -242,6 +251,10 @@ func (h *handler) register(c *gin.Context) {
 		PasswordHash: string(hashed),
 	}
 
+	if !h.emailVerificationEnabled {
+		user.EmailVerified = true
+	}
+
 	if err := h.store.CreateUser(c.Request.Context(), user); err != nil {
 		switch {
 		case errors.Is(err, store.ErrEmailExists):
@@ -259,14 +272,18 @@ func (h *handler) register(c *gin.Context) {
 		}
 	}
 
-	if err := h.enqueueEmailVerification(c.Request.Context(), user); err != nil {
-		slog.Error("failed to send verification email", "err", err, "email", user.Email)
-		respondError(c, http.StatusInternalServerError, "verification_email_failed", "failed to send verification email")
-		return
+	message := "registration successful"
+	if h.emailVerificationEnabled {
+		if err := h.enqueueEmailVerification(c.Request.Context(), user); err != nil {
+			slog.Error("failed to send verification email", "err", err, "email", user.Email)
+			respondError(c, http.StatusInternalServerError, "verification_email_failed", "failed to send verification email")
+			return
+		}
+		message = "verification email sent"
 	}
 
 	response := gin.H{
-		"message": "verification email sent",
+		"message": message,
 		"user":    sanitizeUser(user),
 	}
 	c.JSON(http.StatusCreated, response)
