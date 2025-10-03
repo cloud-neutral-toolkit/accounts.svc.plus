@@ -2,22 +2,26 @@ log:
   level: info
 
 server:
-  addr: ":8443"
+  addr: ":8080"
   readTimeout: 15s
   writeTimeout: 15s
-  publicUrl: "https://account.svc.plus"
+  publicUrl: "http://localhost:8080"
   allowedOrigins:
     - "https://account.svc.plus"
     - "https://localhost:8443"
+    - "http://localhost:8080"
+    - "http://127.0.0.1:8080"
     - "http://localhost:3001"
     - "http://127.0.0.1:3001"
+    - "http://localhost:3000"
+    - "http://127.0.0.1:3000"
   tls:
-    enabled: true
-    certFile: "/etc/ssl/svc.plus.pem"
-    keyFile: "/etc/ssl/svc.plus.rsa.key"
-    caFile: "/etc/ssl/svc.plus.ca.pem"
+    enabled: false
+    certFile: ""
+    keyFile: ""
+    caFile: ""
     clientCAFile: ""
-    redirectHttp: true
+    redirectHttp: false
 
 store:
   driver: "postgres"
