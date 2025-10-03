@@ -195,6 +195,47 @@ func TestRegisterEndpoint(t *testing.T) {
 	}
 }
 
+func TestRegisterEndpointWithoutEmailVerification(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	RegisterRoutes(router, WithEmailVerification(false))
+
+	payload := map[string]string{
+		"name":     "Another User",
+		"email":    "another@example.com",
+		"password": "supersecure",
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal payload: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d, body: %s", http.StatusCreated, rr.Code, rr.Body.String())
+	}
+
+	resp := decodeResponse(t, rr)
+	if resp.Message != "registration successful" {
+		t.Fatalf("expected success message when verification disabled, got %q", resp.Message)
+	}
+
+	if resp.User == nil {
+		t.Fatalf("expected user object in response")
+	}
+
+	if verified, ok := resp.User["emailVerified"].(bool); !ok || !verified {
+		t.Fatalf("expected emailVerified true when verification disabled, got %#v", resp.User["emailVerified"])
+	}
+}
+
 func TestMFATOTPFlow(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -109,10 +109,20 @@ var rootCmd = &cobra.Command{
 		}()
 
 		var emailSender api.EmailSender
-		if strings.TrimSpace(cfg.SMTP.Host) != "" {
+		emailVerificationEnabled := true
+		smtpHost := strings.TrimSpace(cfg.SMTP.Host)
+		if smtpHost == "" {
+			emailVerificationEnabled = false
+		}
+		if smtpHost != "" && isExampleDomain(smtpHost) {
+			emailVerificationEnabled = false
+			logger.Warn("smtp host is a placeholder; disabling email delivery", "host", smtpHost)
+			smtpHost = ""
+		}
+		if smtpHost != "" {
 			tlsMode := mailer.ParseTLSMode(cfg.SMTP.TLS.Mode)
 			sender, err := mailer.New(mailer.Config{
-				Host:               cfg.SMTP.Host,
+				Host:               smtpHost,
 				Port:               cfg.SMTP.Port,
 				Username:           cfg.SMTP.Username,
 				Password:           cfg.SMTP.Password,
@@ -127,6 +137,9 @@ var rootCmd = &cobra.Command{
 			}
 			emailSender = mailerAdapter{sender: sender}
 		}
+		if emailSender == nil {
+			emailVerificationEnabled = false
+		}
 
 		options := []api.Option{
 			api.WithStore(st),
@@ -135,6 +148,7 @@ var rootCmd = &cobra.Command{
 		if emailSender != nil {
 			options = append(options, api.WithEmailSender(emailSender))
 		}
+		options = append(options, api.WithEmailVerification(emailVerificationEnabled))
 		api.RegisterRoutes(r, options...)
 
 		addr := strings.TrimSpace(cfg.Server.Addr)
@@ -281,13 +295,27 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.Flags().StringVar(&configPath, "config", "", "path to xcontrol account configuration file")
-	rootCmd.Flags().StringVar(&logLevel, "log-level", "info", "log level (debug, info, warn, error)")
+	rootCmd.Flags().StringVar(&logLevel, "log-level", "", "log level (debug, info, warn, error)")
 }
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+func isExampleDomain(host string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(host))
+	if normalized == "" {
+		return false
+	}
+	if h, _, ok := strings.Cut(normalized, ":"); ok {
+		normalized = h
+	}
+	if normalized == "example.com" {
+		return true
+	}
+	return strings.HasSuffix(normalized, ".example.com")
 }
 
 func buildCORSConfig(logger *slog.Logger, serverCfg config.Server) cors.Config {
