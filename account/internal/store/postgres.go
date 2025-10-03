@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -334,8 +336,15 @@ func formatIdentifier(value any) (string, error) {
 		return v, nil
 	case []byte:
 		return string(v), nil
-	case fmt.Stringer:
-		return v.String(), nil
+	case [16]byte:
+		id := uuid.UUID(v)
+		return id.String(), nil
+	case *[16]byte:
+		if v == nil {
+			return "", errors.New("user id is nil")
+		}
+		id := uuid.UUID(*v)
+		return id.String(), nil
 	case int64:
 		return strconv.FormatInt(v, 10), nil
 	case int32:
@@ -346,6 +355,18 @@ func formatIdentifier(value any) (string, error) {
 		return strconv.FormatUint(v, 10), nil
 	case uint32:
 		return strconv.FormatUint(uint64(v), 10), nil
+	case pgtype.UUID:
+		if !v.Valid {
+			return "", errors.New("user id is nil")
+		}
+		return v.String(), nil
+	case *pgtype.UUID:
+		if v == nil || !v.Valid {
+			return "", errors.New("user id is nil")
+		}
+		return v.String(), nil
+	case fmt.Stringer:
+		return v.String(), nil
 	default:
 		return "", fmt.Errorf("unsupported identifier type %T", value)
 	}
