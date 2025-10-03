@@ -392,6 +392,30 @@ func TestMFATOTPFlow(t *testing.T) {
 		t.Fatalf("expected status success, got %d", statusRec.Code)
 	}
 
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/auth/session", nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+resp.Token)
+	deleteRec := httptest.NewRecorder()
+	router.ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("expected session deletion success, got %d", deleteRec.Code)
+	}
+
+	sessionReq = httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
+	sessionReq.Header.Set("Authorization", "Bearer "+resp.Token)
+	sessionRec = httptest.NewRecorder()
+	router.ServeHTTP(sessionRec, sessionReq)
+	if sessionRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected session lookup failure after deletion, got %d", sessionRec.Code)
+	}
+
+	statusReq = httptest.NewRequest(http.MethodGet, "/api/auth/mfa/status", nil)
+	statusReq.Header.Set("Authorization", "Bearer "+resp.Token)
+	statusRec = httptest.NewRecorder()
+	router.ServeHTTP(statusRec, statusReq)
+	if statusRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status failure after session deletion, got %d", statusRec.Code)
+	}
+
 	loginWithTotp := func(body map[string]string) *httptest.ResponseRecorder {
 		payload, err := json.Marshal(body)
 		if err != nil {
@@ -441,6 +465,29 @@ func TestMFATOTPFlow(t *testing.T) {
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected email+totp login success, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHealthzEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	RegisterRoutes(router)
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected healthz endpoint to return 200, got %d", rr.Code)
+	}
+
+	var resp map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode healthz response: %v", err)
+	}
+	if status := resp["status"]; status != "ok" {
+		t.Fatalf("expected health status 'ok', got %q", status)
 	}
 }
 
