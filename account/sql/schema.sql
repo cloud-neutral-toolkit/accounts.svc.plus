@@ -79,7 +79,9 @@ CREATE TABLE public.users (
     mfa_secret_issued_at timestamp with time zone,
     mfa_confirmed_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp with time zone,
+
+    updated_at timestamp with time zone DEFAULT now(),
+
     email_verified boolean GENERATED ALWAYS AS (email_verified_at IS NOT NULL) STORED
 );
 
