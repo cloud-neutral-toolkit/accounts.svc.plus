@@ -27,8 +27,17 @@ UPDATE users SET uuid = uuid_generate_v4() WHERE uuid IS NULL;
 ALTER TABLE users
     ALTER COLUMN uuid SET NOT NULL;
 
-ALTER TABLE users
-    ADD CONSTRAINT users_uuid_unique UNIQUE (uuid);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'users'::regclass
+          AND conname = 'users_uuid_unique'
+    ) THEN
+        EXECUTE 'ALTER TABLE users ADD CONSTRAINT users_uuid_unique UNIQUE (uuid)';
+    END IF;
+END $$;
 
 -- ========== Identities ==========
 ALTER TABLE identities
@@ -39,8 +48,17 @@ UPDATE identities SET uuid = uuid_generate_v4() WHERE uuid IS NULL;
 ALTER TABLE identities
     ALTER COLUMN uuid SET NOT NULL;
 
-ALTER TABLE identities
-    ADD CONSTRAINT identities_uuid_unique UNIQUE (uuid);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'identities'::regclass
+          AND conname = 'identities_uuid_unique'
+    ) THEN
+        EXECUTE 'ALTER TABLE identities ADD CONSTRAINT identities_uuid_unique UNIQUE (uuid)';
+    END IF;
+END $$;
 
 -- 新增 user_uuid 外键字段
 ALTER TABLE identities
@@ -54,8 +72,17 @@ WHERE i.user_id = u.id;
 ALTER TABLE identities
     ALTER COLUMN user_uuid SET NOT NULL;
 
-ALTER TABLE identities
-    ADD CONSTRAINT identities_user_uuid_fk FOREIGN KEY (user_uuid) REFERENCES users(uuid) ON DELETE CASCADE;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'identities'::regclass
+          AND conname = 'identities_user_uuid_fk'
+    ) THEN
+        EXECUTE 'ALTER TABLE identities ADD CONSTRAINT identities_user_uuid_fk FOREIGN KEY (user_uuid) REFERENCES users(uuid) ON DELETE CASCADE';
+    END IF;
+END $$;
 
 -- ========== Sessions ==========
 ALTER TABLE sessions
@@ -66,8 +93,17 @@ UPDATE sessions SET uuid = uuid_generate_v4() WHERE uuid IS NULL;
 ALTER TABLE sessions
     ALTER COLUMN uuid SET NOT NULL;
 
-ALTER TABLE sessions
-    ADD CONSTRAINT sessions_uuid_unique UNIQUE (uuid);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'sessions'::regclass
+          AND conname = 'sessions_uuid_unique'
+    ) THEN
+        EXECUTE 'ALTER TABLE sessions ADD CONSTRAINT sessions_uuid_unique UNIQUE (uuid)';
+    END IF;
+END $$;
 
 -- 新增 user_uuid 外键字段
 ALTER TABLE sessions
@@ -81,8 +117,17 @@ WHERE s.user_id = u.id;
 ALTER TABLE sessions
     ALTER COLUMN user_uuid SET NOT NULL;
 
-ALTER TABLE sessions
-    ADD CONSTRAINT sessions_user_uuid_fk FOREIGN KEY (user_uuid) REFERENCES users(uuid) ON DELETE CASCADE;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'sessions'::regclass
+          AND conname = 'sessions_user_uuid_fk'
+    ) THEN
+        EXECUTE 'ALTER TABLE sessions ADD CONSTRAINT sessions_user_uuid_fk FOREIGN KEY (user_uuid) REFERENCES users(uuid) ON DELETE CASCADE';
+    END IF;
+END $$;
 
 
 ------------------------------------------------
@@ -90,27 +135,59 @@ ALTER TABLE sessions
 ------------------------------------------------
 
 -- 删除原有的主键约束
-ALTER TABLE users DROP CONSTRAINT users_pkey;
-ALTER TABLE identities DROP CONSTRAINT identities_pkey;
-ALTER TABLE sessions DROP CONSTRAINT sessions_pkey;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_pkey;
+ALTER TABLE identities DROP CONSTRAINT IF EXISTS identities_pkey;
+ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_pkey;
 
 -- 删除旧的 id 外键
 ALTER TABLE identities DROP CONSTRAINT IF EXISTS identities_user_id_fkey;
 ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_user_id_fkey;
 
 -- 设置 uuid 为新的主键
-ALTER TABLE users ADD CONSTRAINT users_pkey PRIMARY KEY (uuid);
-ALTER TABLE identities ADD CONSTRAINT identities_pkey PRIMARY KEY (uuid);
-ALTER TABLE sessions ADD CONSTRAINT sessions_pkey PRIMARY KEY (uuid);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'users'::regclass
+          AND conname = 'users_pkey'
+    ) THEN
+        EXECUTE 'ALTER TABLE users ADD CONSTRAINT users_pkey PRIMARY KEY (uuid)';
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'identities'::regclass
+          AND conname = 'identities_pkey'
+    ) THEN
+        EXECUTE 'ALTER TABLE identities ADD CONSTRAINT identities_pkey PRIMARY KEY (uuid)';
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'sessions'::regclass
+          AND conname = 'sessions_pkey'
+    ) THEN
+        EXECUTE 'ALTER TABLE sessions ADD CONSTRAINT sessions_pkey PRIMARY KEY (uuid)';
+    END IF;
+END $$;
 
 -- 删除旧的 id 字段
-ALTER TABLE users DROP COLUMN id;
-ALTER TABLE identities DROP COLUMN id;
-ALTER TABLE sessions DROP COLUMN id;
+ALTER TABLE users DROP COLUMN IF EXISTS id;
+ALTER TABLE identities DROP COLUMN IF EXISTS id;
+ALTER TABLE sessions DROP COLUMN IF EXISTS id;
 
 -- 删除旧的 user_id 外键字段
-ALTER TABLE identities DROP COLUMN user_id;
-ALTER TABLE sessions DROP COLUMN user_id;
+ALTER TABLE identities DROP COLUMN IF EXISTS user_id;
+ALTER TABLE sessions DROP COLUMN IF EXISTS user_id;
 
 ------------------------------------------------
 -- Done: 所有表都只用 UUID 作为主键/外键
