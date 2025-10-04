@@ -36,10 +36,11 @@ type Store interface {
 
 // Domain level errors returned by the store implementation.
 var (
-	ErrEmailExists  = errors.New("email already exists")
-	ErrNameExists   = errors.New("name already exists")
-	ErrInvalidName  = errors.New("invalid user name")
-	ErrUserNotFound = errors.New("user not found")
+	ErrEmailExists     = errors.New("email already exists")
+	ErrNameExists      = errors.New("name already exists")
+	ErrInvalidName     = errors.New("invalid user name")
+	ErrUserNotFound    = errors.New("user not found")
+	ErrMFANotSupported = errors.New("mfa is not supported by the current store schema")
 )
 
 // memoryStore provides an in-memory implementation of Store. It is suitable for

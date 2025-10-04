@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -45,6 +46,42 @@ func TestFormatIdentifier(t *testing.T) {
 
 			if got != tc.want {
 				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestSelectUserQuery(t *testing.T) {
+	store := &postgresStore{}
+	tests := []struct {
+		name string
+		caps schemaCapabilities
+		want string
+	}{
+		{
+			name: "no mfa columns",
+			caps: schemaCapabilities{},
+			want: "NULL::text",
+		},
+		{
+			name: "with mfa columns",
+			caps: schemaCapabilities{
+				hasMFATOTPSecret:     true,
+				hasMFAEnabled:        true,
+				hasMFASecretIssuedAt: true,
+				hasMFAConfirmedAt:    true,
+				hasCreatedAt:         true,
+				hasUpdatedAt:         true,
+			},
+			want: "mfa_totp_secret",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			query := store.selectUserQuery(tc.caps, "WHERE uuid = $1")
+			if !strings.Contains(query, tc.want) {
+				t.Fatalf("expected query to contain %q, got %q", tc.want, query)
 			}
 		})
 	}

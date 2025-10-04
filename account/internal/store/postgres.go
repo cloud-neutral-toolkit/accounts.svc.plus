@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -71,8 +72,25 @@ func New(ctx context.Context, cfg Config) (Store, func(context.Context) error, e
 	}
 }
 
+type schemaCapabilities struct {
+	hasMFATOTPSecret     bool
+	hasMFAEnabled        bool
+	hasMFASecretIssuedAt bool
+	hasMFAConfirmedAt    bool
+	hasCreatedAt         bool
+	hasUpdatedAt         bool
+}
+
+func (c schemaCapabilities) supportsMFA() bool {
+	return c.hasMFATOTPSecret && c.hasMFAEnabled && c.hasMFASecretIssuedAt && c.hasMFAConfirmedAt
+}
+
 type postgresStore struct {
 	db *sql.DB
+
+	capsMu     sync.RWMutex
+	caps       schemaCapabilities
+	capsLoaded bool
 }
 
 func (s *postgresStore) CreateUser(ctx context.Context, user *User) error {
@@ -147,9 +165,12 @@ func (s *postgresStore) GetUserByEmail(ctx context.Context, email string) (*User
 		return nil, ErrUserNotFound
 	}
 
-	query := `SELECT uuid, username, email, email_verified, password, mfa_totp_secret, coalesce(mfa_enabled, false),
-          mfa_secret_issued_at, mfa_confirmed_at, coalesce(created_at, now()), coalesce(updated_at, now())
-          FROM users WHERE lower(email) = $1 LIMIT 1`
+	caps, err := s.capabilities(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	query := s.selectUserQuery(caps, "WHERE lower(email) = $1 LIMIT 1")
 
 	row := s.db.QueryRowContext(ctx, query, normalized)
 	return scanUser(row)
@@ -161,18 +182,24 @@ func (s *postgresStore) GetUserByName(ctx context.Context, name string) (*User, 
 		return nil, ErrUserNotFound
 	}
 
-	query := `SELECT uuid, username, email, email_verified, password, mfa_totp_secret, coalesce(mfa_enabled, false),
-          mfa_secret_issued_at, mfa_confirmed_at, coalesce(created_at, now()), coalesce(updated_at, now())
-          FROM users WHERE lower(username) = lower($1) LIMIT 1`
+	caps, err := s.capabilities(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	query := s.selectUserQuery(caps, "WHERE lower(username) = lower($1) LIMIT 1")
 
 	row := s.db.QueryRowContext(ctx, query, normalized)
 	return scanUser(row)
 }
 
 func (s *postgresStore) GetUserByID(ctx context.Context, id string) (*User, error) {
-	query := `SELECT uuid, username, email, email_verified, password, mfa_totp_secret, coalesce(mfa_enabled, false),
-          mfa_secret_issued_at, mfa_confirmed_at, coalesce(created_at, now()), coalesce(updated_at, now())
-          FROM users WHERE uuid = $1`
+	caps, err := s.capabilities(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	query := s.selectUserQuery(caps, "WHERE uuid = $1")
 
 	row := s.db.QueryRowContext(ctx, query, id)
 	return scanUser(row)
@@ -264,6 +291,12 @@ func (s *postgresStore) UpdateUser(ctx context.Context, user *User) error {
 	}
 
 	normalizedEmail := strings.ToLower(strings.TrimSpace(user.Email))
+
+	caps, err := s.capabilities(ctx)
+	if err != nil {
+		return err
+	}
+
 	var issuedAt any
 	if !user.MFASecretIssuedAt.IsZero() {
 		issuedAt = user.MFASecretIssuedAt.UTC()
@@ -273,22 +306,69 @@ func (s *postgresStore) UpdateUser(ctx context.Context, user *User) error {
 		confirmedAt = user.MFAConfirmedAt.UTC()
 	}
 
-	query := `UPDATE users
-          SET username = $1,
-              email = $2,
-              email_verified = $3,
-              password = $4,
-              mfa_totp_secret = $5,
-              mfa_enabled = $6,
-              mfa_secret_issued_at = $7,
-              mfa_confirmed_at = $8,
-              updated_at = now()
-          WHERE uuid = $9
-          RETURNING coalesce(created_at, now()), coalesce(updated_at, now())`
+	builder := strings.Builder{}
+	builder.WriteString("UPDATE users SET username = $1, email = $2, email_verified = $3, password = $4")
+
+	args := []any{normalizedName, normalizedEmail, user.EmailVerified, user.PasswordHash}
+	idx := 5
+
+	if caps.hasMFATOTPSecret {
+		builder.WriteString(fmt.Sprintf(", mfa_totp_secret = $%d", idx))
+		args = append(args, nullForEmpty(user.MFATOTPSecret))
+		idx++
+	} else if strings.TrimSpace(user.MFATOTPSecret) != "" {
+		return ErrMFANotSupported
+	}
+
+	if caps.hasMFAEnabled {
+		builder.WriteString(fmt.Sprintf(", mfa_enabled = $%d", idx))
+		args = append(args, user.MFAEnabled)
+		idx++
+	} else if user.MFAEnabled {
+		return ErrMFANotSupported
+	}
+
+	if caps.hasMFASecretIssuedAt {
+		builder.WriteString(fmt.Sprintf(", mfa_secret_issued_at = $%d", idx))
+		args = append(args, issuedAt)
+		idx++
+	} else if !user.MFASecretIssuedAt.IsZero() {
+		return ErrMFANotSupported
+	}
+
+	if caps.hasMFAConfirmedAt {
+		builder.WriteString(fmt.Sprintf(", mfa_confirmed_at = $%d", idx))
+		args = append(args, confirmedAt)
+		idx++
+	} else if !user.MFAConfirmedAt.IsZero() {
+		return ErrMFANotSupported
+	}
+
+	if caps.hasUpdatedAt {
+		builder.WriteString(", updated_at = now()")
+	}
+
+	builder.WriteString(fmt.Sprintf(" WHERE uuid = $%d RETURNING ", idx))
+	args = append(args, user.ID)
+	idx++
+
+	if caps.hasCreatedAt {
+		builder.WriteString("coalesce(created_at, now())")
+	} else {
+		builder.WriteString("now()")
+	}
+
+	if caps.hasUpdatedAt {
+		builder.WriteString(", coalesce(updated_at, now())")
+	} else {
+		builder.WriteString(", now()")
+	}
+
+	query := builder.String()
 
 	var createdAt time.Time
 	var updatedAt time.Time
-	err := s.db.QueryRowContext(ctx, query, normalizedName, normalizedEmail, user.EmailVerified, user.PasswordHash, nullForEmpty(user.MFATOTPSecret), user.MFAEnabled, issuedAt, confirmedAt, user.ID).Scan(&createdAt, &updatedAt)
+	err = s.db.QueryRowContext(ctx, query, args...).Scan(&createdAt, &updatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrUserNotFound
@@ -370,4 +450,110 @@ func formatIdentifier(value any) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported identifier type %T", value)
 	}
+}
+
+func (s *postgresStore) capabilities(ctx context.Context) (schemaCapabilities, error) {
+	s.capsMu.RLock()
+	if s.capsLoaded {
+		caps := s.caps
+		s.capsMu.RUnlock()
+		return caps, nil
+	}
+	s.capsMu.RUnlock()
+
+	s.capsMu.Lock()
+	defer s.capsMu.Unlock()
+	if s.capsLoaded {
+		return s.caps, nil
+	}
+
+	query := `SELECT
+  EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND table_schema = ANY (current_schemas(false))
+      AND column_name = 'mfa_totp_secret'
+  ) AS has_mfa_totp_secret,
+  EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND table_schema = ANY (current_schemas(false))
+      AND column_name = 'mfa_enabled'
+  ) AS has_mfa_enabled,
+  EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND table_schema = ANY (current_schemas(false))
+      AND column_name = 'mfa_secret_issued_at'
+  ) AS has_mfa_secret_issued_at,
+  EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND table_schema = ANY (current_schemas(false))
+      AND column_name = 'mfa_confirmed_at'
+  ) AS has_mfa_confirmed_at,
+  EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND table_schema = ANY (current_schemas(false))
+      AND column_name = 'created_at'
+  ) AS has_created_at,
+  EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND table_schema = ANY (current_schemas(false))
+      AND column_name = 'updated_at'
+  ) AS has_updated_at`
+
+	row := s.db.QueryRowContext(ctx, query)
+	var caps schemaCapabilities
+	if err := row.Scan(
+		&caps.hasMFATOTPSecret,
+		&caps.hasMFAEnabled,
+		&caps.hasMFASecretIssuedAt,
+		&caps.hasMFAConfirmedAt,
+		&caps.hasCreatedAt,
+		&caps.hasUpdatedAt,
+	); err != nil {
+		return schemaCapabilities{}, err
+	}
+
+	s.caps = caps
+	s.capsLoaded = true
+	return caps, nil
+}
+
+func (s *postgresStore) selectUserQuery(caps schemaCapabilities, whereClause string) string {
+	secretExpr := "NULL::text"
+	if caps.hasMFATOTPSecret {
+		secretExpr = "mfa_totp_secret"
+	}
+
+	enabledExpr := "false"
+	if caps.hasMFAEnabled {
+		enabledExpr = "coalesce(mfa_enabled, false)"
+	}
+
+	issuedExpr := "NULL::timestamptz"
+	if caps.hasMFASecretIssuedAt {
+		issuedExpr = "mfa_secret_issued_at"
+	}
+
+	confirmedExpr := "NULL::timestamptz"
+	if caps.hasMFAConfirmedAt {
+		confirmedExpr = "mfa_confirmed_at"
+	}
+
+	createdExpr := "now()"
+	if caps.hasCreatedAt {
+		createdExpr = "coalesce(created_at, now())"
+	}
+
+	updatedExpr := "now()"
+	if caps.hasUpdatedAt {
+		updatedExpr = "coalesce(updated_at, now())"
+	}
+
+	return fmt.Sprintf(`SELECT uuid, username, email, email_verified, password, %s, %s, %s, %s, %s, %s FROM users %s`,
+		secretExpr, enabledExpr, issuedExpr, confirmedExpr, createdExpr, updatedExpr, whereClause)
 }
