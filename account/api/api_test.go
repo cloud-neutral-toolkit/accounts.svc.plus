@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -446,6 +447,24 @@ func TestMFATOTPFlow(t *testing.T) {
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected mfa login success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	identifierStatusReq := httptest.NewRequest(
+		http.MethodGet,
+		"/api/auth/mfa/status?"+url.Values{"identifier": {registerPayload["email"]}}.Encode(),
+		nil,
+	)
+	identifierStatusRec := httptest.NewRecorder()
+	router.ServeHTTP(identifierStatusRec, identifierStatusReq)
+	if identifierStatusRec.Code != http.StatusOK {
+		t.Fatalf("expected identifier status success, got %d: %s", identifierStatusRec.Code, identifierStatusRec.Body.String())
+	}
+	identifierStatusResp := decodeResponse(t, identifierStatusRec)
+	if identifierStatusResp.MFA == nil {
+		t.Fatalf("expected mfa payload in identifier status response")
+	}
+	if enabled, ok := identifierStatusResp.MFA["totpEnabled"].(bool); !ok || !enabled {
+		t.Fatalf("expected identifier status to report totpEnabled true, got %#v", identifierStatusResp.MFA)
 	}
 
 	waitForStableTOTPWindow(t)
