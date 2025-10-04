@@ -156,6 +156,7 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	auth.DELETE("/session", h.deleteSession)
 	auth.POST("/mfa/totp/provision", h.provisionTOTP)
 	auth.POST("/mfa/totp/verify", h.verifyTOTP)
+	auth.POST("/mfa/disable", h.disableMFA)
 	auth.GET("/mfa/status", h.mfaStatus)
 	auth.POST("/password/reset", h.requestPasswordReset)
 	auth.POST("/password/reset/confirm", h.confirmPasswordReset)
@@ -887,6 +888,19 @@ func (h *handler) removeMFAChallenge(token string) {
 	h.mfaMu.Unlock()
 }
 
+func (h *handler) removeMFAChallengesForUser(userID string) {
+	if userID == "" {
+		return
+	}
+	h.mfaMu.Lock()
+	for token, challenge := range h.mfaChallenges {
+		if challenge.userID == userID {
+			delete(h.mfaChallenges, token)
+		}
+	}
+	h.mfaMu.Unlock()
+}
+
 func (h *handler) provisionTOTP(c *gin.Context) {
 	var req struct {
 		Token   string `json:"token"`
@@ -1142,6 +1156,53 @@ func buildMFAState(user *store.User) gin.H {
 		state["totpConfirmedAt"] = user.MFAConfirmedAt.UTC()
 	}
 	return state
+}
+
+func (h *handler) disableMFA(c *gin.Context) {
+	token := extractToken(c.GetHeader("Authorization"))
+	if token == "" {
+		token = strings.TrimSpace(c.Query("token"))
+	}
+	if token == "" {
+		respondError(c, http.StatusUnauthorized, "session_token_required", "session token is required")
+		return
+	}
+
+	sess, ok := h.lookupSession(token)
+	if !ok {
+		respondError(c, http.StatusUnauthorized, "invalid_session", "session token is invalid or expired")
+		return
+	}
+
+	ctx := c.Request.Context()
+	user, err := h.store.GetUserByID(ctx, sess.userID)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "mfa_disable_failed", "failed to load user for mfa disable")
+		return
+	}
+
+	hasSecret := strings.TrimSpace(user.MFATOTPSecret) != ""
+	if !user.MFAEnabled && !hasSecret {
+		respondError(c, http.StatusBadRequest, "mfa_not_enabled", "multi-factor authentication is not enabled")
+		return
+	}
+
+	user.MFATOTPSecret = ""
+	user.MFAEnabled = false
+	user.MFASecretIssuedAt = time.Time{}
+	user.MFAConfirmedAt = time.Time{}
+
+	if err := h.store.UpdateUser(ctx, user); err != nil {
+		respondError(c, http.StatusInternalServerError, "mfa_disable_failed", "failed to disable mfa")
+		return
+	}
+
+	h.removeMFAChallengesForUser(user.ID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "mfa_disabled",
+		"user":    sanitizeUser(user),
+	})
 }
 
 func respondError(c *gin.Context, status int, code, message string) {
