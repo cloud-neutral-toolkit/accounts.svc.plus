@@ -487,6 +487,149 @@ func TestMFATOTPFlow(t *testing.T) {
 	}
 }
 
+func TestDisableMFA(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	RegisterRoutes(router, WithEmailVerification(false))
+
+	registerPayload := map[string]string{
+		"name":     "Disable User",
+		"email":    "disable@example.com",
+		"password": "disablePass1",
+	}
+
+	registerBody, err := json.Marshal(registerPayload)
+	if err != nil {
+		t.Fatalf("failed to marshal registration payload: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", bytes.NewReader(registerBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected registration success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	loginPayload := map[string]string{
+		"identifier": registerPayload["email"],
+		"password":   registerPayload["password"],
+	}
+	loginBody, err := json.Marshal(loginPayload)
+	if err != nil {
+		t.Fatalf("failed to marshal login payload: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected login to require mfa setup, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeResponse(t, rr)
+	if resp.MFAToken == "" {
+		t.Fatalf("expected mfa token in login response")
+	}
+
+	provisionPayload := map[string]string{"token": resp.MFAToken}
+	provisionBody, err := json.Marshal(provisionPayload)
+	if err != nil {
+		t.Fatalf("failed to marshal provision payload: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/mfa/totp/provision", bytes.NewReader(provisionBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected provisioning success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	provisionResp := decodeResponse(t, rr)
+	if provisionResp.Secret == "" {
+		t.Fatalf("expected secret in provisioning response")
+	}
+
+	waitForStableTOTPWindow(t)
+	code, err := totp.GenerateCodeCustom(provisionResp.Secret, time.Now().UTC(), totp.ValidateOpts{
+		Period:    30,
+		Skew:      1,
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
+	})
+	if err != nil {
+		t.Fatalf("failed to generate totp code: %v", err)
+	}
+
+	verifyPayload := map[string]string{
+		"token": resp.MFAToken,
+		"code":  code,
+	}
+	verifyBody, err := json.Marshal(verifyPayload)
+	if err != nil {
+		t.Fatalf("failed to marshal verify payload: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/mfa/totp/verify", bytes.NewReader(verifyBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected verification success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	verifyResp := decodeResponse(t, rr)
+	if verifyResp.Token == "" {
+		t.Fatalf("expected session token after verification")
+	}
+
+	disableReq := httptest.NewRequest(http.MethodPost, "/api/auth/mfa/disable", nil)
+	disableReq.Header.Set("Authorization", "Bearer "+verifyResp.Token)
+	disableRec := httptest.NewRecorder()
+	router.ServeHTTP(disableRec, disableReq)
+	if disableRec.Code != http.StatusOK {
+		t.Fatalf("expected disable success, got %d: %s", disableRec.Code, disableRec.Body.String())
+	}
+
+	disableResp := decodeResponse(t, disableRec)
+	if disableResp.User == nil {
+		t.Fatalf("expected user object in disable response")
+	}
+	if enabled, ok := disableResp.User["mfaEnabled"].(bool); ok && enabled {
+		t.Fatalf("expected mfaEnabled false after disable, got %#v", enabled)
+	}
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/auth/mfa/status", nil)
+	statusReq.Header.Set("Authorization", "Bearer "+verifyResp.Token)
+	statusRec := httptest.NewRecorder()
+	router.ServeHTTP(statusRec, statusReq)
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("expected status success after disable, got %d: %s", statusRec.Code, statusRec.Body.String())
+	}
+	statusResp := decodeResponse(t, statusRec)
+	if statusResp.MFA == nil {
+		t.Fatalf("expected mfa state in status response")
+	}
+	if enabled, ok := statusResp.MFA["totpEnabled"].(bool); ok && enabled {
+		t.Fatalf("expected totpEnabled false after disable, got %#v", enabled)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected login to require setup again, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp = decodeResponse(t, rr)
+	if resp.Error != "mfa_setup_required" {
+		t.Fatalf("expected mfa_setup_required error after disable, got %q", resp.Error)
+	}
+}
+
 func TestHealthzEndpoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
