@@ -118,15 +118,20 @@ func (s *postgresStore) CreateUser(ctx context.Context, user *User) error {
 		}
 	}
 
-	query := `INSERT INTO users (username, email, password, email_verified)
-          VALUES ($1, $2, $3, $4)
-          RETURNING uuid, coalesce(created_at, now()), coalesce(updated_at, now()), email_verified`
+	var verifiedAt any
+	if user.EmailVerified {
+		verifiedAt = time.Now().UTC()
+	}
+
+	query := `INSERT INTO users (username, password, email, email_verified_at)
+      VALUES ($1, $2, $3, $4)
+      RETURNING uuid, coalesce(created_at, now()), coalesce(updated_at, now()), email_verified`
 
 	var idValue any
 	var createdAt time.Time
 	var updatedAt time.Time
 	var emailVerified sql.NullBool
-	err = s.db.QueryRowContext(ctx, query, normalizedName, normalizedEmail, user.PasswordHash, user.EmailVerified).Scan(&idValue, &createdAt, &updatedAt, &emailVerified)
+	err = s.db.QueryRowContext(ctx, query, normalizedName, user.PasswordHash, normalizedEmail, verifiedAt).Scan(&idValue, &createdAt, &updatedAt, &emailVerified)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrUserNotFound
@@ -307,10 +312,16 @@ func (s *postgresStore) UpdateUser(ctx context.Context, user *User) error {
 	}
 
 	builder := strings.Builder{}
-	builder.WriteString("UPDATE users SET username = $1, email = $2, email_verified = $3, password = $4")
+	builder.WriteString("UPDATE users SET username = $1, email = $2, password = $3")
 
-	args := []any{normalizedName, normalizedEmail, user.EmailVerified, user.PasswordHash}
-	idx := 5
+	if user.EmailVerified {
+		builder.WriteString(", email_verified_at = COALESCE(email_verified_at, now())")
+	} else {
+		builder.WriteString(", email_verified_at = NULL")
+	}
+
+	args := []any{normalizedName, normalizedEmail, user.PasswordHash}
+	idx := 4
 
 	if caps.hasMFATOTPSecret {
 		builder.WriteString(fmt.Sprintf(", mfa_totp_secret = $%d", idx))
