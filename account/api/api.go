@@ -1098,7 +1098,7 @@ func (h *handler) mfaStatus(c *gin.Context) {
 	}
 
 	if user == nil && token != "" {
-		if challenge, ok := h.lookupMFAChallenge(token); ok {
+		if challenge, ok := h.refreshMFAChallenge(token); ok {
 			user, err = h.store.GetUserByID(ctx, challenge.userID)
 			if err != nil {
 				respondError(c, http.StatusInternalServerError, "mfa_status_failed", "failed to load user for status")
