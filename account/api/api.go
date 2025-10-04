@@ -1057,6 +1057,11 @@ func (h *handler) mfaStatus(c *gin.Context) {
 		token = strings.TrimSpace(c.GetHeader("X-MFA-Token"))
 	}
 
+	identifier := strings.TrimSpace(c.Query("identifier"))
+	if identifier == "" {
+		identifier = strings.TrimSpace(c.Query("email"))
+	}
+
 	authToken := extractToken(c.GetHeader("Authorization"))
 
 	var (
@@ -1085,6 +1090,18 @@ func (h *handler) mfaStatus(c *gin.Context) {
 				respondError(c, http.StatusInternalServerError, "mfa_status_failed", "failed to load user for status")
 				return
 			}
+		}
+	}
+
+	if user == nil && identifier != "" {
+		user, err = h.findUserByIdentifier(ctx, identifier)
+		if err != nil {
+			if errors.Is(err, store.ErrUserNotFound) {
+				respondError(c, http.StatusNotFound, "user_not_found", "user not found")
+				return
+			}
+			respondError(c, http.StatusInternalServerError, "mfa_status_failed", "failed to load user for status")
+			return
 		}
 	}
 
