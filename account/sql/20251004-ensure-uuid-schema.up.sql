@@ -18,7 +18,6 @@ ALTER TABLE public.users
 ALTER TABLE public.users
     ALTER COLUMN uuid SET NOT NULL;
 
-=======
 -- Ensure uuid columns are of the UUID type
 DO $$
 BEGIN
