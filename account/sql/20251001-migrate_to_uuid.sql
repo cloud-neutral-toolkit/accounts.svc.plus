@@ -64,10 +64,18 @@ END $$;
 ALTER TABLE identities
     ADD COLUMN IF NOT EXISTS user_uuid UUID;
 
-UPDATE identities i
-SET user_uuid = u.uuid
-FROM users u
-WHERE i.user_id = u.id;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'identities'
+          AND column_name = 'user_id'
+          AND table_schema = 'public'
+    ) THEN
+        EXECUTE 'UPDATE identities i SET user_uuid = u.uuid FROM users u WHERE i.user_id = u.id;';
+    END IF;
+END $$;
 
 ALTER TABLE identities
     ALTER COLUMN user_uuid SET NOT NULL;
@@ -109,10 +117,18 @@ END $$;
 ALTER TABLE sessions
     ADD COLUMN IF NOT EXISTS user_uuid UUID;
 
-UPDATE sessions s
-SET user_uuid = u.uuid
-FROM users u
-WHERE s.user_id = u.id;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'sessions'
+          AND column_name = 'user_id'
+          AND table_schema = 'public'
+    ) THEN
+        EXECUTE 'UPDATE sessions s SET user_uuid = u.uuid FROM users u WHERE s.user_id = u.id;';
+    END IF;
+END $$;
 
 ALTER TABLE sessions
     ALTER COLUMN user_uuid SET NOT NULL;
