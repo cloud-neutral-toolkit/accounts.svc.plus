@@ -40,6 +40,11 @@ ALTER TABLE public.users
 ALTER TABLE public.users
     DROP COLUMN IF EXISTS email_verified;
 
+
+ALTER TABLE public.users
+    ALTER COLUMN updated_at DROP DEFAULT;
+
+
 -- Restore uuid columns to neutral defaults
 ALTER TABLE public.sessions
     ALTER COLUMN uuid DROP DEFAULT,
