@@ -1,68 +1,60 @@
-# 前置准备
+# 历史 UUID 迁移指引（已归档）
 
-1. 确认扩展
-登录 PostgreSQL，执行： \dx 看看是否已经有 uuid-ossp 或 pgcrypto。
-如果没有，就执行： 
+> **说明**：项目已经统一改为直接使用 `schema.sql` 初始化数据库，不再提供单独的 UUID 迁移脚本。本指南仅保留作为旧环境排查的参考，若你是全新部署，可直接执行 `schema.sql` 并忽略本文件。
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-或者：
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+1. **确认扩展**  
+   登录 PostgreSQL，执行 `\dx` 检查是否已经启用了 `uuid-ossp` 或 `pgcrypto`。若没有，可执行：
 
+   ```sql
+   CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+   CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+   ```
 
-⚠️ 推荐用 pgcrypto（函数是 gen_random_uuid()），更现代；
-如果你已经用了 uuid-ossp，脚本里的 uuid_generate_v4() 就能直接用。
+   推荐使用 `pgcrypto` 的 `gen_random_uuid()`；若历史库已启用 `uuid-ossp`，脚本中的 `uuid_generate_v4()` 亦可直接使用。
 
-2. 备份数据库
+2. **备份数据库**  
+   任何迁移前都应留存快照：
 
-这是最关键的保险：
+   ```bash
+   pg_dump -U <user> -d <dbname> > backup_before_uuid.sql
+   ```
 
-pg_dump -U <user> -d <dbname> > backup_before_uuid.sql
+3. **执行迁移脚本（仅旧项目）**  
+   旧版项目曾通过 `migrate_to_uuid.sql` 完成以下步骤：
+   - 新增 `uuid` 主键列并填充现有数据；
+   - 添加 `user_uuid` 外键字段，与旧的自增 `id` 并行；
+   - 删除旧的 `id`、`user_id` 列并将 `uuid` 设为主键。
 
-3. 执行迁移
+   如仍需在遗留环境执行，可根据上述逻辑自行编写脚本，或从历史提交中找回旧版 SQL。
 
-假设你的 schema 在 schema.sql 文件里，迁移脚本在 migrate_to_uuid.sql 文件里。
+4. **验证结果**  
+   迁移完成后进入数据库（`psql -U <user> -d <dbname>`）并检查：
 
-执行： psql -U <user> -d <dbname> -f migrate_to_uuid.sql
+   ```sql
+   \d users
+   \d identities
+   \d sessions
+   ```
 
+   预期结构示例：
 
-这个脚本会做三步：
+   - `users(uuid PRIMARY KEY, username, password, email, created_at …)`
+   - `identities(uuid PRIMARY KEY, user_uuid REFERENCES users(uuid), provider, external_id …)`
+   - `sessions(uuid PRIMARY KEY, user_uuid REFERENCES users(uuid), token, expires_at …)`
 
-- 新增 uuid 列，填充数据。
-- 新建 user_uuid 外键字段，保持和旧 id 外键并存。
-- 删除旧的 id、user_id，把 uuid 设为主键。
+   亦可通过信息架构核对外键：
 
-4. 验证结果
+   ```sql
+   SELECT constraint_name, table_name, column_name, foreign_table_name
+   FROM information_schema.key_column_usage
+   WHERE table_schema = 'public';
+   ```
 
-迁移后，进入数据库： psql -U <user> -d <dbname>
+5. **回滚策略**  
+   若迁移出现问题，可使用备份恢复：
 
-查看表结构：
+   ```bash
+   psql -U <user> -d <dbname> < backup_before_uuid.sql
+   ```
 
-\d users
-\d identities
-\d sessions
-
-
-应该看到：
-
-users(uuid PRIMARY KEY, username, password, email, created_at …)
-identities(uuid PRIMARY KEY, user_uuid REFERENCES users(uuid), provider, external_id …)
-sessions(uuid PRIMARY KEY, user_uuid REFERENCES users(uuid), token, expires_at …)
-
-再验证外键是否正确：
-
-SELECT constraint_name, table_name, column_name, foreign_table_name
-FROM information_schema.key_column_usage
-WHERE table_schema = 'public';
-
-回滚策略
-
-如果迁移出错，可以用之前的备份恢复：
-
-psql -U <user> -d <dbname> < backup_before_uuid.sql
-
-总结：
-
-先启用扩展
-再运行迁移脚本
-验证新表结构和外键
-保留备份，随时可回滚
+> **小结**：新部署只需运行 `schema.sql`。旧环境若要沿用 UUID 主键改造，可参考上述思路自行调整脚本，并务必在操作前备份。
