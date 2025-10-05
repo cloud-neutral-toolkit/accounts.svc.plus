@@ -958,22 +958,57 @@ func (h *handler) provisionTOTP(c *gin.Context) {
 	}
 
 	token := strings.TrimSpace(req.Token)
-	if token == "" {
-		respondError(c, http.StatusBadRequest, "mfa_token_required", "mfa token is required")
-		return
-	}
-
-	challenge, ok := h.refreshMFAChallenge(token)
-	if !ok {
-		respondError(c, http.StatusUnauthorized, "invalid_mfa_token", "mfa token is invalid or expired")
-		return
-	}
-
 	ctx := c.Request.Context()
-	user, err := h.store.GetUserByID(ctx, challenge.userID)
-	if err != nil {
-		respondError(c, http.StatusInternalServerError, "mfa_user_lookup_failed", "failed to load user for mfa provisioning")
-		return
+	var (
+		user      *store.User
+		err       error
+		challenge mfaChallenge
+		ok        bool
+	)
+
+	if token != "" {
+		challenge, ok = h.refreshMFAChallenge(token)
+		if !ok {
+			respondError(c, http.StatusUnauthorized, "invalid_mfa_token", "mfa token is invalid or expired")
+			return
+		}
+
+		user, err = h.store.GetUserByID(ctx, challenge.userID)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "mfa_user_lookup_failed", "failed to load user for mfa provisioning")
+			return
+		}
+	} else {
+		sessionToken := extractToken(c.GetHeader("Authorization"))
+		if sessionToken == "" {
+			respondError(c, http.StatusBadRequest, "mfa_token_required", "mfa token or valid session is required")
+			return
+		}
+
+		sess, ok := h.lookupSession(sessionToken)
+		if !ok {
+			respondError(c, http.StatusUnauthorized, "invalid_session", "session token is invalid or expired")
+			return
+		}
+
+		user, err = h.store.GetUserByID(ctx, sess.userID)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "mfa_user_lookup_failed", "failed to load user for mfa provisioning")
+			return
+		}
+
+		challengeToken, err := h.createMFAChallenge(user.ID)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "mfa_challenge_creation_failed", "failed to create mfa challenge")
+			return
+		}
+
+		token = challengeToken
+		challenge, ok = h.refreshMFAChallenge(token)
+		if !ok {
+			respondError(c, http.StatusInternalServerError, "mfa_challenge_creation_failed", "failed to initialize mfa challenge")
+			return
+		}
 	}
 
 	if user.MFAEnabled {
