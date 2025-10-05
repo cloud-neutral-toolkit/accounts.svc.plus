@@ -26,7 +26,7 @@ type apiResponse struct {
 	User      map[string]interface{} `json:"user"`
 	MFA       map[string]interface{} `json:"mfa"`
 	Secret    string                 `json:"secret"`
-	URI       string                 `json:"uri"`
+	Otpauth   string                 `json:"otpauth_url"`
 	ExpiresAt string                 `json:"expiresAt"`
 }
 
@@ -328,7 +328,7 @@ func TestMFATOTPFlow(t *testing.T) {
 	if resp.Secret == "" {
 		t.Fatalf("expected totp secret in provisioning response")
 	}
-	if resp.URI == "" {
+	if resp.Otpauth == "" {
 		t.Fatalf("expected otpauth uri in provisioning response")
 	}
 	secret := resp.Secret

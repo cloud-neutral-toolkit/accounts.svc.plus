@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha1"
+	"encoding/base32"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -26,6 +28,8 @@ const defaultMFAChallengeTTL = 10 * time.Minute
 const defaultTOTPIssuer = "XControl Account"
 const defaultEmailVerificationTTL = 24 * time.Hour
 const defaultPasswordResetTTL = 30 * time.Minute
+const maxMFAVerificationAttempts = 5
+const defaultMFALockoutDuration = 5 * time.Minute
 
 type session struct {
 	userID    string
@@ -52,8 +56,14 @@ type handler struct {
 }
 
 type mfaChallenge struct {
-	userID    string
-	expiresAt time.Time
+	userID         string
+	expiresAt      time.Time
+	totpSecret     string
+	totpIssuer     string
+	totpAccount    string
+	totpIssuedAt   time.Time
+	failedAttempts int
+	lockedUntil    time.Time
 }
 
 type emailVerification struct {
@@ -285,7 +295,7 @@ func (h *handler) register(c *gin.Context) {
 
 	response := gin.H{
 		"message": message,
-		"user":    sanitizeUser(user),
+		"user":    sanitizeUser(user, nil),
 	}
 	c.JSON(http.StatusCreated, response)
 }
@@ -348,7 +358,7 @@ func (h *handler) verifyEmail(c *gin.Context) {
 		"message":   "email verified",
 		"token":     sessionToken,
 		"expiresAt": expiresAt.UTC(),
-		"user":      sanitizeUser(user),
+		"user":      sanitizeUser(user, nil),
 	})
 }
 
@@ -464,7 +474,7 @@ func (h *handler) confirmPasswordReset(c *gin.Context) {
 		"message":   "password reset successful",
 		"token":     sessionToken,
 		"expiresAt": expiresAt.UTC(),
-		"user":      sanitizeUser(user),
+		"user":      sanitizeUser(user, nil),
 	})
 }
 
@@ -558,7 +568,7 @@ func (h *handler) login(c *gin.Context) {
 			"message":   "login successful",
 			"token":     token,
 			"expiresAt": expiresAt.UTC(),
-			"user":      sanitizeUser(user),
+			"user":      sanitizeUser(user, nil),
 		})
 		return
 	}
@@ -573,7 +583,7 @@ func (h *handler) login(c *gin.Context) {
 		"message":   "login successful",
 		"token":     token,
 		"expiresAt": expiresAt.UTC(),
-		"user":      sanitizeUser(user),
+		"user":      sanitizeUser(user, nil),
 	}
 
 	if challengeToken, err := h.createMFAChallenge(user.ID); err != nil {
@@ -620,7 +630,7 @@ func (h *handler) session(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"user": sanitizeUser(user)})
+	c.JSON(http.StatusOK, gin.H{"user": sanitizeUser(user, nil)})
 }
 
 func (h *handler) deleteSession(c *gin.Context) {
@@ -684,15 +694,59 @@ func (h *handler) newRandomToken() (string, error) {
 	return hex.EncodeToString(buffer), nil
 }
 
+func (h *handler) effectiveMFAChallengeTTL() time.Duration {
+	ttl := h.mfaChallengeTTL
+	if ttl <= 0 {
+		ttl = defaultMFAChallengeTTL
+	}
+	return ttl
+}
+
+func clearMFAChallenge(ch *mfaChallenge) {
+	if ch == nil {
+		return
+	}
+	ch.totpSecret = ""
+	ch.totpIssuer = ""
+	ch.totpAccount = ""
+	ch.totpIssuedAt = time.Time{}
+	ch.failedAttempts = 0
+	ch.lockedUntil = time.Time{}
+}
+
+func (h *handler) updateMFAChallenge(token string, update func(*mfaChallenge) bool) (mfaChallenge, bool) {
+	h.mfaMu.Lock()
+	defer h.mfaMu.Unlock()
+
+	challenge, ok := h.mfaChallenges[token]
+	if !ok {
+		return mfaChallenge{}, false
+	}
+
+	if time.Now().After(challenge.expiresAt) {
+		clearMFAChallenge(&challenge)
+		delete(h.mfaChallenges, token)
+		return mfaChallenge{}, false
+	}
+
+	if update != nil {
+		if !update(&challenge) {
+			clearMFAChallenge(&challenge)
+			delete(h.mfaChallenges, token)
+			return mfaChallenge{}, false
+		}
+		h.mfaChallenges[token] = challenge
+	}
+
+	return challenge, true
+}
+
 func (h *handler) createMFAChallenge(userID string) (string, error) {
 	token, err := h.newRandomToken()
 	if err != nil {
 		return "", err
 	}
-	ttl := h.mfaChallengeTTL
-	if ttl <= 0 {
-		ttl = defaultMFAChallengeTTL
-	}
+	ttl := h.effectiveMFAChallengeTTL()
 	challenge := mfaChallenge{userID: userID, expiresAt: time.Now().Add(ttl)}
 	h.mfaMu.Lock()
 	h.mfaChallenges[token] = challenge
@@ -701,39 +755,15 @@ func (h *handler) createMFAChallenge(userID string) (string, error) {
 }
 
 func (h *handler) lookupMFAChallenge(token string) (mfaChallenge, bool) {
-	h.mfaMu.RLock()
-	challenge, ok := h.mfaChallenges[token]
-	h.mfaMu.RUnlock()
-	if !ok {
-		return mfaChallenge{}, false
-	}
-	if time.Now().After(challenge.expiresAt) {
-		h.removeMFAChallenge(token)
-		return mfaChallenge{}, false
-	}
-	return challenge, true
+	return h.updateMFAChallenge(token, nil)
 }
 
 func (h *handler) refreshMFAChallenge(token string) (mfaChallenge, bool) {
-	ttl := h.mfaChallengeTTL
-	if ttl <= 0 {
-		ttl = defaultMFAChallengeTTL
-	}
-	h.mfaMu.Lock()
-	challenge, ok := h.mfaChallenges[token]
-	if ok {
-		challenge.expiresAt = time.Now().Add(ttl)
-		h.mfaChallenges[token] = challenge
-	}
-	h.mfaMu.Unlock()
-	if !ok {
-		return mfaChallenge{}, false
-	}
-	if time.Now().After(challenge.expiresAt) {
-		h.removeMFAChallenge(token)
-		return mfaChallenge{}, false
-	}
-	return challenge, true
+	ttl := h.effectiveMFAChallengeTTL()
+	return h.updateMFAChallenge(token, func(ch *mfaChallenge) bool {
+		ch.expiresAt = time.Now().Add(ttl)
+		return true
+	})
 }
 
 func (h *handler) enqueueEmailVerification(ctx context.Context, user *store.User) error {
@@ -894,7 +924,10 @@ func (h *handler) removePasswordReset(token string) {
 
 func (h *handler) removeMFAChallenge(token string) {
 	h.mfaMu.Lock()
-	delete(h.mfaChallenges, token)
+	if challenge, ok := h.mfaChallenges[token]; ok {
+		clearMFAChallenge(&challenge)
+		delete(h.mfaChallenges, token)
+	}
 	h.mfaMu.Unlock()
 }
 
@@ -905,6 +938,7 @@ func (h *handler) removeMFAChallengesForUser(userID string) {
 	h.mfaMu.Lock()
 	for token, challenge := range h.mfaChallenges {
 		if challenge.userID == userID {
+			clearMFAChallenge(&challenge)
 			delete(h.mfaChallenges, token)
 		}
 	}
@@ -949,18 +983,15 @@ func (h *handler) provisionTOTP(c *gin.Context) {
 
 	issuer := strings.TrimSpace(req.Issuer)
 	if issuer == "" {
-		issuer = h.totpIssuer
+		issuer = strings.TrimSpace(h.totpIssuer)
+		if issuer == "" {
+			issuer = defaultTOTPIssuer
+		}
 	}
 
 	accountName := strings.TrimSpace(req.Account)
 	if accountName == "" {
-		accountName = strings.TrimSpace(user.Email)
-	}
-	if accountName == "" {
-		accountName = strings.TrimSpace(user.Name)
-	}
-	if accountName == "" {
-		accountName = strings.TrimSpace(user.ID)
+		accountName = deriveDefaultAccountLabel(user, issuer)
 	}
 
 	key, err := totp.Generate(totp.GenerateOpts{
@@ -975,24 +1006,62 @@ func (h *handler) provisionTOTP(c *gin.Context) {
 		return
 	}
 
-	user.MFATOTPSecret = key.Secret()
-	user.MFAEnabled = false
-	user.MFASecretIssuedAt = time.Now().UTC()
-	user.MFAConfirmedAt = time.Time{}
-
-	if err := h.store.UpdateUser(ctx, user); err != nil {
-		respondError(c, http.StatusInternalServerError, "mfa_secret_persist_failed", "failed to persist totp secret")
+	issuedAt := time.Now().UTC()
+	ttl := h.effectiveMFAChallengeTTL()
+	pendingChallenge, ok := h.updateMFAChallenge(token, func(ch *mfaChallenge) bool {
+		if ch.userID != user.ID {
+			return false
+		}
+		ch.totpSecret = key.Secret()
+		ch.totpIssuer = issuer
+		ch.totpAccount = accountName
+		ch.totpIssuedAt = issuedAt
+		ch.failedAttempts = 0
+		ch.lockedUntil = time.Time{}
+		ch.expiresAt = time.Now().Add(ttl)
+		return true
+	})
+	if !ok {
+		respondError(c, http.StatusUnauthorized, "invalid_mfa_token", "mfa token is invalid or expired")
 		return
 	}
 
+	state := buildMFAState(user, &pendingChallenge)
+	sanitized := sanitizeUser(user, &pendingChallenge)
 	c.JSON(http.StatusOK, gin.H{
-		"secret":   user.MFATOTPSecret,
-		"uri":      key.URL(),
-		"issuer":   issuer,
-		"account":  accountName,
-		"mfaToken": token,
-		"user":     sanitizeUser(user),
+		"secret":      key.Secret(),
+		"otpauth_url": key.URL(),
+		"issuer":      issuer,
+		"account":     accountName,
+		"mfaToken":    token,
+		"mfa":         state,
+		"user":        sanitized,
 	})
+}
+
+func deriveDefaultAccountLabel(user *store.User, issuer string) string {
+	if user == nil {
+		if issuer == "" {
+			return "account"
+		}
+		return fmt.Sprintf("%s account", issuer)
+	}
+
+	identifier := strings.TrimSpace(user.ID)
+	if identifier == "" {
+		if issuer == "" {
+			return "account"
+		}
+		return fmt.Sprintf("%s account", issuer)
+	}
+
+	sum := sha1.Sum([]byte(identifier))
+	encoder := base32.StdEncoding.WithPadding(base32.NoPadding)
+	encoded := strings.ToLower(encoder.EncodeToString(sum[:]))
+	if len(encoded) > 10 {
+		encoded = encoded[:10]
+	}
+	return fmt.Sprintf("user-%s", encoded)
 }
 
 func (h *handler) verifyTOTP(c *gin.Context) {
@@ -1025,7 +1094,35 @@ func (h *handler) verifyTOTP(c *gin.Context) {
 		return
 	}
 
-	if strings.TrimSpace(user.MFATOTPSecret) == "" {
+	challenge, ok = h.updateMFAChallenge(token, func(ch *mfaChallenge) bool {
+		if ch.userID != user.ID {
+			return false
+		}
+		ch.expiresAt = time.Now().Add(h.effectiveMFAChallengeTTL())
+		return true
+	})
+	if !ok {
+		respondError(c, http.StatusUnauthorized, "invalid_mfa_token", "mfa token is invalid or expired")
+		return
+	}
+
+	now := time.Now()
+	if !challenge.lockedUntil.IsZero() && now.Before(challenge.lockedUntil) {
+		retryAt := challenge.lockedUntil.UTC()
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error":    "mfa_challenge_locked",
+			"message":  "too many invalid mfa attempts, try again later",
+			"retryAt":  retryAt,
+			"mfaToken": token,
+		})
+		return
+	}
+
+	secret := strings.TrimSpace(user.MFATOTPSecret)
+	if secret == "" {
+		secret = strings.TrimSpace(challenge.totpSecret)
+	}
+	if secret == "" {
 		respondError(c, http.StatusBadRequest, "mfa_secret_missing", "mfa secret has not been provisioned")
 		return
 	}
@@ -1036,7 +1133,7 @@ func (h *handler) verifyTOTP(c *gin.Context) {
 		return
 	}
 
-	valid, err := totp.ValidateCustom(code, user.MFATOTPSecret, time.Now().UTC(), totp.ValidateOpts{
+	valid, err := totp.ValidateCustom(code, secret, time.Now().UTC(), totp.ValidateOpts{
 		Period:    30,
 		Skew:      1,
 		Digits:    otp.DigitsSix,
@@ -1047,12 +1144,55 @@ func (h *handler) verifyTOTP(c *gin.Context) {
 		return
 	}
 	if !valid {
+		ttl := h.effectiveMFAChallengeTTL()
+		updatedChallenge, ok := h.updateMFAChallenge(token, func(ch *mfaChallenge) bool {
+			if ch.userID != user.ID {
+				return false
+			}
+			if now.Before(ch.lockedUntil) {
+				return true
+			}
+			ch.failedAttempts++
+			if ch.failedAttempts >= maxMFAVerificationAttempts {
+				ch.failedAttempts = 0
+				ch.lockedUntil = now.Add(defaultMFALockoutDuration)
+			}
+			ch.expiresAt = time.Now().Add(ttl)
+			return true
+		})
+		if ok {
+			challenge = updatedChallenge
+		}
+
+		if !challenge.lockedUntil.IsZero() && now.Before(challenge.lockedUntil) {
+			retryAt := challenge.lockedUntil.UTC()
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":    "mfa_challenge_locked",
+				"message":  "too many invalid mfa attempts, try again later",
+				"retryAt":  retryAt,
+				"mfaToken": token,
+			})
+			return
+		}
+
 		respondError(c, http.StatusUnauthorized, "invalid_mfa_code", "invalid totp code")
 		return
 	}
 
+	confirmationTime := time.Now().UTC()
+	issuedAt := challenge.totpIssuedAt
+	if issuedAt.IsZero() {
+		issuedAt = confirmationTime
+	}
+
+	if strings.TrimSpace(user.MFATOTPSecret) == "" {
+		user.MFATOTPSecret = secret
+	}
+	if user.MFASecretIssuedAt.IsZero() {
+		user.MFASecretIssuedAt = issuedAt
+	}
 	user.MFAEnabled = true
-	user.MFAConfirmedAt = time.Now().UTC()
+	user.MFAConfirmedAt = confirmationTime
 
 	if err := h.store.UpdateUser(ctx, user); err != nil {
 		respondError(c, http.StatusInternalServerError, "mfa_update_failed", "failed to enable mfa")
@@ -1071,7 +1211,7 @@ func (h *handler) verifyTOTP(c *gin.Context) {
 		"message":   "mfa_verified",
 		"token":     sessionToken,
 		"expiresAt": expiresAt.UTC(),
-		"user":      sanitizeUser(user),
+		"user":      sanitizeUser(user, nil),
 	})
 }
 
@@ -1089,8 +1229,9 @@ func (h *handler) mfaStatus(c *gin.Context) {
 	authToken := extractToken(c.GetHeader("Authorization"))
 
 	var (
-		user *store.User
-		err  error
+		user      *store.User
+		err       error
+		challenge *mfaChallenge
 	)
 
 	ctx := c.Request.Context()
@@ -1107,12 +1248,19 @@ func (h *handler) mfaStatus(c *gin.Context) {
 		}
 	}
 
-	if user == nil && token != "" {
-		if challenge, ok := h.refreshMFAChallenge(token); ok {
-			user, err = h.store.GetUserByID(ctx, challenge.userID)
-			if err != nil {
-				respondError(c, http.StatusInternalServerError, "mfa_status_failed", "failed to load user for status")
-				return
+	if token != "" {
+		if refreshed, ok := h.refreshMFAChallenge(token); ok {
+			if user != nil && user.ID != refreshed.userID {
+				challenge = nil
+			} else {
+				challenge = &refreshed
+				if user == nil {
+					user, err = h.store.GetUserByID(ctx, refreshed.userID)
+					if err != nil {
+						respondError(c, http.StatusInternalServerError, "mfa_status_failed", "failed to load user for status")
+						return
+					}
+				}
 			}
 		}
 	}
@@ -1134,13 +1282,15 @@ func (h *handler) mfaStatus(c *gin.Context) {
 		return
 	}
 
+	state := buildMFAState(user, challenge)
 	c.JSON(http.StatusOK, gin.H{
-		"mfa":  buildMFAState(user),
-		"user": sanitizeUser(user),
+		"enabled": user.MFAEnabled,
+		"mfa":     state,
+		"user":    sanitizeUser(user, challenge),
 	})
 }
 
-func sanitizeUser(user *store.User) gin.H {
+func sanitizeUser(user *store.User, challenge *mfaChallenge) gin.H {
 	identifier := strings.TrimSpace(user.ID)
 	return gin.H{
 		"id":            identifier,
@@ -1150,20 +1300,35 @@ func sanitizeUser(user *store.User) gin.H {
 		"email":         user.Email,
 		"emailVerified": user.EmailVerified,
 		"mfaEnabled":    user.MFAEnabled,
-		"mfa":           buildMFAState(user),
+		"mfa":           buildMFAState(user, challenge),
 	}
 }
 
-func buildMFAState(user *store.User) gin.H {
+func buildMFAState(user *store.User, challenge *mfaChallenge) gin.H {
+	pending := strings.TrimSpace(user.MFATOTPSecret) != "" && !user.MFAEnabled
+	issuedAt := user.MFASecretIssuedAt
+
+	if challenge != nil && !user.MFAEnabled {
+		if strings.TrimSpace(challenge.totpSecret) != "" {
+			pending = true
+		}
+		if issuedAt.IsZero() && !challenge.totpIssuedAt.IsZero() {
+			issuedAt = challenge.totpIssuedAt
+		}
+	}
+
 	state := gin.H{
 		"totpEnabled": user.MFAEnabled,
-		"totpPending": strings.TrimSpace(user.MFATOTPSecret) != "" && !user.MFAEnabled,
+		"totpPending": pending,
 	}
-	if !user.MFASecretIssuedAt.IsZero() {
-		state["totpSecretIssuedAt"] = user.MFASecretIssuedAt.UTC()
+	if !issuedAt.IsZero() {
+		state["totpSecretIssuedAt"] = issuedAt.UTC()
 	}
 	if !user.MFAConfirmedAt.IsZero() {
 		state["totpConfirmedAt"] = user.MFAConfirmedAt.UTC()
+	}
+	if challenge != nil && !challenge.lockedUntil.IsZero() && time.Now().Before(challenge.lockedUntil) {
+		state["totpLockedUntil"] = challenge.lockedUntil.UTC()
 	}
 	return state
 }
@@ -1211,7 +1376,7 @@ func (h *handler) disableMFA(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "mfa_disabled",
-		"user":    sanitizeUser(user),
+		"user":    sanitizeUser(user, nil),
 	})
 }
 
