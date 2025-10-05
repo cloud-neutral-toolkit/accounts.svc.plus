@@ -527,37 +527,39 @@ func (h *handler) login(c *gin.Context) {
 		return
 	}
 
-	if !user.MFAEnabled {
-		challengeToken, err := h.createMFAChallenge(user.ID)
-		if err != nil {
-			respondError(c, http.StatusInternalServerError, "mfa_challenge_failed", "failed to prepare mfa challenge")
+	if user.MFAEnabled {
+		if totpCode == "" {
+			respondError(c, http.StatusBadRequest, "mfa_code_required", "totp code is required")
 			return
 		}
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":    "mfa_setup_required",
-			"mfaToken": challengeToken,
-			"user":     sanitizeUser(user),
+
+		valid, err := totp.ValidateCustom(totpCode, user.MFATOTPSecret, time.Now().UTC(), totp.ValidateOpts{
+			Period:    30,
+			Skew:      1,
+			Digits:    otp.DigitsSix,
+			Algorithm: otp.AlgorithmSHA1,
 		})
-		return
-	}
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "invalid_mfa_code", "invalid totp code")
+			return
+		}
+		if !valid {
+			respondError(c, http.StatusUnauthorized, "invalid_mfa_code", "invalid totp code")
+			return
+		}
 
-	if totpCode == "" {
-		respondError(c, http.StatusBadRequest, "mfa_code_required", "totp code is required")
-		return
-	}
+		token, expiresAt, err := h.createSession(user.ID)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "session_creation_failed", "failed to create session")
+			return
+		}
 
-	valid, err := totp.ValidateCustom(totpCode, user.MFATOTPSecret, time.Now().UTC(), totp.ValidateOpts{
-		Period:    30,
-		Skew:      1,
-		Digits:    otp.DigitsSix,
-		Algorithm: otp.AlgorithmSHA1,
-	})
-	if err != nil {
-		respondError(c, http.StatusInternalServerError, "invalid_mfa_code", "invalid totp code")
-		return
-	}
-	if !valid {
-		respondError(c, http.StatusUnauthorized, "invalid_mfa_code", "invalid totp code")
+		c.JSON(http.StatusOK, gin.H{
+			"message":   "login successful",
+			"token":     token,
+			"expiresAt": expiresAt.UTC(),
+			"user":      sanitizeUser(user),
+		})
 		return
 	}
 
@@ -567,12 +569,20 @@ func (h *handler) login(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	response := gin.H{
 		"message":   "login successful",
 		"token":     token,
 		"expiresAt": expiresAt.UTC(),
 		"user":      sanitizeUser(user),
-	})
+	}
+
+	if challengeToken, err := h.createMFAChallenge(user.ID); err != nil {
+		slog.Error("failed to create mfa challenge during login", "err", err, "userID", user.ID)
+	} else {
+		response["mfaToken"] = challengeToken
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *handler) findUserByIdentifier(ctx context.Context, identifier string) (*store.User, error) {

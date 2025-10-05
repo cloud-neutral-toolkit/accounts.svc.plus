@@ -295,15 +295,18 @@ func TestMFATOTPFlow(t *testing.T) {
 	rr = httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected login to require mfa setup, got %d", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected login success for new user, got %d: %s", rr.Code, rr.Body.String())
 	}
 	resp := decodeResponse(t, rr)
-	if resp.Error != "mfa_setup_required" {
-		t.Fatalf("expected mfa_setup_required error, got %q", resp.Error)
+	if resp.Token == "" {
+		t.Fatalf("expected session token in login response")
 	}
 	if resp.MFAToken == "" {
-		t.Fatalf("expected mfa token in response")
+		t.Fatalf("expected mfa token in login response")
+	}
+	if resp.User == nil {
+		t.Fatalf("expected user object in login response")
 	}
 
 	provisionPayload := map[string]string{
@@ -525,11 +528,14 @@ func TestDisableMFA(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr = httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected login to require mfa setup, got %d: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected login success for new user, got %d: %s", rr.Code, rr.Body.String())
 	}
 
 	resp := decodeResponse(t, rr)
+	if resp.Token == "" {
+		t.Fatalf("expected session token in login response")
+	}
 	if resp.MFAToken == "" {
 		t.Fatalf("expected mfa token in login response")
 	}
@@ -621,12 +627,15 @@ func TestDisableMFA(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr = httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected login to require setup again, got %d: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected login success after disable, got %d: %s", rr.Code, rr.Body.String())
 	}
 	resp = decodeResponse(t, rr)
-	if resp.Error != "mfa_setup_required" {
-		t.Fatalf("expected mfa_setup_required error after disable, got %q", resp.Error)
+	if resp.Token == "" {
+		t.Fatalf("expected session token after disable login")
+	}
+	if resp.MFAToken == "" {
+		t.Fatalf("expected mfa token after disable login")
 	}
 }
 
@@ -758,12 +767,12 @@ func TestPasswordResetFlow(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr = httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected login to prompt for mfa setup, got %d: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected login success after password reset, got %d: %s", rr.Code, rr.Body.String())
 	}
 	resp = decodeResponse(t, rr)
-	if resp.Error != "mfa_setup_required" {
-		t.Fatalf("expected mfa_setup_required after password reset, got %q", resp.Error)
+	if resp.Token == "" {
+		t.Fatalf("expected session token after password reset")
 	}
 
 	loginPayload["password"] = registerPayload["password"]
