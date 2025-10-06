@@ -31,6 +31,8 @@ const defaultPasswordResetTTL = 30 * time.Minute
 const maxMFAVerificationAttempts = 5
 const defaultMFALockoutDuration = 5 * time.Minute
 
+const sessionCookieName = "xc_session"
+
 type session struct {
 	userID    string
 	expiresAt time.Time
@@ -614,6 +616,14 @@ func (h *handler) session(c *gin.Context) {
 		}
 	}
 	if token == "" {
+		if cookie, err := c.Cookie(sessionCookieName); err == nil {
+			cookie = strings.TrimSpace(cookie)
+			if cookie != "" {
+				token = cookie
+			}
+		}
+	}
+	if token == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "session token required"})
 		return
 	}
@@ -638,6 +648,14 @@ func (h *handler) deleteSession(c *gin.Context) {
 	if token == "" {
 		if value := c.Query("token"); value != "" {
 			token = value
+		}
+	}
+	if token == "" {
+		if cookie, err := c.Cookie(sessionCookieName); err == nil {
+			cookie = strings.TrimSpace(cookie)
+			if cookie != "" {
+				token = cookie
+			}
 		}
 	}
 	if token == "" {

@@ -237,6 +237,78 @@ func TestRegisterEndpointWithoutEmailVerification(t *testing.T) {
 	}
 }
 
+func TestSessionEndpointAcceptsCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	RegisterRoutes(router, WithEmailVerification(false))
+
+	registerPayload := map[string]string{
+		"name":     "Cookie User",
+		"email":    "cookie-user@example.com",
+		"password": "supersecure",
+	}
+	registerBody, err := json.Marshal(registerPayload)
+	if err != nil {
+		t.Fatalf("failed to marshal registration payload: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", bytes.NewReader(registerBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected registration success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	loginBody, err := json.Marshal(registerPayload)
+	if err != nil {
+		t.Fatalf("failed to marshal login payload: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected login success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeResponse(t, rr)
+	if resp.Token == "" {
+		t.Fatalf("expected session token in login response")
+	}
+
+	sessionReq := httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
+	sessionReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: resp.Token})
+	sessionRec := httptest.NewRecorder()
+	router.ServeHTTP(sessionRec, sessionReq)
+	if sessionRec.Code != http.StatusOK {
+		t.Fatalf("expected session success via cookie, got %d: %s", sessionRec.Code, sessionRec.Body.String())
+	}
+
+	sessionResp := decodeResponse(t, sessionRec)
+	if sessionResp.User == nil {
+		t.Fatalf("expected user in session response")
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/auth/session", nil)
+	deleteReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: resp.Token})
+	deleteRec := httptest.NewRecorder()
+	router.ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("expected delete success via cookie, got %d: %s", deleteRec.Code, deleteRec.Body.String())
+	}
+
+	sessionReq = httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
+	sessionReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: resp.Token})
+	sessionRec = httptest.NewRecorder()
+	router.ServeHTTP(sessionRec, sessionReq)
+	if sessionRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected session failure after deletion, got %d", sessionRec.Code)
+	}
+}
+
 func TestMFATOTPFlow(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
