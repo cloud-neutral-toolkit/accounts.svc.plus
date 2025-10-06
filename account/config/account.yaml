@@ -7,6 +7,8 @@ server:
   writeTimeout: 15s
   publicUrl: "http://localhost:8080"
   allowedOrigins:
+    - "https://www.svc.plus"
+    - "https://global-homepage.svc.plus"
     - "https://account.svc.plus"
     - "https://localhost:8443"
     - "http://localhost:8080"

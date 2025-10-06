@@ -337,6 +337,7 @@ func buildCORSConfig(logger *slog.Logger, serverCfg config.Server) cors.Config {
 			"Accept",
 			"Origin",
 			"X-Requested-With",
+			"Cookie",
 		},
 		ExposeHeaders: []string{
 			"Content-Length",
