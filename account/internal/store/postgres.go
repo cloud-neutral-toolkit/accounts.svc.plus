@@ -108,6 +108,20 @@ func (s *postgresStore) CreateUser(ctx context.Context, user *User) error {
 		verifiedAt = time.Now().UTC()
 	}
 
+	if normalizedEmail != "" {
+		if _, err := s.GetUserByEmail(ctx, normalizedEmail); err == nil {
+			return ErrEmailExists
+		} else if !errors.Is(err, ErrUserNotFound) {
+			return err
+		}
+	}
+
+	if _, err := s.GetUserByName(ctx, normalizedName); err == nil {
+		return ErrNameExists
+	} else if !errors.Is(err, ErrUserNotFound) {
+		return err
+	}
+
 	query := `INSERT INTO users (username, password, email, email_verified_at)
       VALUES ($1, $2, $3, $4)
       RETURNING uuid, coalesce(created_at, now()), coalesce(updated_at, now()), email_verified`
