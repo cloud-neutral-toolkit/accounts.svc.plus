@@ -100,25 +100,10 @@ func (s *postgresStore) CreateUser(ctx context.Context, user *User) error {
 		return ErrInvalidName
 	}
 
-	exists, err := s.userExistsByName(ctx, normalizedName)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return ErrNameExists
-	}
-
-	if normalizedEmail != "" {
-		exists, err = s.userExistsByEmail(ctx, normalizedEmail)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return ErrEmailExists
-		}
-	}
-
-	var verifiedAt any
+	var (
+		verifiedAt any
+		err        error
+	)
 	if user.EmailVerified {
 		verifiedAt = time.Now().UTC()
 	}
@@ -208,38 +193,6 @@ func (s *postgresStore) GetUserByID(ctx context.Context, id string) (*User, erro
 
 	row := s.db.QueryRowContext(ctx, query, id)
 	return scanUser(row)
-}
-
-func (s *postgresStore) userExistsByEmail(ctx context.Context, email string) (bool, error) {
-	if email == "" {
-		return false, nil
-	}
-
-	var exists int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM users WHERE lower(email) = lower($1) LIMIT 1`, email).Scan(&exists)
-	if err == nil {
-		return true, nil
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return false, err
-}
-
-func (s *postgresStore) userExistsByName(ctx context.Context, name string) (bool, error) {
-	if name == "" {
-		return false, nil
-	}
-
-	var exists int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM users WHERE lower(username) = lower($1) LIMIT 1`, name).Scan(&exists)
-	if err == nil {
-		return true, nil
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return false, err
 }
 
 type rowScanner interface {
