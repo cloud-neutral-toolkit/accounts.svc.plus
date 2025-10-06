@@ -50,6 +50,9 @@ CREATE TABLE IF NOT EXISTS users (
     CONSTRAINT users_email_uk UNIQUE (email)
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_uk ON users (lower(username));
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_uk ON users (lower(email)) WHERE email IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS identities (
     provider TEXT NOT NULL,
     external_id TEXT NOT NULL,
