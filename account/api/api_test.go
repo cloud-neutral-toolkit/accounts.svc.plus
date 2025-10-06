@@ -16,6 +16,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
+	"golang.org/x/crypto/bcrypt"
+
+	"xcontrol/account/internal/store"
 )
 
 type apiResponse struct {
@@ -862,5 +865,190 @@ func TestPasswordResetFlow(t *testing.T) {
 	resp = decodeResponse(t, rr)
 	if resp.Error == "" {
 		t.Fatalf("expected error when logging in with old password")
+	}
+}
+
+func TestLoginSetsSessionCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	st := store.NewMemoryStore()
+	RegisterRoutes(router, WithStore(st), WithEmailVerification(false))
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte("supersecure"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("failed to hash password: %v", err)
+	}
+
+	user := &store.User{
+		Name:          "cookie-user",
+		Email:         "cookie@example.com",
+		EmailVerified: true,
+		PasswordHash:  string(hashed),
+	}
+
+	if err := st.CreateUser(context.Background(), user); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+
+	payload := map[string]string{
+		"identifier": user.Email,
+		"password":   "supersecure",
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal login payload: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected login success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var sessionCookie *http.Cookie
+	for _, cookie := range rr.Result().Cookies() {
+		if cookie.Name == sessionCookieName {
+			sessionCookie = cookie
+			break
+		}
+	}
+
+	if sessionCookie == nil {
+		t.Fatalf("expected %s cookie to be set", sessionCookieName)
+	}
+	if sessionCookie.Value == "" {
+		t.Fatalf("expected session cookie to have a value")
+	}
+	if !sessionCookie.HttpOnly {
+		t.Fatalf("expected session cookie to be httpOnly")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
+	req.AddCookie(sessionCookie)
+
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected session retrieval success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeResponse(t, rr)
+	if resp.User == nil {
+		t.Fatalf("expected user object in session response")
+	}
+	if id, ok := resp.User["id"].(string); !ok || id != user.ID {
+		t.Fatalf("expected session user id %q, got %#v", user.ID, resp.User["id"])
+	}
+}
+
+func TestLoginWithMFASetsSessionCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	st := store.NewMemoryStore()
+	RegisterRoutes(router, WithStore(st), WithEmailVerification(false))
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte("supersecure"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("failed to hash password: %v", err)
+	}
+
+	key, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      "XControl",
+		AccountName: "mfa@example.com",
+		Period:      30,
+		Digits:      otp.DigitsSix,
+		Algorithm:   otp.AlgorithmSHA1,
+	})
+	if err != nil {
+		t.Fatalf("failed to generate totp secret: %v", err)
+	}
+
+	now := time.Now().UTC()
+
+	user := &store.User{
+		Name:              "mfa-user",
+		Email:             "mfa@example.com",
+		EmailVerified:     true,
+		PasswordHash:      string(hashed),
+		MFAEnabled:        true,
+		MFATOTPSecret:     key.Secret(),
+		MFASecretIssuedAt: now,
+		MFAConfirmedAt:    now,
+	}
+
+	if err := st.CreateUser(context.Background(), user); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+
+	waitForStableTOTPWindow(t)
+
+	code, err := totp.GenerateCodeCustom(key.Secret(), time.Now().UTC(), totp.ValidateOpts{
+		Period:    30,
+		Skew:      1,
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
+	})
+	if err != nil {
+		t.Fatalf("failed to generate totp code: %v", err)
+	}
+
+	payload := map[string]string{
+		"identifier": user.Email,
+		"password":   "supersecure",
+		"totpCode":   code,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal login payload: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected login success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var sessionCookie *http.Cookie
+	for _, cookie := range rr.Result().Cookies() {
+		if cookie.Name == sessionCookieName {
+			sessionCookie = cookie
+			break
+		}
+	}
+
+	if sessionCookie == nil {
+		t.Fatalf("expected %s cookie to be set", sessionCookieName)
+	}
+	if sessionCookie.Value == "" {
+		t.Fatalf("expected session cookie to have a value")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
+	req.AddCookie(sessionCookie)
+
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected session retrieval success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeResponse(t, rr)
+	if resp.User == nil {
+		t.Fatalf("expected user object in session response")
+	}
+	if id, ok := resp.User["id"].(string); !ok || id != user.ID {
+		t.Fatalf("expected session user id %q, got %#v", user.ID, resp.User["id"])
 	}
 }
