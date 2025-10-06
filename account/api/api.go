@@ -356,6 +356,8 @@ func (h *handler) verifyEmail(c *gin.Context) {
 		return
 	}
 
+	h.setSessionCookie(c, sessionToken, expiresAt)
+
 	c.JSON(http.StatusOK, gin.H{
 		"message":   "email verified",
 		"token":     sessionToken,
@@ -472,6 +474,8 @@ func (h *handler) confirmPasswordReset(c *gin.Context) {
 		return
 	}
 
+	h.setSessionCookie(c, sessionToken, expiresAt)
+
 	c.JSON(http.StatusOK, gin.H{
 		"message":   "password reset successful",
 		"token":     sessionToken,
@@ -566,6 +570,8 @@ func (h *handler) login(c *gin.Context) {
 			return
 		}
 
+		h.setSessionCookie(c, token, expiresAt)
+
 		c.JSON(http.StatusOK, gin.H{
 			"message":   "login successful",
 			"token":     token,
@@ -580,6 +586,8 @@ func (h *handler) login(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "session_creation_failed", "failed to create session")
 		return
 	}
+
+	h.setSessionCookie(c, token, expiresAt)
 
 	response := gin.H{
 		"message":   "login successful",
@@ -682,6 +690,16 @@ func (h *handler) createSession(userID string) (string, time.Time, error) {
 	defer h.mu.Unlock()
 	h.sessions[token] = session{userID: userID, expiresAt: expiresAt}
 	return token, expiresAt, nil
+}
+
+func (h *handler) setSessionCookie(c *gin.Context, token string, expiresAt time.Time) {
+	maxAge := int(time.Until(expiresAt).Seconds())
+	if maxAge < 0 {
+		maxAge = 0
+	}
+	secure := c.Request.TLS != nil
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(sessionCookieName, token, maxAge, "/", "", secure, true)
 }
 
 func (h *handler) lookupSession(token string) (session, bool) {
@@ -1259,6 +1277,8 @@ func (h *handler) verifyTOTP(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "session_creation_failed", "failed to create session")
 		return
 	}
+
+	h.setSessionCookie(c, sessionToken, expiresAt)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":   "mfa_verified",
