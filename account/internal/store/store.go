@@ -40,29 +40,46 @@ type Store interface {
 
 // Domain level errors returned by the store implementation.
 var (
-	ErrEmailExists     = errors.New("email already exists")
-	ErrNameExists      = errors.New("name already exists")
-	ErrInvalidName     = errors.New("invalid user name")
-	ErrUserNotFound    = errors.New("user not found")
-	ErrMFANotSupported = errors.New("mfa is not supported by the current store schema")
+	ErrEmailExists                = errors.New("email already exists")
+	ErrNameExists                 = errors.New("name already exists")
+	ErrInvalidName                = errors.New("invalid user name")
+	ErrUserNotFound               = errors.New("user not found")
+	ErrMFANotSupported            = errors.New("mfa is not supported by the current store schema")
+	ErrSuperAdminCountingDisabled = errors.New("super administrator counting is disabled")
 )
 
 // memoryStore provides an in-memory implementation of Store. It is suitable for
 // unit tests and local development where a persistent database is not yet
 // configured.
 type memoryStore struct {
-	mu      sync.RWMutex
-	byID    map[string]*User
-	byEmail map[string]*User
-	byName  map[string]*User
+	mu                      sync.RWMutex
+	allowSuperAdminCounting bool
+	byID                    map[string]*User
+	byEmail                 map[string]*User
+	byName                  map[string]*User
 }
 
-// NewMemoryStore creates a new in-memory store implementation.
+// NewMemoryStore creates a new in-memory store implementation with super
+// administrator counting disabled by default to avoid accidental exposure of
+// privileged metadata in environments where the caller has not explicitly
+// opted-in.
 func NewMemoryStore() Store {
+	return newMemoryStore(false)
+}
+
+// NewMemoryStoreWithSuperAdminCounting creates a new in-memory store with
+// explicit permission to count super administrators. This is primarily used by
+// internal tooling that needs to enforce singleton guarantees.
+func NewMemoryStoreWithSuperAdminCounting() Store {
+	return newMemoryStore(true)
+}
+
+func newMemoryStore(allowSuperAdminCounting bool) Store {
 	return &memoryStore{
-		byID:    make(map[string]*User),
-		byEmail: make(map[string]*User),
-		byName:  make(map[string]*User),
+		allowSuperAdminCounting: allowSuperAdminCounting,
+		byID:                    make(map[string]*User),
+		byEmail:                 make(map[string]*User),
+		byName:                  make(map[string]*User),
 	}
 }
 
@@ -237,6 +254,24 @@ func (s *memoryStore) UpdateUser(ctx context.Context, user *User) error {
 	return nil
 }
 
+// CountSuperAdmins returns the number of users configured as super administrators.
+func (s *memoryStore) CountSuperAdmins(ctx context.Context) (int, error) {
+	_ = ctx
+	if !s.allowSuperAdminCounting {
+		return 0, ErrSuperAdminCountingDisabled
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	count := 0
+	for _, user := range s.byID {
+		if isSuperAdmin(user) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 const (
 	// LevelAdmin is the numeric level for administrator accounts.
 	LevelAdmin = 0
@@ -336,4 +371,32 @@ func assignUser(dst, src *User) {
 	dst.Groups = cloneStringSlice(src.Groups)
 	dst.Permissions = cloneStringSlice(src.Permissions)
 	normalizeUserRoleFields(dst)
+}
+
+func isSuperAdmin(user *User) bool {
+	if user == nil {
+		return false
+	}
+	if strings.ToLower(strings.TrimSpace(user.Role)) != RoleAdmin && user.Level != LevelAdmin {
+		return false
+	}
+
+	hasWildcard := false
+	for _, permission := range user.Permissions {
+		if strings.TrimSpace(permission) == "*" {
+			hasWildcard = true
+			break
+		}
+	}
+	if !hasWildcard {
+		return false
+	}
+
+	for _, group := range user.Groups {
+		if strings.EqualFold(strings.TrimSpace(group), "Admin") {
+			return true
+		}
+	}
+
+	return false
 }
