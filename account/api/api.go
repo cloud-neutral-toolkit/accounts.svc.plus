@@ -262,6 +262,9 @@ func (h *handler) register(c *gin.Context) {
 		Name:         name,
 		Email:        email,
 		PasswordHash: string(hashed),
+		Level:        store.LevelUser,
+		Role:         store.RoleUser,
+		Groups:       []string{"User"},
 	}
 
 	if !h.emailVerificationEnabled {
@@ -1365,6 +1368,22 @@ func (h *handler) mfaStatus(c *gin.Context) {
 
 func sanitizeUser(user *store.User, challenge *mfaChallenge) gin.H {
 	identifier := strings.TrimSpace(user.ID)
+	groups := user.Groups
+	if len(groups) == 0 {
+		groups = []string{}
+	} else {
+		cloned := make([]string, len(groups))
+		copy(cloned, groups)
+		groups = cloned
+	}
+	permissions := user.Permissions
+	if len(permissions) == 0 {
+		permissions = []string{}
+	} else {
+		cloned := make([]string, len(permissions))
+		copy(cloned, permissions)
+		permissions = cloned
+	}
 	return gin.H{
 		"id":            identifier,
 		"uuid":          identifier,
@@ -1374,6 +1393,9 @@ func sanitizeUser(user *store.User, challenge *mfaChallenge) gin.H {
 		"emailVerified": user.EmailVerified,
 		"mfaEnabled":    user.MFAEnabled,
 		"mfa":           buildMFAState(user, challenge),
+		"role":          user.Role,
+		"groups":        groups,
+		"permissions":   permissions,
 	}
 }
 
