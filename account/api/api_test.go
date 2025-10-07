@@ -18,6 +18,7 @@ import (
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 
+	"xcontrol/account/internal/service"
 	"xcontrol/account/internal/store"
 )
 
@@ -38,6 +39,22 @@ type capturedEmail struct {
 	Subject   string
 	PlainBody string
 	HTMLBody  string
+}
+
+type stubMetricsProvider struct {
+	metrics service.UserMetrics
+	err     error
+	called  *bool
+}
+
+func (s *stubMetricsProvider) Compute(context.Context) (service.UserMetrics, error) {
+	if s.called != nil {
+		*s.called = true
+	}
+	if s.err != nil {
+		return service.UserMetrics{}, s.err
+	}
+	return s.metrics, nil
 }
 
 type testEmailSender struct {
@@ -1076,5 +1093,174 @@ func TestLoginWithMFASetsSessionCookie(t *testing.T) {
 	}
 	if id, ok := resp.User["id"].(string); !ok || id != user.ID {
 		t.Fatalf("expected session user id %q, got %#v", user.ID, resp.User["id"])
+	}
+}
+
+func TestAdminUsersMetricsForbiddenForStandardUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	st := store.NewMemoryStore()
+	called := false
+	provider := &stubMetricsProvider{
+		metrics: service.UserMetrics{},
+		called:  &called,
+	}
+
+	RegisterRoutes(router, WithStore(st), WithEmailVerification(false), WithUserMetricsProvider(provider))
+
+	v := "s"
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("failed to hash password: %v", err)
+	}
+
+	user := &store.User{
+		ID:            "user-1",
+		Name:          "standard",
+		Email:         "user@example.com",
+		PasswordHash:  string(hashed),
+		EmailVerified: true,
+		Role:          store.RoleUser,
+	}
+	if err := st.CreateUser(context.Background(), user); err != nil {
+		t.Fatalf("failed to seed user: %v", err)
+	}
+
+	loginPayload := map[string]string{
+		"identifier": user.Email,
+		"password":   password,
+	}
+	body, err := json.Marshal(loginPayload)
+	if err != nil {
+		t.Fatalf("failed to marshal login payload: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected login success, got %d: %s", rr.Code, rr.Body.String())
+	}
+	loginResp := decodeResponse(t, rr)
+	if loginResp.Token == "" {
+		t.Fatalf("expected session token from login response")
+	}
+
+	metricsReq := httptest.NewRequest(http.MethodGet, "/api/auth/admin/users/metrics", nil)
+	metricsReq.Header.Set("Authorization", "Bearer "+loginResp.Token)
+	metricsRec := httptest.NewRecorder()
+	router.ServeHTTP(metricsRec, metricsReq)
+
+	if metricsRec.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden status, got %d: %s", metricsRec.Code, metricsRec.Body.String())
+	}
+	resp := decodeResponse(t, metricsRec)
+	if resp.Error != "forbidden" {
+		t.Fatalf("expected forbidden error code, got %q", resp.Error)
+	}
+	if called {
+		t.Fatalf("metrics provider should not be invoked for unauthorized user")
+	}
+}
+
+func TestAdminUsersMetricsSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	st := store.NewMemoryStore()
+
+	expected := service.UserMetrics{
+		Overview: service.MetricsOverview{
+			TotalUsers:      10,
+			ActiveUsers:     7,
+			SubscribedUsers: 5,
+			NewUsersLast24h: 3,
+		},
+		Series: service.MetricsSeries{
+			Daily: []service.MetricsPoint{{
+				Period:     "2024-03-17",
+				Total:      2,
+				Active:     1,
+				Subscribed: 1,
+			}},
+			Weekly: []service.MetricsPoint{{
+				Period:     "2024-W11",
+				Total:      6,
+				Active:     4,
+				Subscribed: 3,
+			}},
+		},
+	}
+	provider := &stubMetricsProvider{metrics: expected}
+
+	RegisterRoutes(router, WithStore(st), WithEmailVerification(false), WithUserMetricsProvider(provider))
+
+	v := "s"
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("failed to hash password: %v", err)
+	}
+
+	admin := &store.User{
+		ID:            "admin-1",
+		Name:          "administrator",
+		Email:         "admin@example.com",
+		PasswordHash:  string(hashed),
+		EmailVerified: true,
+		Role:          store.RoleAdmin,
+	}
+	if err := st.CreateUser(context.Background(), admin); err != nil {
+		t.Fatalf("failed to seed admin user: %v", err)
+	}
+
+	loginPayload := map[string]string{
+		"identifier": admin.Email,
+		"password":   password,
+	}
+	body, err := json.Marshal(loginPayload)
+	if err != nil {
+		t.Fatalf("failed to marshal admin login payload: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected admin login success, got %d: %s", rr.Code, rr.Body.String())
+	}
+	loginResp := decodeResponse(t, rr)
+	if loginResp.Token == "" {
+		t.Fatalf("expected session token from admin login response")
+	}
+
+	metricsReq := httptest.NewRequest(http.MethodGet, "/api/auth/admin/users/metrics", nil)
+	metricsReq.Header.Set("Authorization", "Bearer "+loginResp.Token)
+	metricsRec := httptest.NewRecorder()
+	router.ServeHTTP(metricsRec, metricsReq)
+
+	if metricsRec.Code != http.StatusOK {
+		t.Fatalf("expected metrics success, got %d: %s", metricsRec.Code, metricsRec.Body.String())
+	}
+
+	var payload service.UserMetrics
+	if err := json.Unmarshal(metricsRec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode metrics payload: %v", err)
+	}
+	if payload.Overview != expected.Overview {
+		t.Fatalf("unexpected overview: %+v", payload.Overview)
+	}
+	if len(payload.Series.Daily) != len(expected.Series.Daily) || len(payload.Series.Weekly) != len(expected.Series.Weekly) {
+		t.Fatalf("unexpected series lengths: %+v", payload.Series)
+	}
+	if payload.Series.Daily[0] != expected.Series.Daily[0] {
+		t.Fatalf("unexpected daily series: %+v", payload.Series.Daily)
+	}
+	if payload.Series.Weekly[0] != expected.Series.Weekly[0] {
+		t.Fatalf("unexpected weekly series: %+v", payload.Series.Weekly)
 	}
 }
