@@ -19,19 +19,21 @@ import (
 
 // Config describes how to construct a Store implementation.
 type Config struct {
-	Driver          string
-	DSN             string
-	MaxOpenConns    int
-	MaxIdleConns    int
-	ConnMaxLifetime time.Duration
-	ConnMaxIdleTime time.Duration
+	Driver                  string
+	DSN                     string
+	MaxOpenConns            int
+	MaxIdleConns            int
+	ConnMaxLifetime         time.Duration
+	ConnMaxIdleTime         time.Duration
+	AllowSuperAdminCounting bool
 }
 
 // New creates a Store implementation based on the provided configuration.
 func New(ctx context.Context, cfg Config) (Store, func(context.Context) error, error) {
 	driver := strings.ToLower(strings.TrimSpace(cfg.Driver))
 	if driver == "" || driver == "memory" {
-		return NewMemoryStore(), func(context.Context) error { return nil }, nil
+		ms := newMemoryStore(cfg.AllowSuperAdminCounting)
+		return ms, func(context.Context) error { return nil }, nil
 	}
 
 	switch driver {
@@ -67,7 +69,7 @@ func New(ctx context.Context, cfg Config) (Store, func(context.Context) error, e
 			return db.Close()
 		}
 
-		return &postgresStore{db: db}, cleanup, nil
+		return &postgresStore{db: db, allowSuperAdminCounting: cfg.AllowSuperAdminCounting}, cleanup, nil
 	default:
 		return nil, nil, fmt.Errorf("unsupported store driver %q", cfg.Driver)
 	}
@@ -91,7 +93,8 @@ func (c schemaCapabilities) supportsMFA() bool {
 }
 
 type postgresStore struct {
-	db *sql.DB
+	db                      *sql.DB
+	allowSuperAdminCounting bool
 
 	capsMu     sync.RWMutex
 	caps       schemaCapabilities
@@ -496,6 +499,44 @@ func (s *postgresStore) UpdateUser(ctx context.Context, user *User) error {
 	user.CreatedAt = createdAt.UTC()
 	user.UpdatedAt = updatedAt.UTC()
 	return nil
+}
+
+func (s *postgresStore) CountSuperAdmins(ctx context.Context) (int, error) {
+	if !s.allowSuperAdminCounting {
+		return 0, ErrSuperAdminCountingDisabled
+	}
+	caps, err := s.capabilities(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	roleClauses := make([]string, 0, 2)
+	if caps.hasRole {
+		roleClauses = append(roleClauses, "lower(role) = 'admin'")
+	}
+	if caps.hasLevel {
+		roleClauses = append(roleClauses, fmt.Sprintf("level = %d", LevelAdmin))
+	}
+	if len(roleClauses) == 0 {
+		return 0, errors.New("postgres store schema does not expose role or level columns")
+	}
+
+	conditions := []string{fmt.Sprintf("(%s)", strings.Join(roleClauses, " OR "))}
+
+	if caps.hasGroups {
+		conditions = append(conditions, "groups @> '[\"Admin\"]'::jsonb")
+	}
+	if caps.hasPermissions {
+		conditions = append(conditions, "permissions @> '[\"*\"]'::jsonb")
+	}
+
+	query := fmt.Sprintf("SELECT COUNT(*) FROM users WHERE %s", strings.Join(conditions, " AND "))
+
+	var count int
+	if err := s.db.QueryRowContext(ctx, query).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func nullForEmpty(value string) any {
