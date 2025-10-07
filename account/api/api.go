@@ -20,6 +20,7 @@ import (
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 
+	"xcontrol/account/internal/service"
 	"xcontrol/account/internal/store"
 )
 
@@ -55,6 +56,7 @@ type handler struct {
 	resetTTL                 time.Duration
 	passwordResets           map[string]passwordReset
 	resetMu                  sync.RWMutex
+	metricsProvider          service.UserMetricsProvider
 }
 
 type mfaChallenge struct {
@@ -126,6 +128,15 @@ func WithEmailVerificationTTL(ttl time.Duration) Option {
 	}
 }
 
+// WithUserMetricsProvider configures the handler with the provided metrics provider.
+func WithUserMetricsProvider(provider service.UserMetricsProvider) Option {
+	return func(h *handler) {
+		if provider != nil {
+			h.metricsProvider = provider
+		}
+	}
+}
+
 // WithPasswordResetTTL overrides the default TTL for password reset tokens.
 func WithPasswordResetTTL(ttl time.Duration) Option {
 	return func(h *handler) {
@@ -172,6 +183,8 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	auth.GET("/mfa/status", h.mfaStatus)
 	auth.POST("/password/reset", h.requestPasswordReset)
 	auth.POST("/password/reset/confirm", h.confirmPasswordReset)
+
+	registerAdminRoutes(auth, h)
 }
 
 type registerRequest struct {
