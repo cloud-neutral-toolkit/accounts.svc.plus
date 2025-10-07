@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -79,6 +80,10 @@ type schemaCapabilities struct {
 	hasMFAConfirmedAt    bool
 	hasCreatedAt         bool
 	hasUpdatedAt         bool
+	hasLevel             bool
+	hasRole              bool
+	hasGroups            bool
+	hasPermissions       bool
 }
 
 func (c schemaCapabilities) supportsMFA() bool {
@@ -100,9 +105,15 @@ func (s *postgresStore) CreateUser(ctx context.Context, user *User) error {
 		return ErrInvalidName
 	}
 
+	caps, err := s.capabilities(ctx)
+	if err != nil {
+		return err
+	}
+
+	normalizeUserRoleFields(user)
+
 	var (
 		verifiedAt any
-		err        error
 	)
 	if user.EmailVerified {
 		verifiedAt = time.Now().UTC()
@@ -128,15 +139,54 @@ func (s *postgresStore) CreateUser(ctx context.Context, user *User) error {
 		return ErrNameExists
 	}
 
-	query := `INSERT INTO users (username, password, email, email_verified_at)
-      VALUES ($1, $2, $3, $4)
-      RETURNING uuid, coalesce(created_at, now()), coalesce(updated_at, now()), email_verified`
+	columns := []string{"username", "password", "email", "email_verified_at"}
+	placeholders := []string{"$1", "$2", "$3", "$4"}
+	args := []any{normalizedName, user.PasswordHash, normalizedEmail, verifiedAt}
+
+	idx := len(args) + 1
+
+	if caps.hasLevel {
+		columns = append(columns, "level")
+		placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
+		args = append(args, user.Level)
+		idx++
+	}
+	if caps.hasRole {
+		columns = append(columns, "role")
+		placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
+		args = append(args, user.Role)
+		idx++
+	}
+	if caps.hasGroups {
+		encoded, err := encodeStringSlice(user.Groups)
+		if err != nil {
+			return err
+		}
+		columns = append(columns, "groups")
+		placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
+		args = append(args, encoded)
+		idx++
+	}
+	if caps.hasPermissions {
+		encoded, err := encodeStringSlice(user.Permissions)
+		if err != nil {
+			return err
+		}
+		columns = append(columns, "permissions")
+		placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
+		args = append(args, encoded)
+		idx++
+	}
+
+	query := fmt.Sprintf(`INSERT INTO users (%s)
+      VALUES (%s)
+      RETURNING uuid, coalesce(created_at, now()), coalesce(updated_at, now()), email_verified`, strings.Join(columns, ", "), strings.Join(placeholders, ", "))
 
 	var idValue any
 	var createdAt time.Time
 	var updatedAt time.Time
 	var emailVerified sql.NullBool
-	err = s.db.QueryRowContext(ctx, query, normalizedName, user.PasswordHash, normalizedEmail, verifiedAt).Scan(&idValue, &createdAt, &updatedAt, &emailVerified)
+	err = s.db.QueryRowContext(ctx, query, args...).Scan(&idValue, &createdAt, &updatedAt, &emailVerified)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrUserNotFound
@@ -257,9 +307,13 @@ func scanUser(row rowScanner) (*User, error) {
 		mfaConfirmed    sql.NullTime
 		createdAt       time.Time
 		updatedAt       time.Time
+		levelValue      sql.NullInt64
+		roleValue       sql.NullString
+		groupsRaw       []byte
+		permissionsRaw  []byte
 	)
 
-	if err := row.Scan(&idValue, &username, &email, &emailVerified, &password, &mfaSecret, &mfaEnabled, &mfaSecretIssued, &mfaConfirmed, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&idValue, &username, &email, &emailVerified, &password, &mfaSecret, &mfaEnabled, &mfaSecretIssued, &mfaConfirmed, &createdAt, &updatedAt, &levelValue, &roleValue, &groupsRaw, &permissionsRaw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrUserNotFound
 		}
@@ -284,6 +338,13 @@ func scanUser(row rowScanner) (*User, error) {
 		CreatedAt:         createdAt.UTC(),
 		UpdatedAt:         updatedAt.UTC(),
 	}
+	if levelValue.Valid {
+		user.Level = int(levelValue.Int64)
+	}
+	user.Role = strings.TrimSpace(roleValue.String)
+	user.Groups = decodeStringSlice(groupsRaw)
+	user.Permissions = decodeStringSlice(permissionsRaw)
+	normalizeUserRoleFields(user)
 	return user, nil
 }
 
@@ -317,6 +378,8 @@ func (s *postgresStore) UpdateUser(ctx context.Context, user *User) error {
 	} else {
 		builder.WriteString(", email_verified_at = NULL")
 	}
+
+	normalizeUserRoleFields(user)
 
 	args := []any{normalizedName, normalizedEmail, user.PasswordHash}
 	idx := 4
@@ -355,6 +418,38 @@ func (s *postgresStore) UpdateUser(ctx context.Context, user *User) error {
 
 	if caps.hasUpdatedAt {
 		builder.WriteString(", updated_at = now()")
+	}
+
+	if caps.hasLevel {
+		builder.WriteString(fmt.Sprintf(", level = $%d", idx))
+		args = append(args, user.Level)
+		idx++
+	}
+
+	if caps.hasRole {
+		builder.WriteString(fmt.Sprintf(", role = $%d", idx))
+		args = append(args, user.Role)
+		idx++
+	}
+
+	if caps.hasGroups {
+		encoded, err := encodeStringSlice(user.Groups)
+		if err != nil {
+			return err
+		}
+		builder.WriteString(fmt.Sprintf(", groups = $%d", idx))
+		args = append(args, encoded)
+		idx++
+	}
+
+	if caps.hasPermissions {
+		encoded, err := encodeStringSlice(user.Permissions)
+		if err != nil {
+			return err
+		}
+		builder.WriteString(fmt.Sprintf(", permissions = $%d", idx))
+		args = append(args, encoded)
+		idx++
 	}
 
 	builder.WriteString(fmt.Sprintf(" WHERE uuid = $%d RETURNING ", idx))
@@ -512,7 +607,31 @@ func (s *postgresStore) capabilities(ctx context.Context) (schemaCapabilities, e
     WHERE table_name = 'users'
       AND table_schema = ANY (current_schemas(false))
       AND column_name = 'updated_at'
-  ) AS has_updated_at`
+  ) AS has_updated_at,
+  EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND table_schema = ANY (current_schemas(false))
+      AND column_name = 'level'
+  ) AS has_level,
+  EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND table_schema = ANY (current_schemas(false))
+      AND column_name = 'role'
+  ) AS has_role,
+  EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND table_schema = ANY (current_schemas(false))
+      AND column_name = 'groups'
+  ) AS has_groups,
+  EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND table_schema = ANY (current_schemas(false))
+      AND column_name = 'permissions'
+  ) AS has_permissions`
 
 	row := s.db.QueryRowContext(ctx, query)
 	var caps schemaCapabilities
@@ -523,6 +642,10 @@ func (s *postgresStore) capabilities(ctx context.Context) (schemaCapabilities, e
 		&caps.hasMFAConfirmedAt,
 		&caps.hasCreatedAt,
 		&caps.hasUpdatedAt,
+		&caps.hasLevel,
+		&caps.hasRole,
+		&caps.hasGroups,
+		&caps.hasPermissions,
 	); err != nil {
 		return schemaCapabilities{}, err
 	}
@@ -563,6 +686,45 @@ func (s *postgresStore) selectUserQuery(caps schemaCapabilities, whereClause str
 		updatedExpr = "coalesce(updated_at, now())"
 	}
 
-	return fmt.Sprintf(`SELECT uuid, username, email, email_verified, password, %s, %s, %s, %s, %s, %s FROM users %s`,
-		secretExpr, enabledExpr, issuedExpr, confirmedExpr, createdExpr, updatedExpr, whereClause)
+	levelExpr := fmt.Sprintf("%d", LevelUser)
+	if caps.hasLevel {
+		levelExpr = fmt.Sprintf("coalesce(level, %d)", LevelUser)
+	}
+
+	roleExpr := fmt.Sprintf("'%s'", RoleUser)
+	if caps.hasRole {
+		roleExpr = fmt.Sprintf("coalesce(role, '%s')", RoleUser)
+	}
+
+	groupsExpr := "'[]'::jsonb"
+	if caps.hasGroups {
+		groupsExpr = "coalesce(groups, '[]'::jsonb)"
+	}
+
+	permissionsExpr := "'[]'::jsonb"
+	if caps.hasPermissions {
+		permissionsExpr = "coalesce(permissions, '[]'::jsonb)"
+	}
+
+	return fmt.Sprintf(`SELECT uuid, username, email, email_verified, password, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s FROM users %s`,
+		secretExpr, enabledExpr, issuedExpr, confirmedExpr, createdExpr, updatedExpr, levelExpr, roleExpr, groupsExpr, permissionsExpr, whereClause)
+}
+
+func encodeStringSlice(values []string) ([]byte, error) {
+	normalized := normalizeStringSlice(values)
+	if len(normalized) == 0 {
+		return []byte("[]"), nil
+	}
+	return json.Marshal(normalized)
+}
+
+func decodeStringSlice(raw []byte) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil
+	}
+	return normalizeStringSlice(values)
 }

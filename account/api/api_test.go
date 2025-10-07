@@ -166,6 +166,26 @@ func TestRegisterEndpoint(t *testing.T) {
 		t.Fatalf("expected totpPending to be false, got %#v", mfaData["totpPending"])
 	}
 
+	if role, ok := resp.User["role"].(string); !ok || role != store.RoleUser {
+		t.Fatalf("expected role %q, got %#v", store.RoleUser, resp.User["role"])
+	}
+
+	groups, ok := resp.User["groups"].([]interface{})
+	if !ok {
+		t.Fatalf("expected groups array in response")
+	}
+	if len(groups) != 1 || groups[0] != "User" {
+		t.Fatalf("expected default group 'User', got %#v", groups)
+	}
+
+	permissions, ok := resp.User["permissions"].([]interface{})
+	if !ok {
+		t.Fatalf("expected permissions array in response")
+	}
+	if len(permissions) != 0 {
+		t.Fatalf("expected empty permissions list, got %#v", permissions)
+	}
+
 	msg, ok := mailer.last()
 	if !ok {
 		t.Fatalf("expected verification email to be sent")
@@ -293,6 +313,12 @@ func TestSessionEndpointAcceptsCookie(t *testing.T) {
 	sessionResp := decodeResponse(t, sessionRec)
 	if sessionResp.User == nil {
 		t.Fatalf("expected user in session response")
+	}
+	if role, ok := sessionResp.User["role"].(string); !ok || role != store.RoleUser {
+		t.Fatalf("expected persisted role %q, got %#v", store.RoleUser, sessionResp.User["role"])
+	}
+	if groups, ok := sessionResp.User["groups"].([]interface{}); !ok || len(groups) == 0 {
+		t.Fatalf("expected session groups to be returned, got %#v", sessionResp.User["groups"])
 	}
 
 	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/auth/session", nil)
