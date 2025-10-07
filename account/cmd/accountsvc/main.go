@@ -18,10 +18,15 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
+	"gorm.io/driver/postgres"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 
 	"xcontrol/account/api"
 	"xcontrol/account/config"
 	"xcontrol/account/internal/mailer"
+	"xcontrol/account/internal/model"
+	"xcontrol/account/internal/service"
 	"xcontrol/account/internal/store"
 )
 
@@ -140,6 +145,19 @@ var rootCmd = &cobra.Command{
 		if emailSender == nil {
 			emailVerificationEnabled = false
 		}
+
+		gormDB, gormCleanup, err := openAdminSettingsDB(cfg.Store)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if gormCleanup != nil {
+				if err := gormCleanup(context.Background()); err != nil {
+					logger.Error("failed to close admin settings db", "err", err)
+				}
+			}
+		}()
+		service.SetDB(gormDB)
 
 		options := []api.Option{
 			api.WithStore(st),
@@ -291,6 +309,48 @@ var rootCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+func openAdminSettingsDB(cfg config.Store) (*gorm.DB, func(context.Context) error, error) {
+	driver := strings.ToLower(strings.TrimSpace(cfg.Driver))
+	var (
+		db  *gorm.DB
+		err error
+	)
+	switch driver {
+	case "", "memory":
+		db, err = gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	case "postgres", "postgresql", "pgx":
+		if strings.TrimSpace(cfg.DSN) == "" {
+			return nil, nil, errors.New("admin settings database requires a dsn")
+		}
+		db, err = gorm.Open(postgres.Open(cfg.DSN), &gorm.Config{})
+	default:
+		return nil, nil, fmt.Errorf("unsupported admin settings driver %q", cfg.Driver)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := db.AutoMigrate(&model.AdminSetting{}); err != nil {
+		return nil, nil, err
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, nil, err
+	}
+	if cfg.MaxOpenConns > 0 {
+		sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
+	}
+	if cfg.MaxIdleConns > 0 {
+		sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	}
+
+	cleanup := func(context.Context) error {
+		return sqlDB.Close()
+	}
+	return db, cleanup, nil
 }
 
 func init() {
