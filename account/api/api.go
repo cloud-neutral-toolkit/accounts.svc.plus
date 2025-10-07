@@ -172,26 +172,26 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	})
 
 	auth := r.Group("/api/auth")
-  
+
 	auth.POST("/register", h.register)
 	auth.POST("/register/verify", h.verifyEmail)
-  
+
 	auth.POST("/login", h.login)
-  
+
 	auth.GET("/session", h.session)
 	auth.DELETE("/session", h.deleteSession)
-  
+
 	auth.POST("/mfa/totp/provision", h.provisionTOTP)
 	auth.POST("/mfa/totp/verify", h.verifyTOTP)
 	auth.POST("/mfa/disable", h.disableMFA)
 	auth.GET("/mfa/status", h.mfaStatus)
-  
+
 	auth.POST("/password/reset", h.requestPasswordReset)
 	auth.POST("/password/reset/confirm", h.confirmPasswordReset)
-  
+
 	auth.GET("/admin/settings", h.getAdminSettings)
 	auth.POST("/admin/settings", h.updateAdminSettings)
-  
+
 	registerAdminRoutes(auth, h)
 }
 
@@ -515,7 +515,7 @@ var allowedAdminRoles = map[string]struct{}{
 }
 
 func (h *handler) getAdminSettings(c *gin.Context) {
-	if !h.requireAdminOrOperator(c) {
+	if _, ok := h.requireAdminOrOperator(c); !ok {
 		return
 	}
 	settings, err := service.GetAdminSettings(c.Request.Context())
@@ -534,7 +534,7 @@ func (h *handler) getAdminSettings(c *gin.Context) {
 }
 
 func (h *handler) updateAdminSettings(c *gin.Context) {
-	if !h.requireAdminOrOperator(c) {
+	if _, ok := h.requireAdminOrOperator(c); !ok {
 		return
 	}
 
@@ -577,18 +577,6 @@ func (h *handler) updateAdminSettings(c *gin.Context) {
 		"version": updated.Version,
 		"matrix":  updated.Matrix,
 	})
-}
-
-func (h *handler) requireAdminOrOperator(c *gin.Context) bool {
-	role := strings.ToLower(strings.TrimSpace(c.GetHeader("X-User-Role")))
-	if role == "" {
-		role = strings.ToLower(strings.TrimSpace(c.GetHeader("X-Role")))
-	}
-	if role == "admin" || role == "operator" {
-		return true
-	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-	return false
 }
 
 func normalizeAdminMatrix(in map[string]map[string]bool) (map[string]map[string]bool, error) {
