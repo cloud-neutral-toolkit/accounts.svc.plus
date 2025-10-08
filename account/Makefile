@@ -3,7 +3,7 @@ MAIN_FILE := ./cmd/accountsvc/main.go
 PORT ?= 8080
 OS := $(shell uname -s)
 SCHEMA_FILE := ./sql/schema.sql
-MIGRATION_FILES := $(shell ls -1 sql/*.migrate.*.sql 2>/dev/null | sort)
+MIGRATION_FILES := $(shell ls -1 sql/migrations/*.up.sql 2>/dev/null | sort)
 
 
 DB_NAME    := account
@@ -64,25 +64,14 @@ init-db:
 # migrate-db target
 # =========================================
 migrate-db:
-	@echo ">>> 执行数据库 schema 迁移 (level/role/MFA/email verification)"
-	@echo "--------------------------------------------"
-	@echo "使用数据库连接: $(DB_URL)"
-	@if ! command -v psql >/dev/null 2>&1; then \
-		echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
-		exit 1; \
-	fi
-	@if [ -z "$(MIGRATION_FILES)" ]; then \
-		echo "未找到迁移 SQL 文件 (*.migrate.*.sql)"; \
-		exit 0; \
-	fi
-	@for file in $(MIGRATION_FILES); do \
-		echo "执行迁移文件: $$file"; \
-		echo "--------------------------------------------"; \
-		psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $$file || { echo "❌ $$file 执行失败"; exit 1; }; \
-		echo "✅ $$file 执行完成"; \
-		echo ""; \
-	done
-	@echo "✅ 所有迁移执行完成"
+       @echo ">>> 执行数据库 schema 迁移 (golang-migrate)"
+       @echo "--------------------------------------------"
+       @echo "使用数据库连接: $(DB_URL)"
+       @if ! command -v go >/dev/null 2>&1; then \
+               echo "未检测到 go，请先安装 Go 环境"; \
+               exit 1; \
+       fi
+       @go run ./cmd/migratectl/main.go migrate --dsn "$(DB_URL)" --dir account/sql/migrations
 
 # 删除数据库（安全防呆）
 drop-db:

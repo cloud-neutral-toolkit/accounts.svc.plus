@@ -1,3 +1,12 @@
+使用新的 `migratectl` CLI 可以在不同环境下快速执行迁移、校验和重置操作：
+
+```bash
+go run ./cmd/migratectl/main.go migrate --dsn "$DB_URL"
+go run ./cmd/migratectl/main.go check --cn "$CN_DSN" --global "$GLOBAL_DSN"
+```
+
+以下命令展示了如何授予 pglogical schema 访问权限：
+
 sudo -u postgres psql -d account -c "GRANT USAGE ON SCHEMA pglogical TO PUBLIC;"
 
 -- 登录 postgres
