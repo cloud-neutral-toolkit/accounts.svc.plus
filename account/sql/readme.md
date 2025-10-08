@@ -1,3 +1,5 @@
+sudo -u postgres psql -d account -c "GRANT USAGE ON SCHEMA pglogical TO PUBLIC;"
+
 -- 登录 postgres
 sudo -u postgres psql -d account
 
@@ -10,6 +12,8 @@ GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO shenlan;
 
 -- 授权 pglogical schema 使用权限（防止混用）
 GRANT USAGE ON SCHEMA pglogical TO shenlan;
+
+
 
 \q
 
