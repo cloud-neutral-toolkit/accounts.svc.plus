@@ -3,7 +3,8 @@ MAIN_FILE := ./cmd/accountsvc/main.go
 PORT ?= 8080
 OS := $(shell uname -s)
 SCHEMA_FILE := ./sql/schema.sql
-MIGRATION_FILE := ./sql/20251007-migrate_to_rbac.sql
+MIGRATION_FILES := $(shell ls -1 sql/migrations/*.up.sql 2>/dev/null | sort)
+
 
 DB_NAME    := account
 DB_USER    := shenlan
@@ -59,18 +60,24 @@ init-db:
 	@echo "使用数据库连接: $(DB_URL)"
 	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(SCHEMA_FILE)
 
+# =========================================
+# migrate-db target
+# =========================================
+verify-db:
+	@echo ">>> 执行数据库 schema verify  (golang-migrate)"
+	@go run ./cmd/migratectl/main.go verify --schema sql/schema.sql --dsn "$(DB_URL)" --dir account/sql/migrations
+# =========================================
+# migrate-db target
+# =========================================
 migrate-db:
-	@echo ">>> 执行数据库 schema 迁移 (level/role metadata & MFA/email verification)"
-	@if [ ! -f $(MIGRATION_FILE) ]; then \
-	        echo "未找到迁移 SQL 文件: $(MIGRATION_FILE)"; \
-	        exit 1; \
-	fi
-	@if ! command -v psql >/dev/null 2>&1; then \
-	        echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
-	        exit 1; \
-	fi
+	@echo ">>> 执行数据库 schema 迁移 (golang-migrate)"
+	@echo "--------------------------------------------"
 	@echo "使用数据库连接: $(DB_URL)"
-	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(MIGRATION_FILE)
+	@if ! command -v go >/dev/null 2>&1; then \
+	        echo "未检测到 go，请先安装 Go 环境"; \
+	        exit 1; \
+	fi
+	@go run ./cmd/migratectl/main.go migrate --dsn "$(DB_URL)" --dir sql/migrations
 
 # 删除数据库（安全防呆）
 drop-db:
