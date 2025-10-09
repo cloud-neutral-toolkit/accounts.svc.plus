@@ -63,15 +63,21 @@ init-db:
 # =========================================
 # migrate-db target
 # =========================================
+verify-db:
+	@echo ">>> 执行数据库 schema verify  (golang-migrate)"
+	@go run ./cmd/migratectl/main.go verify --schema sql/schema.sql --dsn "$(DB_URL)" --dir account/sql/migrations
+# =========================================
+# migrate-db target
+# =========================================
 migrate-db:
-       @echo ">>> 执行数据库 schema 迁移 (golang-migrate)"
-       @echo "--------------------------------------------"
-       @echo "使用数据库连接: $(DB_URL)"
-       @if ! command -v go >/dev/null 2>&1; then \
-               echo "未检测到 go，请先安装 Go 环境"; \
-               exit 1; \
-       fi
-       @go run ./cmd/migratectl/main.go migrate --dsn "$(DB_URL)" --dir account/sql/migrations
+	@echo ">>> 执行数据库 schema 迁移 (golang-migrate)"
+	@echo "--------------------------------------------"
+	@echo "使用数据库连接: $(DB_URL)"
+	@if ! command -v go >/dev/null 2>&1; then \
+	        echo "未检测到 go，请先安装 Go 环境"; \
+	        exit 1; \
+	fi
+	@go run ./cmd/migratectl/main.go migrate --dsn "$(DB_URL)" --dir sql/migrations
 
 # 删除数据库（安全防呆）
 drop-db:
