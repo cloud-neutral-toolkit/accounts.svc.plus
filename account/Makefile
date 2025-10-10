@@ -13,13 +13,17 @@ DB_HOST    := 127.0.0.1
 DB_PORT    := 5432
 DB_URL     := postgres://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable
 
+ACCOUNT_EXPORT_FILE ?= account-export.yaml
+ACCOUNT_IMPORT_FILE ?= account-export.yaml
+ACCOUNT_EMAIL_KEYWORD ?=
+
 SUPERADMIN_USERNAME ?= Admin
 SUPERADMIN_PASSWORD ?= ChangeMe
 SUPERADMIN_EMAIL    ?= admin@svc.plus
 
 export PATH := /usr/local/go/bin:$(PATH)
 
-.PHONY: all init init-go init-db migrate-db dump-schema build start stop restart clean help dev test create-super-admin
+.PHONY: all init init-go init-db migrate-db dump-schema build start stop restart clean help dev test create-super-admin account-export account-import
 
 all: build
 
@@ -78,6 +82,34 @@ migrate-db:
 	        exit 1; \
 	fi
 	@go run ./cmd/migratectl/main.go migrate --dsn "$(DB_URL)" --dir sql/migrations
+
+account-export:
+	@echo ">>> 导出账号数据为 YAML"
+	@if [ -z "$(ACCOUNT_EXPORT_FILE)" ]; then \
+	        echo "请通过 ACCOUNT_EXPORT_FILE 指定导出文件路径"; \
+	        exit 1; \
+	fi
+	@if ! command -v go >/dev/null 2>&1; then \
+	        echo "未检测到 go，请先安装 Go 环境"; \
+	        exit 1; \
+	fi
+	@go run ./cmd/migratectl/main.go export --dsn "$(DB_URL)" --output "$(ACCOUNT_EXPORT_FILE)" $(if $(strip $(ACCOUNT_EMAIL_KEYWORD)),--email "$(ACCOUNT_EMAIL_KEYWORD)")
+
+account-import:
+	@echo ">>> 从 YAML 导入账号数据"
+	@if [ -z "$(ACCOUNT_IMPORT_FILE)" ]; then \
+	        echo "请通过 ACCOUNT_IMPORT_FILE 指定导入文件路径"; \
+	        exit 1; \
+	fi
+	@if ! command -v go >/dev/null 2>&1; then \
+	        echo "未检测到 go，请先安装 Go 环境"; \
+	        exit 1; \
+	fi
+	@if [ ! -f "$(ACCOUNT_IMPORT_FILE)" ]; then \
+	        echo "未找到导入文件: $(ACCOUNT_IMPORT_FILE)"; \
+	        exit 1; \
+	fi
+	@go run ./cmd/migratectl/main.go import --dsn "$(DB_URL)" --file "$(ACCOUNT_IMPORT_FILE)"
 
 # 删除数据库（安全防呆）
 drop-db:
@@ -142,6 +174,8 @@ help:
 	@echo "make init       初始化开发环境（包含 Go 依赖与数据库 schema）"
 	@echo "make dump-schema 仅导出数据库 schema 快照"
 	@echo "make migrate-db  在保留数据的情况下应用 schema 迁移"
+	@echo "make account-export [ACCOUNT_EXPORT_FILE=...] [ACCOUNT_EMAIL_KEYWORD=...]  导出账号数据为 YAML"
+	@echo "make account-import ACCOUNT_IMPORT_FILE=...  从 YAML 文件导入账号数据"
 	@echo "make build      编译 account service 可执行文件"
 	@echo "make start      后台运行 account service (默认端口: $(PORT))"
 	@echo "make stop       停止运行 account service"

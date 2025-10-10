@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 	"xcontrol/account/internal/migrate"
 )
 
@@ -41,6 +44,8 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newVerifyCmd())
 	cmd.AddCommand(newResetCmd(&migrationDir))
 	cmd.AddCommand(newVersionCmd(&migrationDir))
+	cmd.AddCommand(newExportCmd())
+	cmd.AddCommand(newImportCmd())
 
 	return cmd
 }
@@ -177,5 +182,127 @@ func newVersionCmd(dir *string) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&dsn, "dsn", "", "PostgreSQL connection string")
+	return cmd
+}
+
+func newExportCmd() *cobra.Command {
+	var (
+		dsn     string
+		email   string
+		output  string
+		timeout time.Duration
+	)
+
+	output = "account-export.yaml"
+	timeout = 2 * time.Minute
+
+	cmd := &cobra.Command{
+		Use:   "export",
+		Short: "Export user data to a YAML snapshot",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if dsn == "" {
+				return errors.New("--dsn is required")
+			}
+
+			exporter := migrate.NewExporter()
+			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+			defer cancel()
+
+			dump, err := exporter.Export(ctx, dsn, email)
+			if err != nil {
+				return err
+			}
+
+			var buf bytes.Buffer
+			encoder := yaml.NewEncoder(&buf)
+			encoder.SetIndent(2)
+			if err := encoder.Encode(dump); err != nil {
+				encoder.Close()
+				return fmt.Errorf("encode yaml: %w", err)
+			}
+			if err := encoder.Close(); err != nil {
+				return fmt.Errorf("finalize yaml: %w", err)
+			}
+
+			switch output {
+			case "-":
+				_, err = cmd.OutOrStdout().Write(buf.Bytes())
+				return err
+			case "":
+				return errors.New("--output must not be empty")
+			default:
+				if err := os.WriteFile(output, buf.Bytes(), 0o600); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Exported %d users to %s\n", len(dump.Users), output)
+				return nil
+			}
+		},
+	}
+
+	cmd.Flags().StringVar(&dsn, "dsn", "", "PostgreSQL connection string")
+	cmd.Flags().StringVar(&email, "email", "", "Case-insensitive email keyword filter")
+	cmd.Flags().StringVar(&output, "output", output, "Output file path or '-' for stdout")
+	cmd.Flags().DurationVar(&timeout, "timeout", timeout, "Export operation timeout")
+
+	return cmd
+}
+
+func newImportCmd() *cobra.Command {
+	var (
+		dsn     string
+		file    string
+		timeout time.Duration
+	)
+
+	timeout = 5 * time.Minute
+
+	cmd := &cobra.Command{
+		Use:   "import",
+		Short: "Import user data from a YAML snapshot",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if dsn == "" {
+				return errors.New("--dsn is required")
+			}
+			if file == "" {
+				return errors.New("--file is required")
+			}
+
+			var (
+				data []byte
+				err  error
+			)
+
+			if file == "-" {
+				data, err = io.ReadAll(cmd.InOrStdin())
+			} else {
+				data, err = os.ReadFile(file)
+			}
+			if err != nil {
+				return err
+			}
+
+			var dump migrate.AccountDump
+			if err := yaml.Unmarshal(data, &dump); err != nil {
+				return fmt.Errorf("parse yaml: %w", err)
+			}
+
+			importer := migrate.NewImporter()
+			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+			defer cancel()
+
+			if err := importer.Import(ctx, dsn, &dump); err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Imported %d users\n", len(dump.Users))
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&dsn, "dsn", "", "PostgreSQL connection string")
+	cmd.Flags().StringVar(&file, "file", "", "YAML file path or '-' for stdin")
+	cmd.Flags().DurationVar(&timeout, "timeout", timeout, "Import operation timeout")
+
 	return cmd
 }
