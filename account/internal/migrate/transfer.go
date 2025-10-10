@@ -488,21 +488,28 @@ func upsertUser(ctx context.Context, tx *sql.Tx, user *UserRecord) error {
 		return fmt.Errorf("encode permissions for user %s: %w", user.UUID, err)
 	}
 
+	if user.EmailVerifiedAt == nil && user.EmailVerified {
+		ts := user.UpdatedAt
+		if ts.IsZero() {
+			ts = user.CreatedAt
+		}
+		user.EmailVerifiedAt = &ts
+	}
+
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO users (
-        uuid, username, password, email, email_verified, email_verified_at,
+        uuid, username, password, email, email_verified_at,
         level, role, groups, permissions, created_at, updated_at,
         mfa_totp_secret, mfa_enabled, mfa_secret_issued_at, mfa_confirmed_at
 ) VALUES (
-        $1, $2, $3, $4, $5, $6,
-        $7, $8, $9::jsonb, $10::jsonb, $11, $12,
-        $13, $14, $15, $16
+        $1, $2, $3, $4, $5,
+        $6, $7, $8::jsonb, $9::jsonb, $10, $11,
+        $12, $13, $14, $15
 )
 ON CONFLICT (uuid) DO UPDATE SET
         username = EXCLUDED.username,
         password = EXCLUDED.password,
         email = EXCLUDED.email,
-        email_verified = EXCLUDED.email_verified,
         email_verified_at = EXCLUDED.email_verified_at,
         level = EXCLUDED.level,
         role = EXCLUDED.role,
@@ -519,7 +526,6 @@ ON CONFLICT (uuid) DO UPDATE SET
 		user.Username,
 		user.PasswordHash,
 		nullableString(user.Email),
-		user.EmailVerified,
 		nullableTime(user.EmailVerifiedAt),
 		user.Level,
 		user.Role,
