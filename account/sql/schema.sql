@@ -11,7 +11,9 @@ CREATE SCHEMA public AUTHORIZATION CURRENT_USER;
 -- Extensions
 -- =========================================
 CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
-CREATE EXTENSION IF NOT EXISTS pglogical WITH SCHEMA pglogical;
+
+-- pglogical schema is initialized separately to avoid interfering with
+-- business schema snapshots. See schema_pglogical_init.sql.
 
 -- =========================================
 -- Functions
