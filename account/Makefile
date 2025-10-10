@@ -3,6 +3,7 @@ MAIN_FILE := ./cmd/accountsvc/main.go
 PORT ?= 8080
 OS := $(shell uname -s)
 SCHEMA_FILE := ./sql/schema.sql
+PGLOGICAL_SCHEMA_FILE := ./sql/schema_pglogical_init.sql
 MIGRATION_FILES := $(shell ls -1 sql/migrations/*.up.sql 2>/dev/null | sort)
 
 
@@ -54,15 +55,19 @@ init-go:
 init-db:
 	@echo ">>> 初始化数据库 schema"
 	@if [ ! -f $(SCHEMA_FILE) ]; then \
-	        echo "未找到数据库 schema 文件: $(SCHEMA_FILE)"; \
-	        exit 1; \
+		echo "未找到数据库 schema 文件: $(SCHEMA_FILE)"; \
+		exit 1; \
 	fi
 	@if ! command -v psql >/dev/null 2>&1; then \
-	        echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
-	        exit 1; \
-	        fi
+		echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
+		exit 1; \
+	fi
 	@echo "使用数据库连接: $(DB_URL)"
 	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(SCHEMA_FILE)
+	@if [ -f $(PGLOGICAL_SCHEMA_FILE) ]; then \
+		echo ">>> 初始化 pglogical schema"; \
+		psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_SCHEMA_FILE); \
+	fi
 
 # =========================================
 # migrate-db target
