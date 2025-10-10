@@ -66,7 +66,11 @@ init-db:
 	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(SCHEMA_FILE)
 	@if [ -f $(PGLOGICAL_SCHEMA_FILE) ]; then \
 		echo ">>> 初始化 pglogical schema"; \
-		psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_SCHEMA_FILE); \
+		if psql "$(DB_URL)" -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" | grep -qx 't'; then \
+			psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_SCHEMA_FILE); \
+		else \
+			echo "跳过 pglogical 初始化: 当前数据库用户缺少超级用户权限"; \
+		fi; \
 	fi
 
 # =========================================
