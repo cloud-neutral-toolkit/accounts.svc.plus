@@ -5,7 +5,7 @@
 -- =========================================
 
 DROP SCHEMA IF EXISTS public CASCADE;
-CREATE SCHEMA public AUTHORIZATION postgres;
+CREATE SCHEMA public AUTHORIZATION CURRENT_USER;
 
 -- =========================================
 -- Extensions
