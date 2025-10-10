@@ -40,22 +40,22 @@ type UserRecord struct {
 
 // IdentityRecord captures a federated identity row associated with a user.
 type IdentityRecord struct {
-	UUID       string    `yaml:"uuid"`
-	Provider   string    `yaml:"provider"`
-	ExternalID string    `yaml:"externalId"`
-	UserUUID   string    `yaml:"userUuid"`
-	CreatedAt  time.Time `yaml:"createdAt"`
-	UpdatedAt  time.Time `yaml:"updatedAt"`
+	UUID       string     `yaml:"uuid"`
+	Provider   string     `yaml:"provider"`
+	ExternalID string     `yaml:"externalId"`
+	UserUUID   string     `yaml:"userUuid"`
+	CreatedAt  *time.Time `yaml:"createdAt,omitempty"`
+	UpdatedAt  *time.Time `yaml:"updatedAt,omitempty"`
 }
 
 // SessionRecord captures a session row associated with a user.
 type SessionRecord struct {
-	UUID      string    `yaml:"uuid"`
-	Token     string    `yaml:"token"`
-	ExpiresAt time.Time `yaml:"expiresAt"`
-	UserUUID  string    `yaml:"userUuid"`
-	CreatedAt time.Time `yaml:"createdAt"`
-	UpdatedAt time.Time `yaml:"updatedAt"`
+	UUID      string     `yaml:"uuid"`
+	Token     string     `yaml:"token"`
+	ExpiresAt time.Time  `yaml:"expiresAt"`
+	UserUUID  string     `yaml:"userUuid"`
+	CreatedAt *time.Time `yaml:"createdAt,omitempty"`
+	UpdatedAt *time.Time `yaml:"updatedAt,omitempty"`
 }
 
 // Exporter reads account data from a PostgreSQL database.
@@ -128,6 +128,15 @@ func (i *Importer) Import(ctx context.Context, dsn string, dump *AccountDump) er
 	}
 	defer db.Close()
 
+	identityCaps, err := tableColumnCaps(ctx, db, "identities")
+	if err != nil {
+		return err
+	}
+	sessionCaps, err := tableColumnCaps(ctx, db, "sessions")
+	if err != nil {
+		return err
+	}
+
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return err
@@ -157,13 +166,13 @@ func (i *Importer) Import(ctx context.Context, dsn string, dump *AccountDump) er
 	}
 
 	for _, identity := range dump.Identities {
-		if err = upsertIdentity(ctx, tx, &identity); err != nil {
+		if err = upsertIdentity(ctx, tx, &identity, identityCaps); err != nil {
 			return err
 		}
 	}
 
 	for _, session := range dump.Sessions {
-		if err = upsertSession(ctx, tx, &session); err != nil {
+		if err = upsertSession(ctx, tx, &session, sessionCaps); err != nil {
 			return err
 		}
 	}
@@ -292,7 +301,26 @@ func loadIdentities(ctx context.Context, db *sql.DB, uuids []string) ([]Identity
 		return nil, nil
 	}
 
-	query, args := buildInQuery(`SELECT uuid, provider, external_id, user_uuid, created_at, updated_at FROM identities WHERE user_uuid IN (%s) ORDER BY created_at ASC`, uuids)
+	caps, err := tableColumnCaps(ctx, db, "identities")
+	if err != nil {
+		return nil, err
+	}
+
+	columns := []string{"uuid", "provider", "external_id", "user_uuid"}
+	if caps.hasCreatedAt {
+		columns = append(columns, "created_at")
+	}
+	if caps.hasUpdatedAt {
+		columns = append(columns, "updated_at")
+	}
+
+	orderClause := " ORDER BY uuid ASC"
+	if caps.hasCreatedAt {
+		orderClause = " ORDER BY created_at ASC"
+	}
+
+	format := fmt.Sprintf("SELECT %s FROM identities WHERE user_uuid IN (%%s)%s", strings.Join(columns, ", "), orderClause)
+	query, args := buildInQuery(format, uuids)
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -302,15 +330,32 @@ func loadIdentities(ctx context.Context, db *sql.DB, uuids []string) ([]Identity
 	var identities []IdentityRecord
 	for rows.Next() {
 		var identity IdentityRecord
-		if err := rows.Scan(
+		scanArgs := []any{
 			&identity.UUID,
 			&identity.Provider,
 			&identity.ExternalID,
 			&identity.UserUUID,
-			&identity.CreatedAt,
-			&identity.UpdatedAt,
-		); err != nil {
+		}
+
+		var createdAt, updatedAt sql.NullTime
+		if caps.hasCreatedAt {
+			scanArgs = append(scanArgs, &createdAt)
+		}
+		if caps.hasUpdatedAt {
+			scanArgs = append(scanArgs, &updatedAt)
+		}
+
+		if err := rows.Scan(scanArgs...); err != nil {
 			return nil, err
+		}
+
+		if caps.hasCreatedAt && createdAt.Valid {
+			ts := createdAt.Time
+			identity.CreatedAt = &ts
+		}
+		if caps.hasUpdatedAt && updatedAt.Valid {
+			ts := updatedAt.Time
+			identity.UpdatedAt = &ts
 		}
 		identities = append(identities, identity)
 	}
@@ -320,7 +365,16 @@ func loadIdentities(ctx context.Context, db *sql.DB, uuids []string) ([]Identity
 
 	sort.SliceStable(identities, func(i, j int) bool {
 		if identities[i].UserUUID == identities[j].UserUUID {
-			return identities[i].CreatedAt.Before(identities[j].CreatedAt)
+			switch {
+			case identities[i].CreatedAt == nil && identities[j].CreatedAt == nil:
+				return identities[i].UUID < identities[j].UUID
+			case identities[i].CreatedAt == nil:
+				return false
+			case identities[j].CreatedAt == nil:
+				return true
+			default:
+				return identities[i].CreatedAt.Before(*identities[j].CreatedAt)
+			}
 		}
 		return identities[i].UserUUID < identities[j].UserUUID
 	})
@@ -333,7 +387,26 @@ func loadSessions(ctx context.Context, db *sql.DB, uuids []string) ([]SessionRec
 		return nil, nil
 	}
 
-	query, args := buildInQuery(`SELECT uuid, token, expires_at, user_uuid, created_at, updated_at FROM sessions WHERE user_uuid IN (%s) ORDER BY created_at ASC`, uuids)
+	caps, err := tableColumnCaps(ctx, db, "sessions")
+	if err != nil {
+		return nil, err
+	}
+
+	columns := []string{"uuid", "token", "expires_at", "user_uuid"}
+	if caps.hasCreatedAt {
+		columns = append(columns, "created_at")
+	}
+	if caps.hasUpdatedAt {
+		columns = append(columns, "updated_at")
+	}
+
+	orderClause := " ORDER BY uuid ASC"
+	if caps.hasCreatedAt {
+		orderClause = " ORDER BY created_at ASC"
+	}
+
+	format := fmt.Sprintf("SELECT %s FROM sessions WHERE user_uuid IN (%%s)%s", strings.Join(columns, ", "), orderClause)
+	query, args := buildInQuery(format, uuids)
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -343,15 +416,32 @@ func loadSessions(ctx context.Context, db *sql.DB, uuids []string) ([]SessionRec
 	var sessions []SessionRecord
 	for rows.Next() {
 		var session SessionRecord
-		if err := rows.Scan(
+		scanArgs := []any{
 			&session.UUID,
 			&session.Token,
 			&session.ExpiresAt,
 			&session.UserUUID,
-			&session.CreatedAt,
-			&session.UpdatedAt,
-		); err != nil {
+		}
+
+		var createdAt, updatedAt sql.NullTime
+		if caps.hasCreatedAt {
+			scanArgs = append(scanArgs, &createdAt)
+		}
+		if caps.hasUpdatedAt {
+			scanArgs = append(scanArgs, &updatedAt)
+		}
+
+		if err := rows.Scan(scanArgs...); err != nil {
 			return nil, err
+		}
+
+		if caps.hasCreatedAt && createdAt.Valid {
+			ts := createdAt.Time
+			session.CreatedAt = &ts
+		}
+		if caps.hasUpdatedAt && updatedAt.Valid {
+			ts := updatedAt.Time
+			session.UpdatedAt = &ts
 		}
 		sessions = append(sessions, session)
 	}
@@ -361,7 +451,16 @@ func loadSessions(ctx context.Context, db *sql.DB, uuids []string) ([]SessionRec
 
 	sort.SliceStable(sessions, func(i, j int) bool {
 		if sessions[i].UserUUID == sessions[j].UserUUID {
-			return sessions[i].CreatedAt.Before(sessions[j].CreatedAt)
+			switch {
+			case sessions[i].CreatedAt == nil && sessions[j].CreatedAt == nil:
+				return sessions[i].UUID < sessions[j].UUID
+			case sessions[i].CreatedAt == nil:
+				return false
+			case sessions[j].CreatedAt == nil:
+				return true
+			default:
+				return sessions[i].CreatedAt.Before(*sessions[j].CreatedAt)
+			}
 		}
 		return sessions[i].UserUUID < sessions[j].UserUUID
 	})
@@ -436,45 +535,77 @@ ON CONFLICT (uuid) DO UPDATE SET
 	return err
 }
 
-func upsertIdentity(ctx context.Context, tx *sql.Tx, identity *IdentityRecord) error {
-	_, err := tx.ExecContext(ctx, `
-INSERT INTO identities (uuid, provider, external_id, user_uuid, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+func upsertIdentity(ctx context.Context, tx *sql.Tx, identity *IdentityRecord, caps tableColumnCapabilities) error {
+	columns := []string{"uuid", "provider", "external_id", "user_uuid"}
+	placeholders := []string{"$1", "$2", "$3", "$4"}
+	args := []any{identity.UUID, identity.Provider, identity.ExternalID, identity.UserUUID}
+
+	nextIdx := 5
+	if caps.hasCreatedAt {
+		columns = append(columns, "created_at")
+		placeholders = append(placeholders, fmt.Sprintf("$%d", nextIdx))
+		args = append(args, nullableTime(identity.CreatedAt))
+		nextIdx++
+	}
+	if caps.hasUpdatedAt {
+		columns = append(columns, "updated_at")
+		placeholders = append(placeholders, fmt.Sprintf("$%d", nextIdx))
+		args = append(args, nullableTime(identity.UpdatedAt))
+		nextIdx++
+	}
+
+	query := fmt.Sprintf(`
+INSERT INTO identities (%s)
+VALUES (%s)
 ON CONFLICT (uuid) DO UPDATE SET
         provider = EXCLUDED.provider,
         external_id = EXCLUDED.external_id,
-        user_uuid = EXCLUDED.user_uuid,
-        created_at = EXCLUDED.created_at,
-        updated_at = EXCLUDED.updated_at
+        user_uuid = EXCLUDED.user_uuid%s%s
 `,
-		identity.UUID,
-		identity.Provider,
-		identity.ExternalID,
-		identity.UserUUID,
-		identity.CreatedAt,
-		identity.UpdatedAt,
+		strings.Join(columns, ", "),
+		strings.Join(placeholders, ", "),
+		updateColumnClause(caps.hasCreatedAt, "created_at"),
+		updateColumnClause(caps.hasUpdatedAt, "updated_at"),
 	)
+
+	_, err := tx.ExecContext(ctx, query, args...)
 	return err
 }
 
-func upsertSession(ctx context.Context, tx *sql.Tx, session *SessionRecord) error {
-	_, err := tx.ExecContext(ctx, `
-INSERT INTO sessions (uuid, token, expires_at, user_uuid, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+func upsertSession(ctx context.Context, tx *sql.Tx, session *SessionRecord, caps tableColumnCapabilities) error {
+	columns := []string{"uuid", "token", "expires_at", "user_uuid"}
+	placeholders := []string{"$1", "$2", "$3", "$4"}
+	args := []any{session.UUID, session.Token, session.ExpiresAt, session.UserUUID}
+
+	nextIdx := 5
+	if caps.hasCreatedAt {
+		columns = append(columns, "created_at")
+		placeholders = append(placeholders, fmt.Sprintf("$%d", nextIdx))
+		args = append(args, nullableTime(session.CreatedAt))
+		nextIdx++
+	}
+	if caps.hasUpdatedAt {
+		columns = append(columns, "updated_at")
+		placeholders = append(placeholders, fmt.Sprintf("$%d", nextIdx))
+		args = append(args, nullableTime(session.UpdatedAt))
+		nextIdx++
+	}
+
+	query := fmt.Sprintf(`
+INSERT INTO sessions (%s)
+VALUES (%s)
 ON CONFLICT (uuid) DO UPDATE SET
         token = EXCLUDED.token,
         expires_at = EXCLUDED.expires_at,
-        user_uuid = EXCLUDED.user_uuid,
-        created_at = EXCLUDED.created_at,
-        updated_at = EXCLUDED.updated_at
+        user_uuid = EXCLUDED.user_uuid%s%s
 `,
-		session.UUID,
-		session.Token,
-		session.ExpiresAt,
-		session.UserUUID,
-		session.CreatedAt,
-		session.UpdatedAt,
+		strings.Join(columns, ", "),
+		strings.Join(placeholders, ", "),
+		updateColumnClause(caps.hasCreatedAt, "created_at"),
+		updateColumnClause(caps.hasUpdatedAt, "updated_at"),
 	)
+
+	_, err := tx.ExecContext(ctx, query, args...)
 	return err
 }
 
@@ -490,4 +621,51 @@ func nullableTime(t *time.Time) any {
 		return nil
 	}
 	return *t
+}
+
+type tableColumnCapabilities struct {
+	hasCreatedAt bool
+	hasUpdatedAt bool
+}
+
+func tableColumnCaps(ctx context.Context, db *sql.DB, table string) (tableColumnCapabilities, error) {
+	query := `
+SELECT column_name
+FROM information_schema.columns
+WHERE table_schema = ANY (current_schemas(false))
+  AND table_name = $1
+  AND column_name IN ('created_at', 'updated_at')
+`
+
+	rows, err := db.QueryContext(ctx, query, table)
+	if err != nil {
+		return tableColumnCapabilities{}, err
+	}
+	defer rows.Close()
+
+	caps := tableColumnCapabilities{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return tableColumnCapabilities{}, err
+		}
+		switch name {
+		case "created_at":
+			caps.hasCreatedAt = true
+		case "updated_at":
+			caps.hasUpdatedAt = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return tableColumnCapabilities{}, err
+	}
+
+	return caps, nil
+}
+
+func updateColumnClause(enabled bool, column string) string {
+	if !enabled {
+		return ""
+	}
+	return fmt.Sprintf(", %s = EXCLUDED.%s", column, column)
 }
