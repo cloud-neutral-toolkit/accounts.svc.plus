@@ -1,6 +1,6 @@
 -- =========================================
--- schema_base.sql
--- Shared schema for pglogical bidirectional sync
+-- schema_base_bidirectional_enhanced.sql
+-- Shared schema for pglogical bidirectional sync (Multi-Master Safe)
 -- PostgreSQL 16 + gen_random_uuid()
 -- =========================================
 
@@ -18,6 +18,8 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
 -- =========================================
 -- Functions
 -- =========================================
+
+-- 更新时间戳
 CREATE OR REPLACE FUNCTION public.set_updated_at() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -26,10 +28,22 @@ BEGIN
 END;
 $$;
 
+-- 邮箱验证标志维护
 CREATE OR REPLACE FUNCTION public.maintain_email_verified() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
   NEW.email_verified := (NEW.email_verified_at IS NOT NULL);
+  RETURN NEW;
+END;
+$$;
+
+-- 双向复制版本号自增触发器
+CREATE OR REPLACE FUNCTION public.bump_version() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    NEW.version := COALESCE(OLD.version, 0) + 1;
+  END IF;
   RETURN NEW;
 END;
 $$;
@@ -49,6 +63,8 @@ CREATE TABLE public.users (
   permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  version BIGINT NOT NULL DEFAULT 0, -- 🔢 行版本号
+  origin_node TEXT DEFAULT current_setting('pglogical.node_name', true), -- 🌍 来源节点
   mfa_totp_secret TEXT,
   mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   mfa_secret_issued_at TIMESTAMPTZ,
@@ -64,6 +80,8 @@ CREATE TABLE public.identities (
   user_uuid UUID NOT NULL REFERENCES public.users(uuid) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  version BIGINT NOT NULL DEFAULT 0,
+  origin_node TEXT DEFAULT current_setting('pglogical.node_name', true),
   CONSTRAINT identities_provider_external_id_uk UNIQUE (provider, external_id)
 );
 
@@ -73,7 +91,9 @@ CREATE TABLE public.sessions (
   expires_at TIMESTAMPTZ NOT NULL,
   user_uuid UUID NOT NULL REFERENCES public.users(uuid) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  version BIGINT NOT NULL DEFAULT 0,
+  origin_node TEXT DEFAULT current_setting('pglogical.node_name', true)
 );
 
 CREATE TABLE public.admin_settings (
@@ -82,6 +102,7 @@ CREATE TABLE public.admin_settings (
   role TEXT NOT NULL,
   enabled BOOLEAN NOT NULL DEFAULT FALSE,
   version BIGINT NOT NULL DEFAULT 1,
+  origin_node TEXT DEFAULT current_setting('pglogical.node_name', true),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT admin_settings_module_role_uk UNIQUE (module_key, role)
@@ -99,6 +120,8 @@ CREATE INDEX idx_admin_settings_version ON public.admin_settings (version);
 -- =========================================
 -- Triggers
 -- =========================================
+
+-- users
 CREATE TRIGGER trg_users_set_updated_at
   BEFORE UPDATE ON public.users
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
@@ -107,15 +130,33 @@ CREATE TRIGGER trg_users_maintain_email_verified
   BEFORE INSERT OR UPDATE ON public.users
   FOR EACH ROW EXECUTE FUNCTION public.maintain_email_verified();
 
+CREATE TRIGGER trg_users_bump_version
+  BEFORE UPDATE ON public.users
+  FOR EACH ROW EXECUTE FUNCTION public.bump_version();
+
+-- identities
 CREATE TRIGGER trg_identities_set_updated_at
   BEFORE UPDATE ON public.identities
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
+CREATE TRIGGER trg_identities_bump_version
+  BEFORE UPDATE ON public.identities
+  FOR EACH ROW EXECUTE FUNCTION public.bump_version();
+
+-- sessions
 CREATE TRIGGER trg_sessions_set_updated_at
   BEFORE UPDATE ON public.sessions
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
+CREATE TRIGGER trg_sessions_bump_version
+  BEFORE UPDATE ON public.sessions
+  FOR EACH ROW EXECUTE FUNCTION public.bump_version();
+
+-- admin_settings
 CREATE TRIGGER trg_admin_settings_set_updated_at
   BEFORE UPDATE ON public.admin_settings
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
+CREATE TRIGGER trg_admin_settings_bump_version
+  BEFORE UPDATE ON public.admin_settings
+  FOR EACH ROW EXECUTE FUNCTION public.bump_version();
