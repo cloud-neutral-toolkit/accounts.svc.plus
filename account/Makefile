@@ -80,36 +80,46 @@ init-db:
 init-pglogical-region-cn:
 	@echo ">>> 初始化 CN 节点 pglogical 配置"
 	@if [ -z "$(strip $(REGION_CN_DB_URL))" ]; then \
-		echo "请通过 REGION_CN_DB_URL 指定 CN 节点数据库连接字符串"; \
-		exit 1; \
+			echo "请通过 REGION_CN_DB_URL 指定 CN 节点数据库连接字符串"; \
+			exit 1; \
 	fi
 	@if [ ! -f $(PGLOGICAL_REGION_CN_SCHEMA_FILE) ]; then \
-		echo "未找到 pglogical schema 文件: $(PGLOGICAL_REGION_CN_SCHEMA_FILE)"; \
-		exit 1; \
+			echo "未找到 pglogical schema 文件: $(PGLOGICAL_REGION_CN_SCHEMA_FILE)"; \
+			exit 1; \
 	fi
 	@if ! command -v psql >/dev/null 2>&1; then \
-		echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
-		exit 1; \
+			echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
+			exit 1; \
 	fi
 	@echo "使用数据库连接: $(REGION_CN_DB_URL)"
-	@psql "$(REGION_CN_DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_REGION_CN_SCHEMA_FILE)
+	@if psql "$(REGION_CN_DB_URL)" -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" | grep -qx 't'; then \
+			psql "$(REGION_CN_DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_REGION_CN_SCHEMA_FILE); \
+	else \
+			echo "跳过 pglogical 初始化: 当前数据库用户缺少超级用户权限"; \
+			echo "提示: 请使用具有超级用户权限的连接或由管理员预先创建 pglogical 扩展"; \
+	fi
 
 init-pglogical-region-global:
 	@echo ">>> 初始化 Global 节点 pglogical 配置"
 	@if [ -z "$(strip $(REGION_GLOBAL_DB_URL))" ]; then \
-		echo "请通过 REGION_GLOBAL_DB_URL 指定 Global 节点数据库连接字符串"; \
-		exit 1; \
+			echo "请通过 REGION_GLOBAL_DB_URL 指定 Global 节点数据库连接字符串"; \
+			exit 1; \
 	fi
 	@if [ ! -f $(PGLOGICAL_REGION_GLOBAL_SCHEMA_FILE) ]; then \
-		echo "未找到 pglogical schema 文件: $(PGLOGICAL_REGION_GLOBAL_SCHEMA_FILE)"; \
-		exit 1; \
+			echo "未找到 pglogical schema 文件: $(PGLOGICAL_REGION_GLOBAL_SCHEMA_FILE)"; \
+			exit 1; \
 	fi
 	@if ! command -v psql >/dev/null 2>&1; then \
-		echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
-		exit 1; \
+			echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
+			exit 1; \
 	fi
 	@echo "使用数据库连接: $(REGION_GLOBAL_DB_URL)"
-	@psql "$(REGION_GLOBAL_DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_REGION_GLOBAL_SCHEMA_FILE)
+	@if psql "$(REGION_GLOBAL_DB_URL)" -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" | grep -qx 't'; then \
+			psql "$(REGION_GLOBAL_DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_REGION_GLOBAL_SCHEMA_FILE); \
+	else \
+			echo "跳过 pglogical 初始化: 当前数据库用户缺少超级用户权限"; \
+			echo "提示: 请使用具有超级用户权限的连接或由管理员预先创建 pglogical 扩展"; \
+	fi
 
 # =========================================
 # migrate-db target
