@@ -4,6 +4,19 @@
 -- PostgreSQL 16+, 双向复制 (provider + subscriber)
 -- =========================================
 
+-- 🏗️ 确保 pglogical schema 及扩展存在
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_namespace WHERE nspname = 'pglogical'
+  ) THEN
+    EXECUTE format('CREATE SCHEMA pglogical AUTHORIZATION %I', current_user);
+  END IF;
+END;
+$$;
+
+CREATE EXTENSION IF NOT EXISTS pglogical WITH SCHEMA pglogical;
+
 -- 🧭 清理旧节点（可安全重入）
 DO $$
 BEGIN
