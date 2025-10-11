@@ -44,6 +44,13 @@ GRANT USAGE ON SCHEMA pglogical TO shenlan;
 3️⃣	Global	schema_pglogical_region_global.sql	定义 Global provider + 订阅 CN
 4️⃣	CN	schema_pglogical_region_cn.sql	定义 CN provider + 订阅 Global
 
+💡 CN 节点执行 `schema_pglogical_region_cn.sql` 或 `make init-pglogical-region-cn` 前，请确保连接用户拥有 PostgreSQL 超级用户权限。
+
+- 若使用业务账号（如 `shenlan`）执行初始化，PostgreSQL 会提示缺少超级用户权限并跳过 `pglogical` 初始化。
+- 建议改用 `postgres` 等超级用户连接执行，或由管理员预先安装 `pglogical` 扩展并授予业务用户访问权限。
+- 如果扩展已由管理员创建，可直接重新运行 `make init-pglogical-region-cn` 完成复制集与订阅配置。
+
+
 🧩 验证同步状态
 sql
 复制代码
