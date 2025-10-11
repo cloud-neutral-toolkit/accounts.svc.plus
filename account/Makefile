@@ -4,6 +4,8 @@ PORT ?= 8080
 OS := $(shell uname -s)
 SCHEMA_FILE := ./sql/schema.sql
 PGLOGICAL_SCHEMA_FILE := ./sql/schema_pglogical_init.sql
+PGLOGICAL_REGION_CN_SCHEMA_FILE := ./sql/schema_pglogical_region_cn.sql
+PGLOGICAL_REGION_GLOBAL_SCHEMA_FILE := ./sql/schema_pglogical_region_global.sql
 MIGRATION_FILES := $(shell ls -1 sql/migrations/*.up.sql 2>/dev/null | sort)
 
 
@@ -17,6 +19,8 @@ DB_URL     := postgres://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?
 ACCOUNT_EXPORT_FILE ?= account-export.yaml
 ACCOUNT_IMPORT_FILE ?= account-export.yaml
 ACCOUNT_EMAIL_KEYWORD ?=
+REGION_CN_DB_URL ?= $(DB_URL)
+REGION_GLOBAL_DB_URL ?= $(DB_URL)
 
 SUPERADMIN_USERNAME ?= Admin
 SUPERADMIN_PASSWORD ?= ChangeMe
@@ -24,7 +28,7 @@ SUPERADMIN_EMAIL    ?= admin@svc.plus
 
 export PATH := /usr/local/go/bin:$(PATH)
 
-.PHONY: all init init-go init-db migrate-db dump-schema build start stop restart clean help dev test create-super-admin account-export account-import
+.PHONY: all init init-go init-db init-pglogical-region-cn init-pglogical-region-global migrate-db dump-schema build start stop restart clean help dev test create-super-admin account-export account-import
 
 all: build
 
@@ -72,6 +76,40 @@ init-db:
 			echo "跳过 pglogical 初始化: 当前数据库用户缺少超级用户权限"; \
 		fi; \
 	fi
+
+init-pglogical-region-cn:
+	@echo ">>> 初始化 CN 节点 pglogical 配置"
+	@if [ -z "$(strip $(REGION_CN_DB_URL))" ]; then \
+		echo "请通过 REGION_CN_DB_URL 指定 CN 节点数据库连接字符串"; \
+		exit 1; \
+	fi
+	@if [ ! -f $(PGLOGICAL_REGION_CN_SCHEMA_FILE) ]; then \
+		echo "未找到 pglogical schema 文件: $(PGLOGICAL_REGION_CN_SCHEMA_FILE)"; \
+		exit 1; \
+	fi
+	@if ! command -v psql >/dev/null 2>&1; then \
+		echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
+		exit 1; \
+	fi
+	@echo "使用数据库连接: $(REGION_CN_DB_URL)"
+	@psql "$(REGION_CN_DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_REGION_CN_SCHEMA_FILE)
+
+init-pglogical-region-global:
+	@echo ">>> 初始化 Global 节点 pglogical 配置"
+	@if [ -z "$(strip $(REGION_GLOBAL_DB_URL))" ]; then \
+		echo "请通过 REGION_GLOBAL_DB_URL 指定 Global 节点数据库连接字符串"; \
+		exit 1; \
+	fi
+	@if [ ! -f $(PGLOGICAL_REGION_GLOBAL_SCHEMA_FILE) ]; then \
+		echo "未找到 pglogical schema 文件: $(PGLOGICAL_REGION_GLOBAL_SCHEMA_FILE)"; \
+		exit 1; \
+	fi
+	@if ! command -v psql >/dev/null 2>&1; then \
+		echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
+		exit 1; \
+	fi
+	@echo "使用数据库连接: $(REGION_GLOBAL_DB_URL)"
+	@psql "$(REGION_GLOBAL_DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_REGION_GLOBAL_SCHEMA_FILE)
 
 # =========================================
 # migrate-db target
