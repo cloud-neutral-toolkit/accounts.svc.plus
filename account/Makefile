@@ -4,8 +4,7 @@ PORT ?= 8080
 OS := $(shell uname -s)
 SCHEMA_FILE := ./sql/schema.sql
 PGLOGICAL_SCHEMA_FILE := ./sql/schema_pglogical_init.sql
-PGLOGICAL_REGION_CN_SCHEMA_FILE := ./sql/schema_pglogical_region_cn.sql
-PGLOGICAL_REGION_GLOBAL_SCHEMA_FILE := ./sql/schema_pglogical_region_global.sql
+PGLOGICAL_REGION_SCHEMA_FILE := ./sql/schema_pglogical_region.sql
 MIGRATION_FILES := $(shell ls -1 sql/migrations/*.up.sql 2>/dev/null | sort)
 
 
@@ -28,7 +27,7 @@ SUPERADMIN_EMAIL    ?= admin@svc.plus
 
 export PATH := /usr/local/go/bin:$(PATH)
 
-.PHONY: all init init-go init-db init-pglogical-region-cn init-pglogical-region-global migrate-db dump-schema build start stop restart clean help dev test create-super-admin account-export account-import
+.PHONY: all init init-go init-db init-pglogical-region init-pglogical-region-cn init-pglogical-region-global migrate-db dump-schema build start stop restart clean help dev test create-super-admin account-export account-import
 
 all: build
 
@@ -77,49 +76,65 @@ init-db:
 		fi; \
 	fi
 
+init-pglogical-region:
+        @if [ -z "$(strip $(REGION_DB_URL))" ]; then \
+                        echo "请通过 REGION_DB_URL 指定节点数据库连接字符串"; \
+                        exit 1; \
+        fi
+        @if [ -z "$(strip $(NODE_NAME))" ]; then \
+                        echo "请通过 NODE_NAME 指定当前节点名称"; \
+                        exit 1; \
+        fi
+        @if [ -z "$(strip $(NODE_DSN))" ]; then \
+                        echo "请通过 NODE_DSN 指定当前节点 DSN"; \
+                        exit 1; \
+        fi
+        @if [ -z "$(strip $(SUBSCRIPTION_NAME))" ]; then \
+                        echo "请通过 SUBSCRIPTION_NAME 指定订阅名称"; \
+                        exit 1; \
+        fi
+        @if [ -z "$(strip $(PROVIDER_DSN))" ]; then \
+                        echo "请通过 PROVIDER_DSN 指定 Provider DSN"; \
+                        exit 1; \
+        fi
+        @if [ ! -f $(PGLOGICAL_REGION_SCHEMA_FILE) ]; then \
+                        echo "未找到 pglogical schema 文件: $(PGLOGICAL_REGION_SCHEMA_FILE)"; \
+                        exit 1; \
+        fi
+        @if ! command -v psql >/dev/null 2>&1; then \
+                        echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
+                        exit 1; \
+        fi
+        @echo "使用数据库连接: $(REGION_DB_URL)"
+        @if psql "$(REGION_DB_URL)" -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" | grep -qx 't'; then \
+                        psql "$(REGION_DB_URL)" -v ON_ERROR_STOP=1 \
+                                -v NODE_NAME="$(NODE_NAME)" \
+                                -v NODE_DSN="$(NODE_DSN)" \
+                                -v SUBSCRIPTION_NAME="$(SUBSCRIPTION_NAME)" \
+                                -v PROVIDER_DSN="$(PROVIDER_DSN)" \
+                                -f $(PGLOGICAL_REGION_SCHEMA_FILE); \
+        else \
+                        echo "跳过 pglogical 初始化: 当前数据库用户缺少超级用户权限"; \
+                        echo "提示: 请使用具有超级用户权限的连接或由管理员预先创建 pglogical 扩展"; \
+        fi
+
 init-pglogical-region-cn:
-	@echo ">>> 初始化 CN 节点 pglogical 配置"
-	@if [ -z "$(strip $(REGION_CN_DB_URL))" ]; then \
-			echo "请通过 REGION_CN_DB_URL 指定 CN 节点数据库连接字符串"; \
-			exit 1; \
-	fi
-	@if [ ! -f $(PGLOGICAL_REGION_CN_SCHEMA_FILE) ]; then \
-			echo "未找到 pglogical schema 文件: $(PGLOGICAL_REGION_CN_SCHEMA_FILE)"; \
-			exit 1; \
-	fi
-	@if ! command -v psql >/dev/null 2>&1; then \
-			echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
-			exit 1; \
-	fi
-	@echo "使用数据库连接: $(REGION_CN_DB_URL)"
-	@if psql "$(REGION_CN_DB_URL)" -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" | grep -qx 't'; then \
-			psql "$(REGION_CN_DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_REGION_CN_SCHEMA_FILE); \
-	else \
-			echo "跳过 pglogical 初始化: 当前数据库用户缺少超级用户权限"; \
-			echo "提示: 请使用具有超级用户权限的连接或由管理员预先创建 pglogical 扩展"; \
-	fi
+        @echo ">>> 初始化 CN 节点 pglogical 配置"
+        @$(MAKE) init-pglogical-region \
+                REGION_DB_URL="$(REGION_CN_DB_URL)" \
+                NODE_NAME="node_cn" \
+                NODE_DSN="host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx" \
+                SUBSCRIPTION_NAME="sub_from_global" \
+                PROVIDER_DSN="host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxx"
 
 init-pglogical-region-global:
-	@echo ">>> 初始化 Global 节点 pglogical 配置"
-	@if [ -z "$(strip $(REGION_GLOBAL_DB_URL))" ]; then \
-			echo "请通过 REGION_GLOBAL_DB_URL 指定 Global 节点数据库连接字符串"; \
-			exit 1; \
-	fi
-	@if [ ! -f $(PGLOGICAL_REGION_GLOBAL_SCHEMA_FILE) ]; then \
-			echo "未找到 pglogical schema 文件: $(PGLOGICAL_REGION_GLOBAL_SCHEMA_FILE)"; \
-			exit 1; \
-	fi
-	@if ! command -v psql >/dev/null 2>&1; then \
-			echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
-			exit 1; \
-	fi
-	@echo "使用数据库连接: $(REGION_GLOBAL_DB_URL)"
-	@if psql "$(REGION_GLOBAL_DB_URL)" -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" | grep -qx 't'; then \
-			psql "$(REGION_GLOBAL_DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_REGION_GLOBAL_SCHEMA_FILE); \
-	else \
-			echo "跳过 pglogical 初始化: 当前数据库用户缺少超级用户权限"; \
-			echo "提示: 请使用具有超级用户权限的连接或由管理员预先创建 pglogical 扩展"; \
-	fi
+        @echo ">>> 初始化 Global 节点 pglogical 配置"
+        @$(MAKE) init-pglogical-region \
+                REGION_DB_URL="$(REGION_GLOBAL_DB_URL)" \
+                NODE_NAME="node_global" \
+                NODE_DSN="host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx" \
+                SUBSCRIPTION_NAME="sub_from_cn" \
+                PROVIDER_DSN="host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx"
 
 # =========================================
 # migrate-db target

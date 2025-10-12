@@ -1,8 +1,34 @@
 -- =========================================
--- schema_pglogical_region_global.sql
--- pglogical configuration for GLOBAL node
+-- schema_pglogical_region.sql
+-- pglogical configuration template for regional nodes
 -- PostgreSQL 16+, 双向复制 (provider + subscriber)
+-- 使用前请通过 psql -v NODE_NAME=... -v NODE_DSN=... -v SUBSCRIPTION_NAME=... -v PROVIDER_DSN=...
+-- 提供所需参数。
 -- =========================================
+
+\if :{?NODE_NAME}
+\else
+\echo 'ERROR: 未设置 NODE_NAME 变量。请通过 -v NODE_NAME=... 传入节点名称。'
+\quit 1
+\endif
+
+\if :{?NODE_DSN}
+\else
+\echo 'ERROR: 未设置 NODE_DSN 变量。请通过 -v NODE_DSN=... 传入当前节点 DSN。'
+\quit 1
+\endif
+
+\if :{?SUBSCRIPTION_NAME}
+\else
+\echo 'ERROR: 未设置 SUBSCRIPTION_NAME 变量。请通过 -v SUBSCRIPTION_NAME=... 传入订阅名称。'
+\quit 1
+\endif
+
+\if :{?PROVIDER_DSN}
+\else
+\echo 'ERROR: 未设置 PROVIDER_DSN 变量。请通过 -v PROVIDER_DSN=... 传入 Provider DSN。'
+\quit 1
+\endif
 
 -- 🏗️ 确保 pglogical schema 及扩展存在
 DO $$
@@ -20,13 +46,13 @@ CREATE EXTENSION IF NOT EXISTS pglogical WITH SCHEMA pglogical;
 -- 🧭 清理旧节点（可安全重入）
 DO $$
 BEGIN
-  PERFORM pglogical.drop_subscription('sub_from_cn', true);
+  PERFORM pglogical.drop_subscription(:'SUBSCRIPTION_NAME', true);
   EXCEPTION WHEN others THEN NULL;
 END $$;
 
 DO $$
 BEGIN
-  PERFORM pglogical.drop_node('node_global');
+  PERFORM pglogical.drop_node(:'NODE_NAME');
   EXCEPTION WHEN others THEN NULL;
 END $$;
 
@@ -34,8 +60,8 @@ END $$;
 -- 创建本节点 (Provider)
 -- =========================================
 SELECT pglogical.create_node(
-  node_name := 'node_global',
-  dsn := 'host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx'
+  node_name := :'NODE_NAME',
+  dsn := :'NODE_DSN'
 );
 
 -- =========================================
@@ -45,11 +71,11 @@ SELECT pglogical.create_replication_set('rep_all');
 SELECT pglogical.replication_set_add_all_tables('rep_all', ARRAY['public']);
 
 -- =========================================
--- 创建订阅 (订阅 CN 节点)
+-- 创建订阅 (订阅远端节点)
 -- =========================================
 SELECT pglogical.create_subscription(
-  subscription_name := 'sub_from_cn',
-  provider_dsn := 'host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx',
+  subscription_name := :'SUBSCRIPTION_NAME',
+  provider_dsn := :'PROVIDER_DSN',
   replication_sets := ARRAY['rep_all'],
   synchronize_structure := false,
   synchronize_data := true,
