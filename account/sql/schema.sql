@@ -4,8 +4,15 @@
 -- PostgreSQL 16 + gen_random_uuid()
 -- =========================================
 
-DROP SCHEMA IF EXISTS public CASCADE;
-CREATE SCHEMA public AUTHORIZATION CURRENT_USER;
+-- Ensure the public schema exists without dropping other extensions.
+CREATE SCHEMA IF NOT EXISTS public AUTHORIZATION CURRENT_USER;
+
+-- Clean up existing tables so the script is idempotent without requiring
+-- superuser privileges that would be needed to drop the entire schema.
+DROP TABLE IF EXISTS public.sessions CASCADE;
+DROP TABLE IF EXISTS public.identities CASCADE;
+DROP TABLE IF EXISTS public.users CASCADE;
+DROP TABLE IF EXISTS public.admin_settings CASCADE;
 
 -- =========================================
 -- Extensions
