@@ -27,7 +27,7 @@ SUPERADMIN_EMAIL    ?= admin@svc.plus
 
 export PATH := /usr/local/go/bin:$(PATH)
 
-.PHONY: all init init-go init-db init-pglogical-region init-pglogical-region-cn init-pglogical-region-global migrate-db dump-schema build start stop restart clean help dev test create-super-admin account-export account-import
+.PHONY: all init init-go init-db init-pglogical-region init-pglogical-region-cn init-pglogical-region-global migrate-db dump-schema build start stop restart clean help dev test create-super-admin account-export account-import reset-public-schema
 
 all: build
 
@@ -185,22 +185,46 @@ account-import:
 
 # 删除数据库（安全防呆）
 drop-db:
-	@echo "⚠️  即将删除数据库 $(DB_NAME) ..."
-	@read -p "确定要删除数据库 $(DB_NAME)? [y/N] " confirm && \
-	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
-		echo ">>> 正在删除数据库 $(DB_NAME) ..."; \
-		psql -h $(DB_HOST) -U $(DB_USER) -p $(DB_PORT) -d postgres -c "DROP DATABASE IF EXISTS $(DB_NAME);" && \
-		echo ">>> 数据库已删除"; \
-	else \
-		echo "取消删除"; \
-	fi
+    @echo "⚠️  即将删除数据库 $(DB_NAME) ..."
+    @read -p "确定要删除数据库 $(DB_NAME)? [y/N] " confirm && \
+    if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+        echo ">>> 正在删除数据库 $(DB_NAME) ..."; \
+        if PGPASSWORD="$(DB_PASS)" psql -h $(DB_HOST) -U $(DB_USER) -p $(DB_PORT) -d postgres -c "DROP DATABASE IF EXISTS $(DB_NAME);"; then \
+            echo ">>> 数据库已删除"; \
+        else \
+            echo ">>> 删除数据库失败，尝试清空 public schema ..."; \
+            $(MAKE) reset-public-schema; \
+        fi; \
+    else \
+        echo "取消删除"; \
+    fi
+
+reset-public-schema:
+    @echo ">>> 清空数据库 $(DB_NAME) 的 public schema"
+    @if ! command -v psql >/dev/null 2>&1; then \
+        echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
+        exit 1; \
+    fi
+    @PGPASSWORD="$(DB_PASS)" psql -h $(DB_HOST) -U $(DB_USER) -p $(DB_PORT) -d $(DB_NAME) -v ON_ERROR_STOP=1 \
+        -c "DROP SCHEMA IF EXISTS public CASCADE;" \
+        -c "CREATE SCHEMA public AUTHORIZATION $(DB_USER);" \
+        -c "GRANT ALL ON SCHEMA public TO $(DB_USER);" \
+        -c "GRANT ALL ON SCHEMA public TO public;"
 
 # 重新创建数据库（drop + init）
 reinit-db:
-	@make drop-db
-	@echo ">>> 创建新数据库 $(DB_NAME)"
-	psql -h $(DB_HOST) -U $(DB_USER) -p $(DB_PORT) -d postgres -c "CREATE DATABASE $(DB_NAME) OWNER $(DB_USER);"
-	@make init-db
+    @$(MAKE) drop-db
+    @if ! command -v psql >/dev/null 2>&1; then \
+        echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
+        exit 1; \
+    fi
+    @if PGPASSWORD="$(DB_PASS)" psql -h $(DB_HOST) -U $(DB_USER) -p $(DB_PORT) -d postgres -Atc "SELECT 1 FROM pg_database WHERE datname='$(DB_NAME)';" | grep -qx '1'; then \
+        echo ">>> 数据库 $(DB_NAME) 仍然存在，跳过创建步骤"; \
+    else \
+        echo ">>> 创建新数据库 $(DB_NAME)"; \
+        PGPASSWORD="$(DB_PASS)" psql -h $(DB_HOST) -U $(DB_USER) -p $(DB_PORT) -d postgres -c "CREATE DATABASE $(DB_NAME) OWNER $(DB_USER);"; \
+    fi
+    @$(MAKE) init-db
 
 dump-schema:
 	@echo ">>> 导出数据库 schema 快照"
