@@ -1,312 +1,184 @@
-APP_NAME := xcontrol-account
-MAIN_FILE := ./cmd/accountsvc/main.go
-PORT ?= 8080
-OS := $(shell uname -s)
+# =========================================
+# 📦 XControl Account Service Makefile
+# =========================================
+
+APP_NAME    := xcontrol-account
+MAIN_FILE   := ./cmd/accountsvc/main.go
+PORT        ?= 8080
+OS          := $(shell uname -s)
+
+DB_NAME     := account
+DB_USER     := shenlan
+DB_PASS     := password
+DB_HOST     := 127.0.0.1
+DB_PORT     := 5432
+DB_URL      := postgres://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable
+
 SCHEMA_FILE := ./sql/schema.sql
-PGLOGICAL_SCHEMA_FILE := ./sql/schema_pglogical_init.sql
-PGLOGICAL_REGION_SCHEMA_FILE := ./sql/schema_pglogical_region.sql
-MIGRATION_FILES := $(shell ls -1 sql/migrations/*.up.sql 2>/dev/null | sort)
-
-
-DB_NAME    := account
-DB_USER    := shenlan
-DB_PASS    := password
-DB_HOST    := 127.0.0.1
-DB_PORT    := 5432
-DB_URL     := postgres://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable
+PGLOGICAL_INIT_FILE := ./sql/schema_pglogical_init.sql
+PGLOGICAL_REGION_FILE := ./sql/schema_pglogical_region.sql
 
 ACCOUNT_EXPORT_FILE ?= account-export.yaml
 ACCOUNT_IMPORT_FILE ?= account-export.yaml
 ACCOUNT_EMAIL_KEYWORD ?=
-REGION_CN_DB_URL ?= $(DB_URL)
-REGION_GLOBAL_DB_URL ?= $(DB_URL)
-
 SUPERADMIN_USERNAME ?= Admin
 SUPERADMIN_PASSWORD ?= ChangeMe
 SUPERADMIN_EMAIL    ?= admin@svc.plus
 
 export PATH := /usr/local/go/bin:$(PATH)
 
-.PHONY: all init init-go init-db init-pglogical-region init-pglogical-region-cn init-pglogical-region-global migrate-db dump-schema build start stop restart clean help dev test create-super-admin account-export account-import reset-public-schema
+# =========================================
+# 🧩 基础命令
+# =========================================
+
+.PHONY: all init build clean start stop restart dev test help
 
 all: build
+
+help:
+	@echo "🧭 XControl Account Service Makefile"
+	@echo "make init               初始化 Go 环境与数据库"
+	@echo "make migrate-db         执行数据库迁移"
+	@echo "make dump-schema        导出数据库 schema"
+	@echo "make account-export     导出账号数据为 YAML"
+	@echo "make account-import     从 YAML 导入账号数据"
+	@echo "make create-super-admin 创建超级管理员"
+	@echo "make reinit-db          重置数据库"
+	@echo "make dev                热重载开发模式"
+	@echo "make clean              清理构建产物"
+
+# =========================================
+# 🧰 初始化
+# =========================================
 
 init: init-go init-db
 
 init-go:
-	@echo ">>> 初始化 Go 依赖环境"
-	@if command -v go >/dev/null 2>&1; then \
-		echo "Go 已安装"; \
-	else \
-		echo "安装 Go"; \
-		if [ "$(OS)" = "Darwin" ]; then \
-			brew install go@1.24 && brew link --overwrite --force go@1.24; \
-		else \
-			sudo apt-get update && sudo apt-get install -y golang; \
-		fi; \
+	@echo ">>> 检查 Go 环境"
+	@if ! command -v go >/dev/null; then \
+		echo "未安装 Go，自动安装中..."; \
+		([ "$(OS)" = "Darwin" ] && brew install go@1.24 && brew link --overwrite --force go@1.24) || \
+		(sudo apt-get update && sudo apt-get install -y golang); \
 	fi
-	@if curl -s --max-time 5 https://goproxy.cn >/dev/null; then \
-		echo "使用国内镜像: goproxy.cn"; \
-		go env -w GOPROXY=https://goproxy.cn,direct; \
-	else \
-		echo "国内镜像不可用，使用默认: proxy.golang.org"; \
-		go env -w GOPROXY=https://proxy.golang.org,direct; \
-	fi
-	@echo ">>> 执行 go mod tidy"
-	go mod tidy
+	@echo ">>> 配置 Go Proxy"
+	@(curl -fsSL --max-time 5 https://goproxy.cn >/dev/null && go env -w GOPROXY=https://goproxy.cn,direct) || \
+	(go env -w GOPROXY=https://proxy.golang.org,direct)
+	@go mod tidy
 
 init-db:
 	@echo ">>> 初始化数据库 schema"
-	@if [ ! -f $(SCHEMA_FILE) ]; then \
-		echo "未找到数据库 schema 文件: $(SCHEMA_FILE)"; \
-		exit 1; \
-	fi
-	@if ! command -v psql >/dev/null 2>&1; then \
-		echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
-		exit 1; \
-	fi
-	@echo "使用数据库连接: $(DB_URL)"
+	@command -v psql >/dev/null || (echo "❌ 未检测到 psql，请安装 PostgreSQL 客户端" && exit 1)
 	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(SCHEMA_FILE)
-	@if [ -f $(PGLOGICAL_SCHEMA_FILE) ]; then \
-		echo ">>> 初始化 pglogical schema"; \
-		if psql "$(DB_URL)" -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" | grep -qx 't'; then \
-			psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_SCHEMA_FILE); \
-		else \
-			echo "跳过 pglogical 初始化: 当前数据库用户缺少超级用户权限"; \
-		fi; \
+	@if [ -f $(PGLOGICAL_INIT_FILE) ]; then \
+		psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_INIT_FILE) || \
+		echo "⚠️ 跳过 pglogical 初始化（非超级用户）"; \
 	fi
+
+# =========================================
+# 🧠 PGLogical 双节点初始化
+# =========================================
 
 init-pglogical-region:
-        @if [ -z "$(strip $(REGION_DB_URL))" ]; then \
-                        echo "请通过 REGION_DB_URL 指定节点数据库连接字符串"; \
-                        exit 1; \
-        fi
-        @if [ -z "$(strip $(NODE_NAME))" ]; then \
-                        echo "请通过 NODE_NAME 指定当前节点名称"; \
-                        exit 1; \
-        fi
-        @if [ -z "$(strip $(NODE_DSN))" ]; then \
-                        echo "请通过 NODE_DSN 指定当前节点 DSN"; \
-                        exit 1; \
-        fi
-        @if [ -z "$(strip $(SUBSCRIPTION_NAME))" ]; then \
-                        echo "请通过 SUBSCRIPTION_NAME 指定订阅名称"; \
-                        exit 1; \
-        fi
-        @if [ -z "$(strip $(PROVIDER_DSN))" ]; then \
-                        echo "请通过 PROVIDER_DSN 指定 Provider DSN"; \
-                        exit 1; \
-        fi
-        @if [ ! -f $(PGLOGICAL_REGION_SCHEMA_FILE) ]; then \
-                        echo "未找到 pglogical schema 文件: $(PGLOGICAL_REGION_SCHEMA_FILE)"; \
-                        exit 1; \
-        fi
-        @if ! command -v psql >/dev/null 2>&1; then \
-                        echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
-                        exit 1; \
-        fi
-        @echo "使用数据库连接: $(REGION_DB_URL)"
-        @if psql "$(REGION_DB_URL)" -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" | grep -qx 't'; then \
-                        psql "$(REGION_DB_URL)" -v ON_ERROR_STOP=1 \
-                                -v NODE_NAME="$(NODE_NAME)" \
-                                -v NODE_DSN="$(NODE_DSN)" \
-                                -v SUBSCRIPTION_NAME="$(SUBSCRIPTION_NAME)" \
-                                -v PROVIDER_DSN="$(PROVIDER_DSN)" \
-                                -f $(PGLOGICAL_REGION_SCHEMA_FILE); \
-        else \
-                        echo "跳过 pglogical 初始化: 当前数据库用户缺少超级用户权限"; \
-                        echo "提示: 请使用具有超级用户权限的连接或由管理员预先创建 pglogical 扩展"; \
-        fi
+	@[ -n "$(REGION_DB_URL)" ] || (echo "❌ 缺少 REGION_DB_URL"; exit 1)
+	@[ -n "$(NODE_NAME)" ] || (echo "❌ 缺少 NODE_NAME"; exit 1)
+	@[ -n "$(NODE_DSN)" ] || (echo "❌ 缺少 NODE_DSN"; exit 1)
+	@[ -n "$(SUBSCRIPTION_NAME)" ] || (echo "❌ 缺少 SUBSCRIPTION_NAME"; exit 1)
+	@[ -n "$(PROVIDER_DSN)" ] || (echo "❌ 缺少 PROVIDER_DSN"; exit 1)
+	@psql "$(REGION_DB_URL)" -v ON_ERROR_STOP=1 \
+		-v NODE_NAME="$(NODE_NAME)" \
+		-v NODE_DSN="$(NODE_DSN)" \
+		-v SUBSCRIPTION_NAME="$(SUBSCRIPTION_NAME)" \
+		-v PROVIDER_DSN="$(PROVIDER_DSN)" \
+		-f $(PGLOGICAL_REGION_FILE)
 
 init-pglogical-region-cn:
-        @echo ">>> 初始化 CN 节点 pglogical 配置"
-        @$(MAKE) init-pglogical-region \
-                REGION_DB_URL="$(REGION_CN_DB_URL)" \
-                NODE_NAME="node_cn" \
-                NODE_DSN="host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx" \
-                SUBSCRIPTION_NAME="sub_from_global" \
-                PROVIDER_DSN="host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxx"
+	@$(MAKE) init-pglogical-region \
+		REGION_DB_URL="$(DB_URL)" \
+		NODE_NAME="node_cn" \
+		NODE_DSN="host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx" \
+		SUBSCRIPTION_NAME="sub_from_global" \
+		PROVIDER_DSN="host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx"
 
 init-pglogical-region-global:
-        @echo ">>> 初始化 Global 节点 pglogical 配置"
-        @$(MAKE) init-pglogical-region \
-                REGION_DB_URL="$(REGION_GLOBAL_DB_URL)" \
-                NODE_NAME="node_global" \
-                NODE_DSN="host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx" \
-                SUBSCRIPTION_NAME="sub_from_cn" \
-                PROVIDER_DSN="host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx"
+	@$(MAKE) init-pglogical-region \
+		REGION_DB_URL="$(DB_URL)" \
+		NODE_NAME="node_global" \
+		NODE_DSN="host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx" \
+		SUBSCRIPTION_NAME="sub_from_cn" \
+		PROVIDER_DSN="host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx"
 
 # =========================================
-# migrate-db target
+# 📦 数据库迁移与管理
 # =========================================
-verify-db:
-	@echo ">>> 执行数据库 schema verify  (golang-migrate)"
-	@go run ./cmd/migratectl/main.go verify --schema sql/schema.sql --dsn "$(DB_URL)" --dir account/sql/migrations
-# =========================================
-# migrate-db target
-# =========================================
+
 migrate-db:
-	@echo ">>> 执行数据库 schema 迁移 (golang-migrate)"
-	@echo "--------------------------------------------"
-	@echo "使用数据库连接: $(DB_URL)"
-	@if ! command -v go >/dev/null 2>&1; then \
-	        echo "未检测到 go，请先安装 Go 环境"; \
-	        exit 1; \
-	fi
+	@echo ">>> 执行数据库迁移"
 	@go run ./cmd/migratectl/main.go migrate --dsn "$(DB_URL)" --dir sql/migrations
 
-account-export:
-	@echo ">>> 导出账号数据为 YAML"
-	@if [ -z "$(ACCOUNT_EXPORT_FILE)" ]; then \
-	        echo "请通过 ACCOUNT_EXPORT_FILE 指定导出文件路径"; \
-	        exit 1; \
-	fi
-	@if ! command -v go >/dev/null 2>&1; then \
-	        echo "未检测到 go，请先安装 Go 环境"; \
-	        exit 1; \
-	fi
-	@go run ./cmd/migratectl/main.go export --dsn "$(DB_URL)" --output "$(ACCOUNT_EXPORT_FILE)" $(if $(strip $(ACCOUNT_EMAIL_KEYWORD)),--email "$(ACCOUNT_EMAIL_KEYWORD)")
-
-account-import:
-	@echo ">>> 从 YAML 导入账号数据"
-	@if [ -z "$(ACCOUNT_IMPORT_FILE)" ]; then \
-	        echo "请通过 ACCOUNT_IMPORT_FILE 指定导入文件路径"; \
-	        exit 1; \
-	fi
-	@if ! command -v go >/dev/null 2>&1; then \
-	        echo "未检测到 go，请先安装 Go 环境"; \
-	        exit 1; \
-	fi
-	@if [ ! -f "$(ACCOUNT_IMPORT_FILE)" ]; then \
-	        echo "未找到导入文件: $(ACCOUNT_IMPORT_FILE)"; \
-	        exit 1; \
-	fi
-	@go run ./cmd/migratectl/main.go import --dsn "$(DB_URL)" --file "$(ACCOUNT_IMPORT_FILE)"
-
-# 删除数据库（安全防呆）
-drop-db:
-    @echo "⚠️  即将删除数据库 $(DB_NAME) ..."
-    @read -p "确定要删除数据库 $(DB_NAME)? [y/N] " confirm && \
-    if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
-        echo ">>> 正在删除数据库 $(DB_NAME) ..."; \
-        if PGPASSWORD="$(DB_PASS)" psql -h $(DB_HOST) -U $(DB_USER) -p $(DB_PORT) -d postgres -c "DROP DATABASE IF EXISTS $(DB_NAME);"; then \
-            echo ">>> 数据库已删除"; \
-        else \
-            echo ">>> 删除数据库失败，尝试清空 public schema ..."; \
-            $(MAKE) reset-public-schema; \
-        fi; \
-    else \
-        echo "取消删除"; \
-    fi
-
-reset-public-schema:
-    @echo ">>> 清空数据库 $(DB_NAME) 的 public schema"
-    @if ! command -v psql >/dev/null 2>&1; then \
-        echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
-        exit 1; \
-    fi
-    @PGPASSWORD="$(DB_PASS)" psql -h $(DB_HOST) -U $(DB_USER) -p $(DB_PORT) -d $(DB_NAME) -v ON_ERROR_STOP=1 \
-        -c "DROP SCHEMA IF EXISTS public CASCADE;" \
-        -c "CREATE SCHEMA public AUTHORIZATION $(DB_USER);" \
-        -c "GRANT ALL ON SCHEMA public TO $(DB_USER);" \
-        -c "GRANT ALL ON SCHEMA public TO public;"
-
-# 重新创建数据库（drop + init）
-reinit-db:
-    @$(MAKE) drop-db
-    @if ! command -v psql >/dev/null 2>&1; then \
-        echo "未检测到 psql，请先安装 PostgreSQL 客户端"; \
-        exit 1; \
-    fi
-    @if PGPASSWORD="$(DB_PASS)" psql -h $(DB_HOST) -U $(DB_USER) -p $(DB_PORT) -d postgres -Atc "SELECT 1 FROM pg_database WHERE datname='$(DB_NAME)';" | grep -qx '1'; then \
-        echo ">>> 数据库 $(DB_NAME) 仍然存在，跳过创建步骤"; \
-    else \
-        echo ">>> 创建新数据库 $(DB_NAME)"; \
-        PGPASSWORD="$(DB_PASS)" psql -h $(DB_HOST) -U $(DB_USER) -p $(DB_PORT) -d postgres -c "CREATE DATABASE $(DB_NAME) OWNER $(DB_USER);"; \
-    fi
-    @$(MAKE) init-db
-
 dump-schema:
-	@echo ">>> 导出数据库 schema 快照"
-	@if ! command -v pg_dump >/dev/null 2>&1; then \
-	        echo "未检测到 pg_dump，请先安装 PostgreSQL 客户端"; \
-	        exit 1; \
-	Fi
+	@echo ">>> 导出 schema 到 $(SCHEMA_FILE)"
 	@pg_dump -s -O -x "$(DB_URL)" > $(SCHEMA_FILE)
 
-build:
-	@echo ">>> 编译 $(APP_NAME)"
-	go build -o $(APP_NAME) $(MAIN_FILE)
+drop-db:
+	@read -p "⚠️ 确认删除数据库 $(DB_NAME)? [y/N] " c && [ "$$c" = "y" -o "$$c" = "Y" ] && \
+	PGPASSWORD="$(DB_PASS)" psql -h $(DB_HOST) -U $(DB_USER) -d postgres -c "DROP DATABASE IF EXISTS $(DB_NAME);" || echo "取消操作"
 
-start: build
-	@echo ">>> 运行 postgresql on port 5432 (后台运行)"
-	brew services start postgresql
-	@echo ">>> 运行 $(APP_NAME) on port $(PORT) (后台运行)"
-	@./xcontrol-account --config  config/account.yaml
+reset-public-schema:
+	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 \
+		-c "DROP SCHEMA IF EXISTS public CASCADE;" \
+		-c "CREATE SCHEMA public AUTHORIZATION $(DB_USER);" \
+		-c "GRANT ALL ON SCHEMA public TO $(DB_USER);" \
+		-c "GRANT ALL ON SCHEMA public TO public;"
+
+reinit-db:
+	@$(MAKE) drop-db
+	@PGPASSWORD="$(DB_PASS)" psql -h $(DB_HOST) -U $(DB_USER) -d postgres -c "CREATE DATABASE $(DB_NAME) OWNER $(DB_USER);" || true
+	@$(MAKE) init-db
+
+# =========================================
+# 💾 账号导入导出
+# =========================================
+
+account-export:
+	@go run ./cmd/migratectl/main.go export --dsn "$(DB_URL)" --output "$(ACCOUNT_EXPORT_FILE)" $(if $(ACCOUNT_EMAIL_KEYWORD),--email "$(ACCOUNT_EMAIL_KEYWORD)")
+
+account-import:
+	@[ -f "$(ACCOUNT_IMPORT_FILE)" ] || (echo "❌ 未找到文件 $(ACCOUNT_IMPORT_FILE)"; exit 1)
+	@go run ./cmd/migratectl/main.go import --dsn "$(DB_URL)" --file "$(ACCOUNT_IMPORT_FILE)"
+
+create-super-admin:
+	@[ -n "$(SUPERADMIN_USERNAME)" ] && [ -n "$(SUPERADMIN_PASSWORD)" ] || (echo "❌ 请指定用户名与密码"; exit 1)
+	@go run ./cmd/createadmin/main.go \
+		--driver postgres \
+		--dsn "$(DB_URL)" \
+		--username "$(SUPERADMIN_USERNAME)" \
+		--password "$(SUPERADMIN_PASSWORD)" \
+		--email "$(SUPERADMIN_EMAIL)"
+
+# =========================================
+# ⚙️ 编译与运行
+# =========================================
+
+build:
+	@go build -o $(APP_NAME) $(MAIN_FILE)
+
+start:
+	@./$(APP_NAME) --config config/account.yaml &
 
 stop:
-	@echo ">>> 停止 $(APP_NAME)"
-	@if [ -f $(APP_NAME).pid ]; then \
-		kill `cat $(APP_NAME).pid` >/dev/null 2>&1 || true; \
-		rm $(APP_NAME).pid; \
-	else \
-		echo "未找到运行中的进程"; \
-	fi
+	@pkill -f "$(APP_NAME)" || echo "⚠️ 未找到运行进程"
 
 restart: stop start
 
-update: build
-	systemctl stop xcontrol-account.service
-	cp xcontrol-account /usr/bin/
-	systemctl restart xcontrol-account.service
-
-clean:
-	@echo ">>> 清理构建产物"
-	rm -f $(APP_NAME) $(APP_NAME).log $(APP_NAME).pid
-
-help:
-	@echo " XControl Account Service Makefile"
-	@echo ""
-	@echo "make init       初始化开发环境（包含 Go 依赖与数据库 schema）"
-	@echo "make dump-schema 仅导出数据库 schema 快照"
-	@echo "make migrate-db  在保留数据的情况下应用 schema 迁移"
-	@echo "make account-export [ACCOUNT_EXPORT_FILE=...] [ACCOUNT_EMAIL_KEYWORD=...]  导出账号数据为 YAML"
-	@echo "make account-import ACCOUNT_IMPORT_FILE=...  从 YAML 文件导入账号数据"
-	@echo "make build      编译 account service 可执行文件"
-	@echo "make start      后台运行 account service (默认端口: $(PORT))"
-	@echo "make stop       停止运行 account service"
-	@echo "make restart    重启 account service"
-	@echo "make test       运行账号服务相关单元测试"
-	@echo "make dev        开发模式运行 (自动检测 air，如无则用 go run)"
-	@echo "make clean      清理构建产物"
-	@echo "make create-super-admin SUPERADMIN_USERNAME=... SUPERADMIN_PASSWORD=... [SUPERADMIN_EMAIL=...]  创建超级管理员"
+dev:
+	@if command -v air >/dev/null; then \
+		PORT=$(PORT) air -c .air.toml; \
+	else \
+		PORT=$(PORT) go run $(MAIN_FILE); \
+	fi
 
 test:
-	@echo ">>> 运行单元测试"
 	go test ./...
 
-dev:
-	@echo ">>> 开发模式运行 $(APP_NAME) (热重载) on port $(PORT)"
-	@if command -v air >/dev/null; then \
-	        PORT=$(PORT) air -c .air.toml; \
-	else \
-	        echo "未检测到 air，直接运行 go run"; \
-	        PORT=$(PORT) go run $(MAIN_FILE); \
-	fi
-
-create-super-admin:
-	@if [ -z "$(SUPERADMIN_USERNAME)" ]; then \
-	        echo "请通过 SUPERADMIN_USERNAME 指定超级管理员用户名"; \
-	        exit 1; \
-	fi
-	@if [ -z "$(SUPERADMIN_PASSWORD)" ]; then \
-	        echo "请通过 SUPERADMIN_PASSWORD 指定超级管理员密码"; \
-	        exit 1; \
-	fi
-	@echo ">>> 创建超级管理员 $(SUPERADMIN_USERNAME)"
-	@go run ./cmd/createadmin/main.go \
-	        --driver postgres \
-	        --dsn "$(DB_URL)" \
-	        --username "$(SUPERADMIN_USERNAME)" \
-	        --password "$(SUPERADMIN_PASSWORD)" \
-	        --email "$(SUPERADMIN_EMAIL)"
+clean:
+	rm -f $(APP_NAME) *.pid *.log
