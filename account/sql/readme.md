@@ -38,13 +38,48 @@ GRANT USAGE ON SCHEMA pglogical TO shenlan;
 
 \q
 ⚙️ 执行顺序建议
-步骤	节点	脚本	说明
-1️⃣	Global	schema_base_bidirectional_enhanced.sql	创建业务结构（含 version/origin_node）
-2️⃣	CN	schema_base_bidirectional_enhanced.sql	创建相同业务结构
-3️⃣	Global	schema_pglogical_region_global.sql	定义 Global provider + 订阅 CN
-4️⃣	CN	schema_pglogical_region_cn.sql	定义 CN provider + 订阅 Global
 
-💡 CN 节点执行 `schema_pglogical_region_cn.sql` 或 `make init-pglogical-region-cn` 前，请确保连接用户拥有 PostgreSQL 超级用户权限。
+| 步骤 | 节点 | 脚本 / 命令 | 说明 |
+| --- | --- | --- | --- |
+| 1️⃣ | Global | schema_base_bidirectional_enhanced.sql | 创建业务结构（含 version/origin_node） |
+| 2️⃣ | CN | schema_base_bidirectional_enhanced.sql | 创建相同业务结构 |
+| 3️⃣ | Global | schema_pglogical_region.sql + 参数 | 定义 Global provider + 订阅 CN |
+| 4️⃣ | CN | schema_pglogical_region.sql + 参数 | 定义 CN provider + 订阅 Global |
+
+💡 执行 `schema_pglogical_region.sql` 或对应的 `make init-pglogical-region-*` 目标前，请确保连接用户拥有 PostgreSQL 超级用户权限。
+
+### 手动执行模版脚本
+
+使用相同的 `schema_pglogical_region.sql` 模版即可初始化 Global 与 CN 两个节点，只需传入不同的变量：
+
+```bash
+# Global 节点示例
+psql "$REGION_GLOBAL_DB_URL" -v ON_ERROR_STOP=1 \
+  -v NODE_NAME=node_global \
+  -v NODE_DSN='host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx' \
+  -v SUBSCRIPTION_NAME=sub_from_cn \
+  -v PROVIDER_DSN='host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx' \
+  -f account/sql/schema_pglogical_region.sql
+
+# CN 节点示例
+psql "$REGION_CN_DB_URL" -v ON_ERROR_STOP=1 \
+  -v NODE_NAME=node_cn \
+  -v NODE_DSN='host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx' \
+  -v SUBSCRIPTION_NAME=sub_from_global \
+  -v PROVIDER_DSN='host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxx' \
+  -f account/sql/schema_pglogical_region.sql
+```
+
+也可以通过新的 `make init-pglogical-region` 目标自定义变量，例如：
+
+```bash
+make init-pglogical-region \
+  REGION_DB_URL="$REGION_DB_URL" \
+  NODE_NAME=node_example \
+  NODE_DSN="host=example port=5432 dbname=account user=pglogical password=secret" \
+  SUBSCRIPTION_NAME=sub_from_peer \
+  PROVIDER_DSN="host=peer port=5432 dbname=account user=pglogical password=secret"
+```
 
 - 若使用业务账号（如 `shenlan`）执行初始化，PostgreSQL 会提示缺少超级用户权限并跳过 `pglogical` 初始化。
 - 建议改用 `postgres` 等超级用户连接执行，或由管理员预先安装 `pglogical` 扩展并授予业务用户访问权限。
