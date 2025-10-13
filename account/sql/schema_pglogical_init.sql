@@ -1,7 +1,7 @@
 -- =========================================
 -- schema_pglogical_init.sql
--- Dedicated pglogical schema initialization separated from business schema
--- =========================================
+-- Dedicated pglogical schema initialization separated from business schema.
+-- Execute schema_pglogical_patch.sql afterwards to align origin defaults.
 
 DO $$
 BEGIN

@@ -1,6 +1,6 @@
--- =========================================
--- schema_base_bidirectional_enhanced.sql
--- Shared schema for pglogical bidirectional sync (Multi-Master Safe)
+-- schema.sql
+-- Base business schema for the account service.
+-- Works with both one-way async sync (pgsync) and pglogical multi-master.
 -- PostgreSQL 16 + gen_random_uuid()
 -- =========================================
 
@@ -19,8 +19,7 @@ DROP TABLE IF EXISTS public.admin_settings CASCADE;
 -- =========================================
 CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
 
--- pglogical schema is initialized separately to avoid interfering with
--- business schema snapshots. See schema_pglogical_init.sql.
+-- pglogical specific defaults are now applied by schema_pglogical_patch.sql.
 
 -- =========================================
 -- Functions
@@ -55,7 +54,6 @@ BEGIN
 END;
 $$;
 
--- =========================================
 -- Tables
 -- =========================================
 
@@ -71,7 +69,7 @@ CREATE TABLE public.users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   version BIGINT NOT NULL DEFAULT 0, -- 🔢 行版本号
-  origin_node TEXT DEFAULT current_setting('pglogical.node_name', true), -- 🌍 来源节点
+  origin_node TEXT NOT NULL DEFAULT 'local', -- 🌍 来源节点，可在不同区域通过 ALTER TABLE 或 pglogical patch 覆盖
   mfa_totp_secret TEXT,
   mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   mfa_secret_issued_at TIMESTAMPTZ,
@@ -88,7 +86,7 @@ CREATE TABLE public.identities (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   version BIGINT NOT NULL DEFAULT 0,
-  origin_node TEXT DEFAULT current_setting('pglogical.node_name', true),
+  origin_node TEXT NOT NULL DEFAULT 'local',
   CONSTRAINT identities_provider_external_id_uk UNIQUE (provider, external_id)
 );
 
@@ -100,7 +98,7 @@ CREATE TABLE public.sessions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   version BIGINT NOT NULL DEFAULT 0,
-  origin_node TEXT DEFAULT current_setting('pglogical.node_name', true)
+  origin_node TEXT NOT NULL DEFAULT 'local'
 );
 
 CREATE TABLE public.admin_settings (
@@ -109,7 +107,7 @@ CREATE TABLE public.admin_settings (
   role TEXT NOT NULL,
   enabled BOOLEAN NOT NULL DEFAULT FALSE,
   version BIGINT NOT NULL DEFAULT 1,
-  origin_node TEXT DEFAULT current_setting('pglogical.node_name', true),
+  origin_node TEXT NOT NULL DEFAULT 'local',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT admin_settings_module_role_uk UNIQUE (module_key, role)
