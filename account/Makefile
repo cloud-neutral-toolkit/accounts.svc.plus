@@ -37,7 +37,9 @@ export PATH := /usr/local/go/bin:$(PATH)
 # 🧩 基础命令
 # =========================================
 
-.PHONY: all init build clean start stop restart dev test help
+.PHONY: all init build clean start stop restart dev test help \
+	init-db-core init-db-replication init-db-pglogical \
+	reinit-pglogical
 
 all: build
 
@@ -50,7 +52,8 @@ help:
 	@echo "make account-export     导出账号数据为 YAML"
 	@echo "make account-import     从 YAML 导入账号数据"
 	@echo "make create-super-admin 创建超级管理员"
-	@echo "make reinit-db          重置数据库"
+	@echo "make reinit-db          重置业务 schema (不涉及 pglogical)"
+	@echo "make reinit-pglogical   重新初始化 pglogical schema"
 	@echo "make dev                热重载开发模式"
 	@echo "make clean              清理构建产物"
 
@@ -75,26 +78,36 @@ init-go:
 init-db:
 	@echo ">>> 初始化数据库 schema"
 	@command -v psql >/dev/null || (echo "❌ 未检测到 psql，请安装 PostgreSQL 客户端" && exit 1)
+	@$(MAKE) init-db-core
+	@$(MAKE) init-db-replication
+
+init-db-core:
+	@echo ">>> 初始化业务 schema ($(SCHEMA_FILE))"
 	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(SCHEMA_FILE)
+
+init-db-replication:
 	@if [ "$(REPLICATION_MODE)" = "pglogical" ]; then \
-		if [ -f $(PGLOGICAL_INIT_FILE) ]; then \
-			echo ">>> 初始化 pglogical schema (REPLICATION_MODE=pglogical)"; \
-			if PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d $(DB_NAME) \
-				-Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" 2>/dev/null | grep -qx 't'; then \
-				PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d $(DB_NAME) \
-					-v ON_ERROR_STOP=1 -f $(PGLOGICAL_INIT_FILE); \
-			elif psql "$(DB_URL)" -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" | grep -qx 't'; then \
-				psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_INIT_FILE); \
-			else \
-				echo "⚠️ 当前用户非超级用户，跳过 pglogical 初始化"; \
-			fi; \
-		fi; \
-		if [ -f $(PGLOGICAL_PATCH_FILE) ]; then \
-			echo ">>> 应用 pglogical 默认值补丁"; \
-			psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_PATCH_FILE); \
-		fi; \
+		$(MAKE) init-db-pglogical; \
 	else \
 		echo ">>> 跳过 pglogical 初始化 (REPLICATION_MODE=$(REPLICATION_MODE))"; \
+	fi
+
+init-db-pglogical:
+	@if [ -f $(PGLOGICAL_INIT_FILE) ]; then \
+		echo ">>> 初始化 pglogical schema (REPLICATION_MODE=pglogical)"; \
+		if PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d $(DB_NAME) \
+			-Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" 2>/dev/null | grep -qx 't'; then \
+			PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d $(DB_NAME) \
+				-v ON_ERROR_STOP=1 -f $(PGLOGICAL_INIT_FILE); \
+		elif psql "$(DB_URL)" -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" | grep -qx 't'; then \
+			psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_INIT_FILE); \
+		else \
+			echo "⚠️ 当前用户非超级用户，跳过 pglogical 初始化"; \
+		fi; \
+	fi; \
+	if [ -f $(PGLOGICAL_PATCH_FILE) ]; then \
+		echo ">>> 应用 pglogical 默认值补丁"; \
+		psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_PATCH_FILE); \
 	fi
 
 # =========================================
@@ -174,9 +187,17 @@ reset-public-schema:
 		-c "GRANT ALL ON SCHEMA public TO public;"
 
 reinit-db:
-	@$(MAKE) drop-db
-	@PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d postgres -c "CREATE DATABASE $(DB_NAME) OWNER $(DB_USER);" || true
-	@$(MAKE) init-db
+	@echo ">>> 重置业务 schema (sql/schema.sql)"
+	@$(MAKE) reset-public-schema
+	@$(MAKE) init-db-core
+
+reinit-pglogical:
+	@if [ "$(REPLICATION_MODE)" = "pglogical" ]; then \
+		echo ">>> 重新初始化 pglogical schema"; \
+		$(MAKE) init-db-pglogical; \
+	else \
+		echo ">>> 当前 REPLICATION_MODE=$(REPLICATION_MODE)，无需 pglogical 处理"; \
+	fi
 
 # =========================================
 # 💾 账号导入导出
