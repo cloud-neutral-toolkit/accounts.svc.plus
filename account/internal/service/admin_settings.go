@@ -19,7 +19,7 @@ var ErrAdminSettingsVersionConflict = errors.New("admin settings version conflic
 
 // AdminSettings holds the permission matrix alongside its version.
 type AdminSettings struct {
-	Version uint
+	Version uint64
 	Matrix  map[string]map[string]bool
 }
 
@@ -54,7 +54,7 @@ func GetAdminSettings(ctx context.Context) (AdminSettings, error) {
 	}
 
 	matrix := make(map[string]map[string]bool)
-	var version uint
+	var version uint64
 	for _, row := range rows {
 		module := row.ModuleKey
 		role := row.Role
@@ -83,7 +83,7 @@ func SaveAdminSettings(ctx context.Context, payload AdminSettings) (AdminSetting
 	}
 
 	err := database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var currentVersion uint
+		var currentVersion uint64
 		if err := tx.Model(&model.AdminSetting{}).Select("COALESCE(MAX(version), 0)").Scan(&currentVersion).Error; err != nil {
 			return err
 		}
@@ -104,10 +104,11 @@ func SaveAdminSettings(ctx context.Context, payload AdminSettings) (AdminSetting
 				module = strings.TrimSpace(module)
 				for role, enabled := range roles {
 					rows = append(rows, model.AdminSetting{
-						ModuleKey: module,
-						Role:      role,
-						Enabled:   enabled,
-						Version:   nextVersion,
+						ModuleKey:  module,
+						Role:       role,
+						Enabled:    enabled,
+						Version:    nextVersion,
+						OriginNode: "local",
 					})
 				}
 			}
@@ -164,7 +165,7 @@ func currentDB() *gorm.DB {
 
 type adminSettingsCache struct {
 	mu      sync.RWMutex
-	version uint
+	version uint64
 	matrix  map[string]map[string]bool
 	loaded  bool
 }

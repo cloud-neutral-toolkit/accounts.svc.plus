@@ -2,12 +2,14 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
@@ -16,7 +18,14 @@ import (
 	"xcontrol/account/internal/store"
 )
 
-func setupAdminSettingsTestRouter(t *testing.T) *gin.Engine {
+type adminSettingsTestEnv struct {
+	router        *gin.Engine
+	adminToken    string
+	operatorToken string
+	userToken     string
+}
+
+func setupAdminSettingsTestRouter(t *testing.T) adminSettingsTestEnv {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -34,13 +43,71 @@ func setupAdminSettingsTestRouter(t *testing.T) *gin.Engine {
 		sqlDB.Close()
 	})
 
+	memoryStore := store.NewMemoryStore()
+	ctx := context.Background()
+
+	createUser := func(name, email, password, role string, level int) string {
+		hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			t.Fatalf("hash password: %v", err)
+		}
+		user := &store.User{
+			Name:          name,
+			Email:         email,
+			PasswordHash:  string(hashed),
+			Role:          role,
+			Level:         level,
+			EmailVerified: true,
+		}
+		if err := memoryStore.CreateUser(ctx, user); err != nil {
+			t.Fatalf("create user: %v", err)
+		}
+		return password
+	}
+
+	adminPassword := createUser("admin", "admin@example.com", "AdminPass123!", store.RoleAdmin, store.LevelAdmin)
+	operatorPassword := createUser("operator", "operator@example.com", "OperatorPass123!", store.RoleOperator, store.LevelOperator)
+	userPassword := createUser("user", "user@example.com", "UserPass123!", store.RoleUser, store.LevelUser)
+
 	router := gin.New()
-	RegisterRoutes(router, WithStore(store.NewMemoryStore()))
-	return router
+	RegisterRoutes(router, WithStore(memoryStore), WithEmailVerification(false))
+
+	login := func(email, password string) string {
+		payload := map[string]string{
+			"email":    email,
+			"password": password,
+		}
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("login failed for %s: %d %s", email, resp.Code, resp.Body.String())
+		}
+		var result struct {
+			Token string `json:"token"`
+		}
+		if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+			t.Fatalf("decode login response: %v", err)
+		}
+		if result.Token == "" {
+			t.Fatalf("expected session token for %s", email)
+		}
+		return result.Token
+	}
+
+	env := adminSettingsTestEnv{router: router}
+	env.adminToken = login("admin@example.com", adminPassword)
+	env.operatorToken = login("operator@example.com", operatorPassword)
+	env.userToken = login("user@example.com", userPassword)
+
+	return env
 }
 
 func TestAdminSettingsReadWrite(t *testing.T) {
-	router := setupAdminSettingsTestRouter(t)
+	env := setupAdminSettingsTestRouter(t)
+	router := env.router
 
 	payload := map[string]any{
 		"version": 0,
@@ -55,7 +122,7 @@ func TestAdminSettingsReadWrite(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/admin/settings", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-User-Role", "admin")
+	req.Header.Set("Authorization", "Bearer "+env.adminToken)
 
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -64,7 +131,7 @@ func TestAdminSettingsReadWrite(t *testing.T) {
 	}
 
 	var postResp struct {
-		Version uint                       `json:"version"`
+		Version uint64                     `json:"version"`
 		Matrix  map[string]map[string]bool `json:"matrix"`
 	}
 	if err := json.Unmarshal(resp.Body.Bytes(), &postResp); err != nil {
@@ -78,14 +145,14 @@ func TestAdminSettingsReadWrite(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/auth/admin/settings", nil)
-	req.Header.Set("X-Role", "operator")
+	req.Header.Set("Authorization", "Bearer "+env.operatorToken)
 	resp = httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d (%s)", resp.Code, resp.Body.String())
 	}
 	var getResp struct {
-		Version uint                       `json:"version"`
+		Version uint64                     `json:"version"`
 		Matrix  map[string]map[string]bool `json:"matrix"`
 	}
 	if err := json.Unmarshal(resp.Body.Bytes(), &getResp); err != nil {
@@ -100,13 +167,14 @@ func TestAdminSettingsReadWrite(t *testing.T) {
 }
 
 func TestAdminSettingsUnauthorized(t *testing.T) {
-	router := setupAdminSettingsTestRouter(t)
+	env := setupAdminSettingsTestRouter(t)
+	router := env.router
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/admin/settings", nil)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
-	if resp.Code != http.StatusForbidden {
-		t.Fatalf("expected status 403, got %d", resp.Code)
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d", resp.Code)
 	}
 
 	payload := map[string]any{
@@ -116,7 +184,7 @@ func TestAdminSettingsUnauthorized(t *testing.T) {
 	body, _ := json.Marshal(payload)
 	req = httptest.NewRequest(http.MethodPost, "/api/auth/admin/settings", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-User-Role", "user")
+	req.Header.Set("Authorization", "Bearer "+env.userToken)
 	resp = httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 	if resp.Code != http.StatusForbidden {
@@ -125,7 +193,8 @@ func TestAdminSettingsUnauthorized(t *testing.T) {
 }
 
 func TestAdminSettingsVersionConflict(t *testing.T) {
-	router := setupAdminSettingsTestRouter(t)
+	env := setupAdminSettingsTestRouter(t)
+	router := env.router
 
 	payload := map[string]any{
 		"version": 0,
@@ -136,7 +205,7 @@ func TestAdminSettingsVersionConflict(t *testing.T) {
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/admin/settings", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-User-Role", "admin")
+	req.Header.Set("Authorization", "Bearer "+env.adminToken)
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {
@@ -146,14 +215,14 @@ func TestAdminSettingsVersionConflict(t *testing.T) {
 	// Replay the payload with the stale version.
 	req = httptest.NewRequest(http.MethodPost, "/api/auth/admin/settings", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-User-Role", "admin")
+	req.Header.Set("Authorization", "Bearer "+env.adminToken)
 	resp = httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 	if resp.Code != http.StatusConflict {
 		t.Fatalf("expected status 409, got %d", resp.Code)
 	}
 	var conflict struct {
-		Version uint `json:"version"`
+		Version uint64 `json:"version"`
 	}
 	if err := json.Unmarshal(resp.Body.Bytes(), &conflict); err != nil {
 		t.Fatalf("unmarshal conflict response: %v", err)
