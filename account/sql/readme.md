@@ -1,5 +1,13 @@
 # Account 数据库结构与双向同步指南
 
+## 方案概览
+
+| 目标 | 推荐方案 | 说明 |
+| --- | --- | --- |
+| ✅ 一地写入 → 异步同步另一地 | [pgsync](#仅异步同步pgsync) | 使用逻辑导出/导入，无需超级权限，分钟级延迟 |
+| ✅ 双向写入 → 最终一致 | [pglogical](#双向写入最终一致pglogical) | 双主架构，需超级用户安装扩展 |
+| ✅ 结构迁移 / 数据导出备份 | `migratectl` + `pgsync` + `cron` | CLI 执行 schema，pgsync 定时同步 |
+
 使用新的 `migratectl` CLI 可以在不同环境下快速执行迁移、校验和重置操作：
 
 ```bash
@@ -8,6 +16,63 @@ go run ./cmd/migratectl/main.go migrate --dsn "$DB_URL"
 
 # 对比 CN 与 Global 节点结构一致性
 go run ./cmd/migratectl/main.go check --cn "$CN_DSN" --global "$GLOBAL_DSN"
+
+## 仅异步同步（pgsync）
+
+当只需要将用户表从主区域异步同步到次区域时，推荐使用 [pgsync](https://github.com/timeplus-io/pgsync)。
+
+1. 初始化基础 schema（默认 `REPLICATION_MODE=pgsync` 不会执行任何 pglogical 步骤）：
+
+   ```bash
+   make -C account init-db REPLICATION_MODE=pgsync DB_URL="$SOURCE_DB_URL"
+   make -C account init-db REPLICATION_MODE=pgsync DB_URL="$DEST_DB_URL"
+   ```
+
+2. 编辑 `account/sql/pgsync.users.example.yaml`，替换源端与目标端 DSN。
+
+3. 使用 pgsync 持续同步，可结合 cron 运行增量同步：
+
+   ```bash
+   # 全量初始化
+   pgsync --config account/sql/pgsync.users.example.yaml --once
+
+   # 每分钟增量同步
+   * * * * * /usr/local/bin/pgsync --config /path/to/pgsync.users.yaml >> /var/log/pgsync.log 2>&1
+   ```
+
+4. 如需同步更多表，只需在配置文件中新增表条目。所有表均共享基础 schema，无需超级用户权限。
+
+> 📌 `schema.sql` 中的 `origin_node` 默认值为 `local`。在 pgsync 场景下可以保持默认，或者在迁移脚本中通过 `ALTER TABLE ... ALTER COLUMN origin_node SET DEFAULT 'global'` 为不同区域设置标记。
+
+## 双向写入最终一致（pglogical）
+
+当需要两地同时写入并保持最终一致时，可切换到 pglogical 模式。
+
+1. 确保数据库超级用户已经安装 `pglogical` 扩展。
+2. 初始化 schema 并应用 pglogical 默认值补丁：
+
+   ```bash
+   make -C account init-db REPLICATION_MODE=pglogical DB_URL="$REGION_DB_URL" \
+     DB_ADMIN_USER=postgres DB_ADMIN_PASS=secret
+   ```
+
+   该命令依次执行：
+   - `sql/schema.sql`：业务基础结构；
+   - `sql/schema_pglogical_init.sql`：在 `pglogical` schema 中安装扩展；
+   - `sql/schema_pglogical_patch.sql`：将 `origin_node` 默认值绑定到 `pglogical.node_name`。
+
+3. 参考下方模板配置双节点复制：
+
+   ```bash
+   make -C account init-pglogical-region \
+     REGION_DB_URL="$REGION_DB_URL" \
+     NODE_NAME=node_cn \
+     NODE_DSN="host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx" \
+     SUBSCRIPTION_NAME=sub_from_global \
+     PROVIDER_DSN="host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx"
+   ```
+
+4. 在另一侧节点重复执行并互为订阅，实现双主写入。
 
 ## 🔐 权限与 Schema 设置
 
@@ -41,10 +106,12 @@ GRANT USAGE ON SCHEMA pglogical TO shenlan;
 
 | 步骤 | 节点 | 脚本 / 命令 | 说明 |
 | --- | --- | --- | --- |
-| 1️⃣ | Global | schema_base_bidirectional_enhanced.sql | 创建业务结构（含 version/origin_node） |
-| 2️⃣ | CN | schema_base_bidirectional_enhanced.sql | 创建相同业务结构 |
-| 3️⃣ | Global | schema_pglogical_region.sql + 参数 | 定义 Global provider + 订阅 CN |
-| 4️⃣ | CN | schema_pglogical_region.sql + 参数 | 定义 CN provider + 订阅 Global |
+| 1️⃣ | Global | schema.sql | 创建业务结构（含 version/origin_node） |
+| 2️⃣ | CN | schema.sql | 创建相同业务结构 |
+| 3️⃣ | Global | schema_pglogical_patch.sql | 绑定 origin_node 默认值到 pglogical |
+| 4️⃣ | CN | schema_pglogical_patch.sql | 同上 |
+| 5️⃣ | Global | schema_pglogical_region.sql + 参数 | 定义 Global provider + 订阅 CN |
+| 6️⃣ | CN | schema_pglogical_region.sql + 参数 | 定义 CN provider + 订阅 Global |
 
 💡 执行 `schema_pglogical_region.sql` 或对应的 `make init-pglogical-region-*` 目标前，请确保连接用户拥有 PostgreSQL 超级用户权限。
 

@@ -2,8 +2,7 @@
 -- schema_pglogical_region.sql
 -- pglogical configuration template for regional nodes
 -- PostgreSQL 16+, 双向复制 (provider + subscriber)
--- 使用前请通过 psql -v NODE_NAME=... -v NODE_DSN=... -v SUBSCRIPTION_NAME=... -v PROVIDER_DSN=...
--- 提供所需参数。
+-- 在运行本脚本前，请确保已执行 schema.sql 与 schema_pglogical_patch.sql。
 -- =========================================
 
 \if :{?NODE_NAME}
