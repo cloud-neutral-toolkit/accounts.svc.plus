@@ -1,17 +1,35 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
 
 // AdminSetting represents a single permission toggle in the admin matrix.
 type AdminSetting struct {
-	ID        uint      `gorm:"primaryKey"`
-	ModuleKey string    `gorm:"size:128;not null;uniqueIndex:idx_admin_settings_module_role"`
-	Role      string    `gorm:"size:32;not null;uniqueIndex:idx_admin_settings_module_role"`
-	Enabled   bool      `gorm:"not null"`
-	Version   uint      `gorm:"not null;index"`
-	CreatedAt time.Time `gorm:"not null"`
-	UpdatedAt time.Time `gorm:"not null"`
+	UUID       string    `gorm:"column:uuid;type:uuid;primaryKey"`
+	ModuleKey  string    `gorm:"column:module_key;type:text;not null;uniqueIndex:idx_admin_settings_module_role"`
+	Role       string    `gorm:"column:role;type:text;not null;uniqueIndex:idx_admin_settings_module_role"`
+	Enabled    bool      `gorm:"column:enabled;not null"`
+	Version    uint64    `gorm:"column:version;type:bigint;not null;index"`
+	OriginNode string    `gorm:"column:origin_node;type:text;not null;default:local"`
+	CreatedAt  time.Time `gorm:"column:created_at;not null;autoCreateTime"`
+	UpdatedAt  time.Time `gorm:"column:updated_at;not null;autoUpdateTime"`
 }
 
 // TableName overrides the default table name used by GORM.
 func (AdminSetting) TableName() string { return "admin_settings" }
+
+// BeforeCreate ensures the primary key and defaults align with the database schema.
+func (setting *AdminSetting) BeforeCreate(tx *gorm.DB) error {
+	if strings.TrimSpace(setting.UUID) == "" {
+		setting.UUID = uuid.NewString()
+	}
+	if strings.TrimSpace(setting.OriginNode) == "" {
+		setting.OriginNode = "local"
+	}
+	return nil
+}

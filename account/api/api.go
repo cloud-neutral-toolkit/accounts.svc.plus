@@ -538,10 +538,10 @@ func (h *handler) updateAdminSettings(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		Version uint                       `json:"version"`
-		Matrix  map[string]map[string]bool `json:"matrix"`
-	}
+        var req struct {
+                Version uint64                    `json:"version"`
+                Matrix  map[string]map[string]bool `json:"matrix"`
+        }
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
