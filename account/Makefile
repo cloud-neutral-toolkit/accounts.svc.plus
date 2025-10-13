@@ -16,8 +16,6 @@ DB_URL      := postgres://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)
 
 REPLICATION_MODE ?= pgsync
 
-# 管理员账号用于执行需要超级权限的操作，例如删除数据库和初始化 pglogical
-# 默认为业务账号，可通过环境变量覆盖
 DB_ADMIN_USER ?= $(DB_USER)
 DB_ADMIN_PASS ?= $(DB_PASS)
 
@@ -188,13 +186,13 @@ account-export:
 	@go run ./cmd/migratectl/main.go export --dsn "$(DB_URL)" --output "$(ACCOUNT_EXPORT_FILE)" $(if $(ACCOUNT_EMAIL_KEYWORD),--email "$(ACCOUNT_EMAIL_KEYWORD)")
 
 account-import:
-        @[ -f "$(ACCOUNT_IMPORT_FILE)" ] || (echo "❌ 未找到文件 $(ACCOUNT_IMPORT_FILE)"; exit 1)
-        @go run ./cmd/migratectl/main.go import --dsn "$(DB_URL)" --file "$(ACCOUNT_IMPORT_FILE)" \
-                $(if $(ACCOUNT_IMPORT_MERGE),--merge) \
-                $(if $(ACCOUNT_IMPORT_MERGE_STRATEGY),--merge-strategy "$(ACCOUNT_IMPORT_MERGE_STRATEGY)") \
-                $(if $(ACCOUNT_IMPORT_DRY_RUN),--dry-run) \
-                $(foreach UUID,$(ACCOUNT_IMPORT_MERGE_ALLOWLIST),--merge-allowlist $(UUID)) \
-                $(ACCOUNT_IMPORT_EXTRA_FLAGS)
+	@[ -f "$(ACCOUNT_IMPORT_FILE)" ] || (echo "❌ 未找到文件 $(ACCOUNT_IMPORT_FILE)"; exit 1)
+	@go run ./cmd/migratectl/main.go import --dsn "$(DB_URL)" --file "$(ACCOUNT_IMPORT_FILE)" \
+		$(if $(ACCOUNT_IMPORT_MERGE),--merge) \
+		$(if $(ACCOUNT_IMPORT_MERGE_STRATEGY),--merge-strategy "$(ACCOUNT_IMPORT_MERGE_STRATEGY)") \
+		$(if $(ACCOUNT_IMPORT_DRY_RUN),--dry-run) \
+		$(foreach UUID,$(ACCOUNT_IMPORT_MERGE_ALLOWLIST),--merge-allowlist $(UUID)) \
+		$(ACCOUNT_IMPORT_EXTRA_FLAGS)
 
 create-super-admin:
 	@[ -n "$(SUPERADMIN_USERNAME)" ] && [ -n "$(SUPERADMIN_PASSWORD)" ] || (echo "❌ 请指定用户名与密码"; exit 1)
