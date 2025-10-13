@@ -180,11 +180,7 @@ drop-db:
 	fi
 
 reset-public-schema:
-	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 \
-		-c "DROP SCHEMA IF EXISTS public CASCADE;" \
-		-c "CREATE SCHEMA public AUTHORIZATION $(DB_USER);" \
-		-c "GRANT ALL ON SCHEMA public TO $(DB_USER);" \
-		-c "GRANT ALL ON SCHEMA public TO public;"
+	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -v db_user="$(DB_USER)" -f sql/reset_public_schema.sql
 
 reinit-db:
 	@echo ">>> 重置业务 schema (sql/schema.sql)"
