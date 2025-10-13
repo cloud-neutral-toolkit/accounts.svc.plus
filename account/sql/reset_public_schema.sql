@@ -4,7 +4,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_namespace WHERE nspname = 'public'
     ) THEN
-        EXECUTE format('CREATE SCHEMA public AUTHORIZATION %I;', :'db_user');
+        EXECUTE format('CREATE SCHEMA public AUTHORIZATION %I;', current_user);
     END IF;
 END
 $$;
@@ -20,7 +20,7 @@ BEGIN
      WHERE nspname = 'public';
 
     IF owner = current_user THEN
-        EXECUTE format('GRANT ALL ON SCHEMA public TO %I;', :'db_user');
+        EXECUTE format('GRANT ALL ON SCHEMA public TO %I;', current_user);
         EXECUTE 'GRANT ALL ON SCHEMA public TO public;';
     ELSE
         RAISE NOTICE 'Skipping GRANT on schema public because current user % is not owner (%).',
