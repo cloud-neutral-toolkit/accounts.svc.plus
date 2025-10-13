@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -250,9 +251,13 @@ func newExportCmd() *cobra.Command {
 
 func newImportCmd() *cobra.Command {
 	var (
-		dsn     string
-		file    string
-		timeout time.Duration
+		dsn            string
+		file           string
+		timeout        time.Duration
+		merge          bool
+		mergeStrategy  string
+		dryRun         bool
+		mergeAllowlist []string
 	)
 
 	timeout = 5 * time.Minute
@@ -288,14 +293,49 @@ func newImportCmd() *cobra.Command {
 			}
 
 			importer := migrate.NewImporter()
+			allowlist := map[string]struct{}{}
+			for _, id := range mergeAllowlist {
+				id = strings.TrimSpace(id)
+				if id == "" {
+					continue
+				}
+				allowlist[id] = struct{}{}
+			}
+			if len(allowlist) == 0 {
+				allowlist = nil
+			}
+			if !merge {
+				if mergeStrategy != "" {
+					return errors.New("--merge-strategy requires --merge")
+				}
+				if len(mergeAllowlist) > 0 {
+					return errors.New("--merge-allowlist requires --merge")
+				}
+			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
 
-			if err := importer.Import(ctx, dsn, &dump); err != nil {
+			report, err := importer.Import(ctx, dsn, &dump, migrate.ImportOptions{
+				Merge:         merge,
+				MergeStrategy: migrate.MergeStrategy(mergeStrategy),
+				DryRun:        dryRun,
+				Allowlist:     allowlist,
+				LogWriter:     cmd.ErrOrStderr(),
+			})
+			if err != nil {
 				return err
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Imported %d users\n", len(dump.Users))
+			summaryTarget := "applied"
+			if dryRun {
+				summaryTarget = "preview"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Import %s: users inserted=%d updated=%d skipped=%d\n", summaryTarget, report.UsersInserted, report.UsersUpdated, report.UsersSkipped)
+			fmt.Fprintf(cmd.OutOrStdout(), "Identities inserted=%d updated=%d deleted=%d\n", report.IdentitiesInserted, report.IdentitiesUpdated, report.IdentitiesDeleted)
+			fmt.Fprintf(cmd.OutOrStdout(), "Sessions inserted=%d updated=%d deleted=%d\n", report.SessionsInserted, report.SessionsUpdated, report.SessionsDeleted)
+			if report.ConflictsResolved > 0 || report.ConflictsSkipped > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "Conflicts resolved=%d skipped=%d\n", report.ConflictsResolved, report.ConflictsSkipped)
+			}
 			return nil
 		},
 	}
@@ -303,6 +343,10 @@ func newImportCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dsn, "dsn", "", "PostgreSQL connection string")
 	cmd.Flags().StringVar(&file, "file", "", "YAML file path or '-' for stdin")
 	cmd.Flags().DurationVar(&timeout, "timeout", timeout, "Import operation timeout")
+	cmd.Flags().BoolVar(&merge, "merge", false, "Enable additive merge behaviour")
+	cmd.Flags().StringVar(&mergeStrategy, "merge-strategy", "", "Merge strategy (replace, append, timestamp)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the import without applying changes")
+	cmd.Flags().StringSliceVar(&mergeAllowlist, "merge-allowlist", nil, "User UUIDs allowed to merge (comma-separated or repeated)")
 
 	return cmd
 }
