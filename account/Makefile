@@ -14,6 +14,11 @@ DB_HOST     := 127.0.0.1
 DB_PORT     := 5432
 DB_URL      := postgres://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable
 
+# 管理员账号用于执行需要超级权限的操作，例如删除数据库和初始化 pglogical
+# 默认为业务账号，可通过环境变量覆盖
+DB_ADMIN_USER ?= $(DB_USER)
+DB_ADMIN_PASS ?= $(DB_PASS)
+
 SCHEMA_FILE := ./sql/schema.sql
 PGLOGICAL_INIT_FILE := ./sql/schema_pglogical_init.sql
 PGLOGICAL_REGION_FILE := ./sql/schema_pglogical_region.sql
@@ -70,7 +75,12 @@ init-db:
 	@command -v psql >/dev/null || (echo "❌ 未检测到 psql，请安装 PostgreSQL 客户端" && exit 1)
 	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(SCHEMA_FILE)
 	@if [ -f $(PGLOGICAL_INIT_FILE) ]; then \
-		if psql "$(DB_URL)" -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" | grep -qx 't'; then \
+		echo ">>> 初始化 pglogical schema"; \
+		if PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d $(DB_NAME) \
+			-Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" 2>/dev/null | grep -qx 't'; then \
+			PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d $(DB_NAME) \
+				-v ON_ERROR_STOP=1 -f $(PGLOGICAL_INIT_FILE); \
+		elif psql "$(DB_URL)" -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" | grep -qx 't'; then \
 			psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_INIT_FILE); \
 		else \
 			echo "⚠️ 当前用户非超级用户，跳过 pglogical 初始化"; \
@@ -127,11 +137,21 @@ drop-db:
 	@read -p "确定要删除数据库 $(DB_NAME)? [y/N] " confirm && \
 	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
 		echo ">>> 强制断开现有连接 ..."; \
-		PGPASSWORD="$(DB_PASS)" psql -h $(DB_HOST) -U $(DB_USER) -d postgres \
-			-c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='$(DB_NAME)';"; \
+	        if ! PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d postgres \
+	                -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='$(DB_NAME)' AND pid <> pg_backend_pid();"; then \
+			echo "⚠️ 无法断开所有连接（需要超级用户权限）"; \
+		fi; \
+		echo ">>> 清理 pglogical schema ..."; \
+		PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d $(DB_NAME) \
+			-c "DROP SCHEMA IF EXISTS pglogical CASCADE;" >/dev/null 2>&1 || \
+			echo "⚠️ 无法删除 pglogical schema（数据库可能不存在或缺少权限）"; \
 		echo ">>> 删除数据库 $(DB_NAME) ..."; \
-		PGPASSWORD="$(DB_PASS)" psql -h $(DB_HOST) -U $(DB_USER) -d postgres \
-			-c "DROP DATABASE IF EXISTS $(DB_NAME);" || echo ">>> 删除失败"; \
+	        if PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d postgres \
+	                -c "DROP DATABASE IF EXISTS $(DB_NAME);"; then \
+			echo ">>> 数据库已删除"; \
+	        else \
+			echo ">>> 删除失败"; \
+		fi; \
 	else \
 		echo "取消删除"; \
 	fi
@@ -145,7 +165,7 @@ reset-public-schema:
 
 reinit-db:
 	@$(MAKE) drop-db
-	@PGPASSWORD="$(DB_PASS)" psql -h $(DB_HOST) -U $(DB_USER) -d postgres -c "CREATE DATABASE $(DB_NAME) OWNER $(DB_USER);" || true
+	@PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d postgres -c "CREATE DATABASE $(DB_NAME) OWNER $(DB_USER);" || true
 	@$(MAKE) init-db
 
 # =========================================
