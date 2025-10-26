@@ -1,65 +1,89 @@
 {
-  "log": {
-    "loglevel": "error"
-  },
-  "routing": {
-    "rules": []
-  },
-  "inbounds": [
-    {
-      "listen": "0.0.0.0",
-      "port": 1443,
-      "protocol": "vless",
-      "settings": {
-        "clients": [],
-        "decryption": "none",
-        "fallbacks": [
-          {
-            "dest": 8001,
-            "xver": 1
-          },
-          {
-            "alpn": "h2",
-            "dest": 8002,
-            "xver": 1
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "tls",
-        "tlsSettings": {
-          "minVersion": "1.2",
-          "rejectUnknownSni": true,
-          "certificates": [
+    "log": {
+        "loglevel": "debug"
+    },
+    "routing": {
+        "domainStrategy": "IPIfNonMatch",
+        "rules": [
             {
-              "ocspStapling": 3600,
-              "certificateFile": "/etc/ssl/onwalk.net.pem",
-              "keyFile": "/etc/ssl/onwalk.net.key"
+                "type": "field",
+                "domain": [
+                    "geosite:cn",
+                    "geosite:private"
+                ],
+                "outboundTag": "direct"
+            },
+            {
+                "type": "field",
+                "ip": [
+                    "geoip:cn",
+                    "geoip:private"
+                ],
+                "outboundTag": "direct"
             }
-          ]
-        }
-      },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": [
-          "http",
-          "tls"
         ]
+    },
+    "inbounds": [
+        {
+            "listen": "127.0.0.1",
+            "port": 1080,
+            "protocol": "socks",
+            "settings": {
+                "udp": true
+            },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": [
+                    "http",
+                    "tls"
+                ]
+            }
+      },
+      {
+        "listen": "127.0.0.1",
+        "port": 1081,
+        "protocol": "http",
+        "settings": {},
+        "sniffing": {
+            "enabled": true,
+            "destOverride": [
+                "http",
+                "tls"
+            ]
+        }
       }
-    }
-  ],
-  "outbounds": [
-    {
-      "protocol": "freedom"
-    }
-  ],
-  "policy": {
-    "levels": {
-      "0": {
-        "handshake": 2,
-        "connIdle": 120
-      }
-    }
-  }
+    ],
+    "outbounds": [
+        {
+            "protocol": "vless",
+            "settings": {
+                "vnext": [
+                    {
+                        "address": "tky-connector.onwalk.net",
+                        "port": 1443,
+                        "users": [
+                        ]
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "tls",
+                "tlsSettings": {
+                    "serverName": "tky-connector.onwalk.net",
+                    "allowInsecure": false,
+                    "fingerprint": "chrome"
+                }
+            },
+            "tag": "proxy"
+        },
+        {
+            "protocol": "freedom",
+            "tag": "direct"
+        },
+        {
+            "protocol": "blackhole",
+            "tag": "block"
+        }
+    ]
 }
