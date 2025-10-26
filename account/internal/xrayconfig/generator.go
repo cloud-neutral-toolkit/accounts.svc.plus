@@ -14,19 +14,14 @@ const (
 	// DefaultFlow is applied to VLESS clients when no explicit flow is
 	// provided. It matches the tlsSettings baked into the template.
 	DefaultFlow = "xtls-rprx-vision"
-
-	// DefaultEncryption is required by Xray for all VLESS users in the
-	// outbound array.
-	DefaultEncryption = "none"
 )
 
-// Client represents an entry under outbounds[].settings.vnext[].users[] in the Xray
+// Client represents an entry under inbounds[0].settings.clients[] in the Xray
 // config.
 type Client struct {
-	ID         string
-	Email      string
-	Flow       string
-	Encryption string
+	ID    string
+	Email string
+	Flow  string
 }
 
 // Generator updates the Xray configuration file based on a template and a set of
@@ -89,14 +84,17 @@ func (g Generator) Generate(clients []Client) error {
 }
 
 func replaceClients(root map[string]interface{}, clients []Client) error {
-	outboundsValue, ok := root["outbounds"]
+	inboundsValue, ok := root["inbounds"]
 	if !ok {
-		return errors.New("template missing outbounds array")
+		return errors.New("template missing inbounds array")
 	}
 
-	outboundsSlice, ok := outboundsValue.([]interface{})
+	inboundsSlice, ok := inboundsValue.([]interface{})
 	if !ok {
-		return fmt.Errorf("template outbounds has unexpected type %T", outboundsValue)
+		return fmt.Errorf("template inbounds has unexpected type %T", inboundsValue)
+	}
+	if len(inboundsSlice) == 0 {
+		return errors.New("template missing inbound entry")
 	}
 
 	clientObjects := make([]interface{}, 0, len(clients))
@@ -116,64 +114,39 @@ func replaceClients(root map[string]interface{}, clients []Client) error {
 			flow = DefaultFlow
 		}
 		entry["flow"] = flow
-		encryption := strings.TrimSpace(client.Encryption)
-		if encryption == "" {
-			encryption = DefaultEncryption
-		}
-		entry["encryption"] = encryption
 		clientObjects = append(clientObjects, entry)
 	}
 
-	var updated bool
-	for idx, outbound := range outboundsSlice {
-		outboundMap, ok := outbound.(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("template outbound %d has unexpected type %T", idx, outbound)
-		}
-
-		settingsValue, ok := outboundMap["settings"]
-		if !ok {
-			continue
-		}
-
-		settingsMap, ok := settingsValue.(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("template outbound %d settings has unexpected type %T", idx, settingsValue)
-		}
-
-		vnextValue, ok := settingsMap["vnext"]
-		if !ok {
-			continue
-		}
-
-		vnextSlice, ok := vnextValue.([]interface{})
-		if !ok {
-			return fmt.Errorf("template outbound %d vnext has unexpected type %T", idx, vnextValue)
-		}
-
-		for vnextIdx, vnext := range vnextSlice {
-			vnextMap, ok := vnext.(map[string]interface{})
-			if !ok {
-				return fmt.Errorf("template outbound %d vnext %d has unexpected type %T", idx, vnextIdx, vnext)
-			}
-
-			// Always replace the users array so the config reflects the exact
-			// state from the database.
-			vnextMap["users"] = clientObjects
-			vnextSlice[vnextIdx] = vnextMap
-			updated = true
-		}
-
-		settingsMap["vnext"] = vnextSlice
-		outboundMap["settings"] = settingsMap
-		outboundsSlice[idx] = outboundMap
+	inbound, ok := inboundsSlice[0].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("template inbound 0 has unexpected type %T", inboundsSlice[0])
 	}
 
-	if !updated {
-		return errors.New("template missing vnext users array")
+	settingsValue, ok := inbound["settings"]
+	if !ok {
+		return errors.New("template inbound missing settings object")
 	}
 
-	root["outbounds"] = outboundsSlice
+	settingsMap, ok := settingsValue.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("template inbound settings has unexpected type %T", settingsValue)
+	}
+
+	clientsValue, ok := settingsMap["clients"]
+	if !ok {
+		return errors.New("template inbound missing clients array")
+	}
+
+	if _, ok := clientsValue.([]interface{}); !ok {
+		return fmt.Errorf("template inbound clients has unexpected type %T", clientsValue)
+	}
+
+	// Always replace the clients array so the config reflects the exact
+	// state from the database.
+	settingsMap["clients"] = clientObjects
+	inbound["settings"] = settingsMap
+	inboundsSlice[0] = inbound
+	root["inbounds"] = inboundsSlice
 	return nil
 }
 
