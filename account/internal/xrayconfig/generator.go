@@ -16,7 +16,8 @@ const (
 	DefaultFlow = "xtls-rprx-vision"
 )
 
-// Client represents an entry under inbounds.settings.clients in the Xray config.
+// Client represents an entry under outbounds[].settings.vnext[].users[] in the Xray
+// config.
 type Client struct {
 	ID    string
 	Email string
@@ -27,7 +28,7 @@ type Client struct {
 // active clients.
 type Generator struct {
 	// TemplatePath is the path to the base configuration template. The
-	// template must contain an "inbounds" array with objects that expose a
+	// template must contain an "outbounds" array with objects that expose a
 	// "settings" object.
 	TemplatePath string
 
@@ -83,14 +84,14 @@ func (g Generator) Generate(clients []Client) error {
 }
 
 func replaceClients(root map[string]interface{}, clients []Client) error {
-	inboundsValue, ok := root["inbounds"]
+	outboundsValue, ok := root["outbounds"]
 	if !ok {
-		return errors.New("template missing inbounds array")
+		return errors.New("template missing outbounds array")
 	}
 
-	inboundsSlice, ok := inboundsValue.([]interface{})
+	outboundsSlice, ok := outboundsValue.([]interface{})
 	if !ok {
-		return fmt.Errorf("template inbounds has unexpected type %T", inboundsValue)
+		return fmt.Errorf("template outbounds has unexpected type %T", outboundsValue)
 	}
 
 	clientObjects := make([]interface{}, 0, len(clients))
@@ -113,30 +114,56 @@ func replaceClients(root map[string]interface{}, clients []Client) error {
 		clientObjects = append(clientObjects, entry)
 	}
 
-	for idx, inbound := range inboundsSlice {
-		inboundMap, ok := inbound.(map[string]interface{})
+	var updated bool
+	for idx, outbound := range outboundsSlice {
+		outboundMap, ok := outbound.(map[string]interface{})
 		if !ok {
-			return fmt.Errorf("template inbound %d has unexpected type %T", idx, inbound)
+			return fmt.Errorf("template outbound %d has unexpected type %T", idx, outbound)
 		}
 
-		settingsValue, ok := inboundMap["settings"]
+		settingsValue, ok := outboundMap["settings"]
 		if !ok {
-			settingsValue = make(map[string]interface{})
+			continue
 		}
 
 		settingsMap, ok := settingsValue.(map[string]interface{})
 		if !ok {
-			return fmt.Errorf("template inbound %d settings has unexpected type %T", idx, settingsValue)
+			return fmt.Errorf("template outbound %d settings has unexpected type %T", idx, settingsValue)
 		}
 
-		// Always replace the clients array so the config reflects the exact
-		// state from the database.
-		settingsMap["clients"] = clientObjects
-		inboundMap["settings"] = settingsMap
-		inboundsSlice[idx] = inboundMap
+		vnextValue, ok := settingsMap["vnext"]
+		if !ok {
+			continue
+		}
+
+		vnextSlice, ok := vnextValue.([]interface{})
+		if !ok {
+			return fmt.Errorf("template outbound %d vnext has unexpected type %T", idx, vnextValue)
+		}
+
+		for vnextIdx, vnext := range vnextSlice {
+			vnextMap, ok := vnext.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("template outbound %d vnext %d has unexpected type %T", idx, vnextIdx, vnext)
+			}
+
+			// Always replace the users array so the config reflects the exact
+			// state from the database.
+			vnextMap["users"] = clientObjects
+			vnextSlice[vnextIdx] = vnextMap
+			updated = true
+		}
+
+		settingsMap["vnext"] = vnextSlice
+		outboundMap["settings"] = settingsMap
+		outboundsSlice[idx] = outboundMap
 	}
 
-	root["inbounds"] = inboundsSlice
+	if !updated {
+		return errors.New("template missing vnext users array")
+	}
+
+	root["outbounds"] = outboundsSlice
 	return nil
 }
 

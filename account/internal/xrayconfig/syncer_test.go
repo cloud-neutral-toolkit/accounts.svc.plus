@@ -27,7 +27,7 @@ func writeTemplate(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	templatePath := filepath.Join(dir, "template.json")
-	if err := os.WriteFile(templatePath, []byte(`{"inbounds":[{"settings":{"clients":[]}}]}`), 0o644); err != nil {
+	if err := os.WriteFile(templatePath, []byte(`{"outbounds":[{"settings":{"vnext":[{"users":[]}]}]}]}`), 0o644); err != nil {
 		t.Fatalf("write template: %v", err)
 	}
 	outputPath := filepath.Join(dir, "config.json")
