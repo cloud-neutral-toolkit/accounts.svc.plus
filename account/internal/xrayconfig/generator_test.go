@@ -9,19 +9,15 @@ import (
 )
 
 type testConfig struct {
-	Outbounds []struct {
+	Inbounds []struct {
 		Settings struct {
-			VNext []struct {
-				Users []struct {
-					ID         string `json:"id"`
-					Email      string `json:"email,omitempty"`
-					Flow       string `json:"flow,omitempty"`
-					Encryption string `json:"encryption"`
-				} `json:"users"`
-				Address string `json:"address"`
-			} `json:"vnext"`
+			Clients []struct {
+				ID    string `json:"id"`
+				Email string `json:"email,omitempty"`
+				Flow  string `json:"flow,omitempty"`
+			} `json:"clients"`
 		} `json:"settings"`
-	} `json:"outbounds"`
+	} `json:"inbounds"`
 }
 
 func TestGeneratorGenerate(t *testing.T) {
@@ -30,21 +26,14 @@ func TestGeneratorGenerate(t *testing.T) {
 	outputPath := filepath.Join(dir, "config.json")
 
 	template := `{
-  "outbounds": [
+  "inbounds": [
     {
-      "protocol": "vless",
       "settings": {
-        "vnext": [
-          {
-            "address": "legacy.example",
-            "users": [
-              {"id": "old", "email": "old@example"}
-            ]
-          }
+        "clients": [
+          {"id": "old", "email": "old@example"}
         ]
       }
-    },
-    {"protocol": "freedom"}
+    }
   ]
 }`
 
@@ -58,7 +47,7 @@ func TestGeneratorGenerate(t *testing.T) {
 	}
 
 	clients := []Client{
-		{ID: "uuid-a", Email: "a@demo", Flow: "xtls-rprx-vision", Encryption: "custom"},
+		{ID: "uuid-a", Email: "a@demo", Flow: "xtls-rprx-vision"},
 		{ID: "uuid-b"},
 	}
 
@@ -76,30 +65,26 @@ func TestGeneratorGenerate(t *testing.T) {
 		t.Fatalf("decode output: %v", err)
 	}
 
-	if len(cfg.Outbounds) == 0 {
-		t.Fatalf("expected at least 1 outbound, got %d", len(cfg.Outbounds))
+	if len(cfg.Inbounds) == 0 {
+		t.Fatalf("expected at least 1 inbound, got %d", len(cfg.Inbounds))
 	}
 
-	vnext := cfg.Outbounds[0].Settings.VNext
-	if len(vnext) == 0 {
-		t.Fatalf("expected vnext entries, got %d", len(vnext))
+	clientsSection := cfg.Inbounds[0].Settings.Clients
+	if len(clientsSection) == 0 {
+		t.Fatalf("expected client entries, got %d", len(clientsSection))
 	}
 
-	gotUsers := vnext[0].Users
-	if len(gotUsers) != len(clients) {
-		t.Fatalf("expected %d users, got %d", len(clients), len(gotUsers))
+	if len(clientsSection) != len(clients) {
+		t.Fatalf("expected %d clients, got %d", len(clients), len(clientsSection))
 	}
-	if gotUsers[0].ID != "uuid-a" || gotUsers[0].Email != "a@demo" {
-		t.Fatalf("unexpected first user: %+v", gotUsers[0])
+	if clientsSection[0].ID != "uuid-a" || clientsSection[0].Email != "a@demo" {
+		t.Fatalf("unexpected first client: %+v", clientsSection[0])
 	}
-	if gotUsers[0].Flow != "xtls-rprx-vision" {
-		t.Fatalf("unexpected first user flow: %+v", gotUsers[0])
+	if clientsSection[0].Flow != "xtls-rprx-vision" {
+		t.Fatalf("unexpected first client flow: %+v", clientsSection[0])
 	}
-	if gotUsers[0].Encryption != "custom" {
-		t.Fatalf("unexpected first user encryption: %+v", gotUsers[0])
-	}
-	if gotUsers[1].ID != "uuid-b" || gotUsers[1].Email != "" || gotUsers[1].Flow != DefaultFlow || gotUsers[1].Encryption != DefaultEncryption {
-		t.Fatalf("unexpected second user: %+v", gotUsers[1])
+	if clientsSection[1].ID != "uuid-b" || clientsSection[1].Email != "" || clientsSection[1].Flow != DefaultFlow {
+		t.Fatalf("unexpected second client: %+v", clientsSection[1])
 	}
 }
 
@@ -108,7 +93,7 @@ func TestGeneratorGenerateMissingID(t *testing.T) {
 	templatePath := filepath.Join(dir, "template.json")
 	outputPath := filepath.Join(dir, "config.json")
 
-	template := `{"outbounds":[{"settings":{"vnext":[{"users":[]}]}]}]}`
+	template := `{"inbounds":[{"settings":{"clients":[]}}]}`
 	if err := os.WriteFile(templatePath, []byte(template), 0o644); err != nil {
 		t.Fatalf("write template: %v", err)
 	}
