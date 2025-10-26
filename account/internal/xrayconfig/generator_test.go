@@ -13,9 +13,10 @@ type testConfig struct {
 		Settings struct {
 			VNext []struct {
 				Users []struct {
-					ID    string `json:"id"`
-					Email string `json:"email,omitempty"`
-					Flow  string `json:"flow,omitempty"`
+					ID         string `json:"id"`
+					Email      string `json:"email,omitempty"`
+					Flow       string `json:"flow,omitempty"`
+					Encryption string `json:"encryption"`
 				} `json:"users"`
 				Address string `json:"address"`
 			} `json:"vnext"`
@@ -57,7 +58,7 @@ func TestGeneratorGenerate(t *testing.T) {
 	}
 
 	clients := []Client{
-		{ID: "uuid-a", Email: "a@demo", Flow: "xtls-rprx-vision"},
+		{ID: "uuid-a", Email: "a@demo", Flow: "xtls-rprx-vision", Encryption: "custom"},
 		{ID: "uuid-b"},
 	}
 
@@ -94,7 +95,10 @@ func TestGeneratorGenerate(t *testing.T) {
 	if gotUsers[0].Flow != "xtls-rprx-vision" {
 		t.Fatalf("unexpected first user flow: %+v", gotUsers[0])
 	}
-	if gotUsers[1].ID != "uuid-b" || gotUsers[1].Email != "" || gotUsers[1].Flow != DefaultFlow {
+	if gotUsers[0].Encryption != "custom" {
+		t.Fatalf("unexpected first user encryption: %+v", gotUsers[0])
+	}
+	if gotUsers[1].ID != "uuid-b" || gotUsers[1].Email != "" || gotUsers[1].Flow != DefaultFlow || gotUsers[1].Encryption != DefaultEncryption {
 		t.Fatalf("unexpected second user: %+v", gotUsers[1])
 	}
 }
