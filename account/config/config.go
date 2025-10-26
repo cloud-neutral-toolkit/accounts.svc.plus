@@ -24,6 +24,7 @@ type Config struct {
 	Store   Store   `yaml:"store"`
 	Session Session `yaml:"session"`
 	SMTP    SMTP    `yaml:"smtp"`
+	Xray    Xray    `yaml:"xray"`
 }
 
 // Server defines HTTP server configuration.
@@ -88,6 +89,21 @@ type SMTP struct {
 type SMTPTLS struct {
 	Mode               string `yaml:"mode"`
 	InsecureSkipVerify bool   `yaml:"insecureSkipVerify"`
+}
+
+// Xray groups configuration related to synchronizing the Xray proxy.
+type Xray struct {
+	Sync XraySync `yaml:"sync"`
+}
+
+// XraySync defines options for periodically updating the Xray configuration.
+type XraySync struct {
+	Enabled         bool          `yaml:"enabled"`
+	Interval        time.Duration `yaml:"interval"`
+	TemplatePath    string        `yaml:"templatePath"`
+	OutputPath      string        `yaml:"outputPath"`
+	ValidateCommand []string      `yaml:"validateCommand"`
+	RestartCommand  []string      `yaml:"restartCommand"`
 }
 
 // Load reads the configuration file at the provided path. When path is empty,

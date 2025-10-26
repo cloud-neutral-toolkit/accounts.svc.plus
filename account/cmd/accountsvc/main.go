@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"xcontrol/account/internal/model"
 	"xcontrol/account/internal/service"
 	"xcontrol/account/internal/store"
+	"xcontrol/account/internal/xrayconfig"
 )
 
 var (
@@ -158,6 +160,53 @@ var rootCmd = &cobra.Command{
 			}
 		}()
 		service.SetDB(gormDB)
+
+		var stopXraySync func(context.Context) error
+		if cfg.Xray.Sync.Enabled {
+			syncInterval := cfg.Xray.Sync.Interval
+			if syncInterval <= 0 {
+				syncInterval = 5 * time.Minute
+			}
+			templatePath := strings.TrimSpace(cfg.Xray.Sync.TemplatePath)
+			if templatePath == "" {
+				templatePath = filepath.Join("account", "config", "xray.config.template.json")
+			}
+			outputPath := strings.TrimSpace(cfg.Xray.Sync.OutputPath)
+			if outputPath == "" {
+				outputPath = "/usr/local/etc/xray/config.json"
+			}
+			source, err := xrayconfig.NewGormClientSource(gormDB)
+			if err != nil {
+				return err
+			}
+			syncer, err := xrayconfig.NewPeriodicSyncer(xrayconfig.PeriodicOptions{
+				Logger:          logger.With("component", "xray-sync"),
+				Interval:        syncInterval,
+				Source:          source,
+				Generator:       xrayconfig.Generator{TemplatePath: templatePath, OutputPath: outputPath},
+				ValidateCommand: cfg.Xray.Sync.ValidateCommand,
+				RestartCommand:  cfg.Xray.Sync.RestartCommand,
+			})
+			if err != nil {
+				return err
+			}
+			stop, err := syncer.Start(ctx)
+			if err != nil {
+				return err
+			}
+			logger.Info("xray periodic sync enabled", "interval", syncInterval, "output", outputPath)
+			stopXraySync = stop
+		}
+
+		if stopXraySync != nil {
+			defer func() {
+				waitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := stopXraySync(waitCtx); err != nil {
+					logger.Warn("xray syncer shutdown", "err", err)
+				}
+			}()
+		}
 
 		options := []api.Option{
 			api.WithStore(st),
