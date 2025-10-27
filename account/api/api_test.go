@@ -451,6 +451,23 @@ func TestMFATOTPFlow(t *testing.T) {
 	}
 	secret := resp.Secret
 
+	preVerifyStatusReq := httptest.NewRequest(http.MethodGet, "/api/auth/mfa/status?"+url.Values{"identifier": {registerPayload["email"]}}.Encode(), nil)
+	preVerifyStatusRec := httptest.NewRecorder()
+	router.ServeHTTP(preVerifyStatusRec, preVerifyStatusReq)
+	if preVerifyStatusRec.Code != http.StatusOK {
+		t.Fatalf("expected identifier status success after provisioning, got %d: %s", preVerifyStatusRec.Code, preVerifyStatusRec.Body.String())
+	}
+	preVerifyStatusResp := decodeResponse(t, preVerifyStatusRec)
+	if preVerifyStatusResp.MFA == nil {
+		t.Fatalf("expected mfa state in identifier status response after provisioning")
+	}
+	if pending, ok := preVerifyStatusResp.MFA["totpPending"].(bool); !ok || !pending {
+		t.Fatalf("expected identifier status to report totpPending true, got %#v", preVerifyStatusResp.MFA["totpPending"])
+	}
+	if issuedAt, ok := preVerifyStatusResp.MFA["totpSecretIssuedAt"].(string); !ok || strings.TrimSpace(issuedAt) == "" {
+		t.Fatalf("expected identifier status to include totpSecretIssuedAt, got %#v", preVerifyStatusResp.MFA["totpSecretIssuedAt"])
+	}
+
 	generateCode := func(offset time.Duration) string {
 		code, err := totp.GenerateCodeCustom(secret, time.Now().UTC().Add(offset), totp.ValidateOpts{
 			Period:    30,

@@ -538,10 +538,10 @@ func (h *handler) updateAdminSettings(c *gin.Context) {
 		return
 	}
 
-        var req struct {
-                Version uint64                    `json:"version"`
-                Matrix  map[string]map[string]bool `json:"matrix"`
-        }
+	var req struct {
+		Version uint64                     `json:"version"`
+		Matrix  map[string]map[string]bool `json:"matrix"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1204,11 +1204,38 @@ func (h *handler) provisionTOTP(c *gin.Context) {
 
 	issuedAt := time.Now().UTC()
 	ttl := h.effectiveMFAChallengeTTL()
-	pendingChallenge, ok := h.updateMFAChallenge(token, func(ch *mfaChallenge) bool {
+
+	pendingChallenge, ok := h.refreshMFAChallenge(token)
+	if !ok || pendingChallenge.userID != user.ID {
+		respondError(c, http.StatusUnauthorized, "invalid_mfa_token", "mfa token is invalid or expired")
+		return
+	}
+
+	secret := strings.TrimSpace(key.Secret())
+	previousSecret := user.MFATOTPSecret
+	previousIssuedAt := user.MFASecretIssuedAt
+	previousConfirmedAt := user.MFAConfirmedAt
+	previousEnabled := user.MFAEnabled
+
+	user.MFATOTPSecret = secret
+	user.MFASecretIssuedAt = issuedAt
+	user.MFAConfirmedAt = time.Time{}
+	user.MFAEnabled = false
+
+	if err := h.store.UpdateUser(ctx, user); err != nil {
+		user.MFATOTPSecret = previousSecret
+		user.MFASecretIssuedAt = previousIssuedAt
+		user.MFAConfirmedAt = previousConfirmedAt
+		user.MFAEnabled = previousEnabled
+		respondError(c, http.StatusInternalServerError, "mfa_setup_failed", "failed to persist mfa provisioning state")
+		return
+	}
+
+	pendingChallenge, ok = h.updateMFAChallenge(token, func(ch *mfaChallenge) bool {
 		if ch.userID != user.ID {
 			return false
 		}
-		ch.totpSecret = key.Secret()
+		ch.totpSecret = secret
 		ch.totpIssuer = issuer
 		ch.totpAccount = accountName
 		ch.totpIssuedAt = issuedAt
@@ -1218,14 +1245,21 @@ func (h *handler) provisionTOTP(c *gin.Context) {
 		return true
 	})
 	if !ok {
-		respondError(c, http.StatusUnauthorized, "invalid_mfa_token", "mfa token is invalid or expired")
+		user.MFATOTPSecret = previousSecret
+		user.MFASecretIssuedAt = previousIssuedAt
+		user.MFAConfirmedAt = previousConfirmedAt
+		user.MFAEnabled = previousEnabled
+		if err := h.store.UpdateUser(ctx, user); err != nil {
+			slog.Error("failed to revert mfa provisioning state", "err", err, "userID", user.ID)
+		}
+		respondError(c, http.StatusInternalServerError, "mfa_challenge_creation_failed", "failed to initialize mfa challenge")
 		return
 	}
 
 	state := buildMFAState(user, &pendingChallenge)
 	sanitized := sanitizeUser(user, &pendingChallenge)
 	c.JSON(http.StatusOK, gin.H{
-		"secret":      key.Secret(),
+		"secret":      secret,
 		"otpauth_url": key.URL(),
 		"issuer":      issuer,
 		"account":     accountName,
