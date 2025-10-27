@@ -57,6 +57,7 @@ type handler struct {
 	passwordResets           map[string]passwordReset
 	resetMu                  sync.RWMutex
 	metricsProvider          service.UserMetricsProvider
+	agentStatusReader        agentStatusReader
 }
 
 type mfaChallenge struct {
@@ -133,6 +134,15 @@ func WithUserMetricsProvider(provider service.UserMetricsProvider) Option {
 	return func(h *handler) {
 		if provider != nil {
 			h.metricsProvider = provider
+		}
+	}
+}
+
+// WithAgentStatusReader wires the agent status reader used by admin endpoints.
+func WithAgentStatusReader(reader agentStatusReader) Option {
+	return func(h *handler) {
+		if reader != nil {
+			h.agentStatusReader = reader
 		}
 	}
 }

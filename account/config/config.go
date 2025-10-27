@@ -19,12 +19,15 @@ type Log struct {
 
 // Config holds configuration for the account service.
 type Config struct {
+	Mode    string  `yaml:"mode"`
 	Log     Log     `yaml:"log"`
 	Server  Server  `yaml:"server"`
 	Store   Store   `yaml:"store"`
 	Session Session `yaml:"session"`
 	SMTP    SMTP    `yaml:"smtp"`
 	Xray    Xray    `yaml:"xray"`
+	Agent   Agent   `yaml:"agent"`
+	Agents  Agents  `yaml:"agents"`
 }
 
 // Server defines HTTP server configuration.
@@ -104,6 +107,36 @@ type XraySync struct {
 	OutputPath      string        `yaml:"outputPath"`
 	ValidateCommand []string      `yaml:"validateCommand"`
 	RestartCommand  []string      `yaml:"restartCommand"`
+}
+
+// Agent defines configuration for agent mode deployments.
+type Agent struct {
+	ID             string        `yaml:"id"`
+	ControllerURL  string        `yaml:"controllerUrl"`
+	APIToken       string        `yaml:"apiToken"`
+	HTTPTimeout    time.Duration `yaml:"httpTimeout"`
+	StatusInterval time.Duration `yaml:"statusInterval"`
+	SyncInterval   time.Duration `yaml:"syncInterval"`
+	TLS            AgentTLS      `yaml:"tls"`
+}
+
+// AgentTLS configures TLS behaviour for the agent HTTP client.
+type AgentTLS struct {
+	InsecureSkipVerify bool `yaml:"insecureSkipVerify"`
+}
+
+// Agents describes the controller-side agent configuration.
+type Agents struct {
+	Credentials []AgentCredential `yaml:"credentials"`
+}
+
+// AgentCredential represents a single agent identity authorised to call the
+// controller API.
+type AgentCredential struct {
+	ID     string   `yaml:"id"`
+	Name   string   `yaml:"name"`
+	Token  string   `yaml:"token"`
+	Groups []string `yaml:"groups"`
 }
 
 // Load reads the configuration file at the provided path. When path is empty,

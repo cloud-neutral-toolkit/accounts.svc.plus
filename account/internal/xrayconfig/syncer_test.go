@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -170,6 +171,47 @@ func TestPeriodicSyncerStartStop(t *testing.T) {
 	}
 	if err := stop(context.Background()); err != nil {
 		t.Fatalf("stop: %v", err)
+	}
+}
+
+func TestPeriodicSyncerOnSyncCallback(t *testing.T) {
+	template, output := writeTemplate(t)
+	var results []SyncResult
+	var mu sync.Mutex
+	opts := PeriodicOptions{
+		Interval:  5 * time.Millisecond,
+		Source:    staticSource{clients: []Client{{ID: "uuid-a"}}},
+		Generator: Generator{TemplatePath: template, OutputPath: output},
+		OnSync: func(res SyncResult) {
+			mu.Lock()
+			defer mu.Unlock()
+			results = append(results, res)
+		},
+	}
+	syncer, err := NewPeriodicSyncer(opts)
+	if err != nil {
+		t.Fatalf("new syncer: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stop, err := syncer.Start(ctx)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	if err := stop(context.Background()); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(results) == 0 {
+		t.Fatalf("expected at least one sync result")
+	}
+	if results[0].Clients != 1 {
+		t.Fatalf("expected 1 client, got %d", results[0].Clients)
+	}
+	if results[0].CompletedAt.IsZero() {
+		t.Fatalf("expected completion timestamp to be set")
 	}
 }
 

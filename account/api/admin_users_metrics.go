@@ -85,4 +85,5 @@ func (h *handler) resolveSessionToken(c *gin.Context) string {
 func registerAdminRoutes(group *gin.RouterGroup, h *handler) {
 	admin := group.Group("/admin")
 	admin.GET("/users/metrics", h.adminUsersMetrics)
+	admin.GET("/agents/status", h.adminAgentStatus)
 }
