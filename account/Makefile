@@ -227,6 +227,11 @@ create-super-admin:
 build:
 	@go build -o $(APP_NAME) $(MAIN_FILE)
 
+upgrade: build
+	systemctl stop xcontrol-account
+	cp xcontrol-account /usr/bin/xcontrol-account
+	systemctl start xcontrol-account
+
 start:
 	@./$(APP_NAME) --config config/account.yaml &
 
