@@ -26,6 +26,7 @@ type PeriodicOptions struct {
 	ValidateCommand []string
 	RestartCommand  []string
 	Runner          commandRunner
+	OnSync          func(SyncResult)
 }
 
 // PeriodicSyncer periodically rebuilds the Xray configuration from the database.
@@ -37,6 +38,14 @@ type PeriodicSyncer struct {
 	validateCommand []string
 	restartCommand  []string
 	runner          commandRunner
+	onSync          func(SyncResult)
+}
+
+// SyncResult describes the outcome of a synchronization attempt.
+type SyncResult struct {
+	Clients     int
+	Error       error
+	CompletedAt time.Time
 }
 
 // NewPeriodicSyncer constructs a new PeriodicSyncer from the provided options.
@@ -69,6 +78,7 @@ func NewPeriodicSyncer(opts PeriodicOptions) (*PeriodicSyncer, error) {
 		validateCommand: append([]string(nil), opts.ValidateCommand...),
 		restartCommand:  append([]string(nil), opts.RestartCommand...),
 		runner:          runner,
+		onSync:          opts.OnSync,
 	}, nil
 }
 
@@ -101,6 +111,7 @@ func (s *PeriodicSyncer) Start(ctx context.Context) (func(context.Context) error
 
 func (s *PeriodicSyncer) run(ctx context.Context) {
 	if n, err := s.sync(ctx); err != nil {
+		s.notify(SyncResult{Clients: n, Error: err, CompletedAt: time.Now().UTC()})
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.logger.Error("xray config sync failed", "err", err)
 		}
@@ -109,6 +120,7 @@ func (s *PeriodicSyncer) run(ctx context.Context) {
 		}
 	} else {
 		s.logger.Info("xray config synchronized", "clients", n)
+		s.notify(SyncResult{Clients: n, CompletedAt: time.Now().UTC()})
 	}
 
 	ticker := time.NewTicker(s.interval)
@@ -121,6 +133,7 @@ func (s *PeriodicSyncer) run(ctx context.Context) {
 		case <-ticker.C:
 			n, err := s.sync(ctx)
 			if err != nil {
+				s.notify(SyncResult{Clients: n, Error: err, CompletedAt: time.Now().UTC()})
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return
 				}
@@ -128,6 +141,7 @@ func (s *PeriodicSyncer) run(ctx context.Context) {
 				continue
 			}
 			s.logger.Info("xray config synchronized", "clients", n)
+			s.notify(SyncResult{Clients: n, CompletedAt: time.Now().UTC()})
 		}
 	}
 }
@@ -151,6 +165,13 @@ func (s *PeriodicSyncer) sync(ctx context.Context) (int, error) {
 		}
 	}
 	return len(clients), nil
+}
+
+func (s *PeriodicSyncer) notify(result SyncResult) {
+	if s.onSync == nil {
+		return
+	}
+	s.onSync(result)
 }
 
 func (s *PeriodicSyncer) runCommand(ctx context.Context, cmd []string, action string) error {
