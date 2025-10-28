@@ -7,13 +7,13 @@ server:
   addr: ":8080"
   readTimeout: 15s
   writeTimeout: 15s
-  publicUrl: "http://localhost:8080"
+  publicUrl: "https://accounts.svc.plus"
   allowedOrigins:
     - "https://dev.svc.plus"
     - "https://dev-homepage.svc.plus"
     - "https://www.svc.plus"
     - "https://global-homepage.svc.plus"
-    - "https://account.svc.plus"
+    - "https://accounts.svc.plus"
     - "https://localhost:8443"
     - "http://localhost:8080"
     - "http://127.0.0.1:8080"

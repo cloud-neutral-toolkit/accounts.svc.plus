@@ -5,7 +5,7 @@ log:
 
 agent:
   id: "edge-node-1"
-  controllerUrl: "https://account.svc.plus"
+  controllerUrl: "https://accounts.svc.plus"
   apiToken: "replace-with-agent-token"
   httpTimeout: 15s
   statusInterval: 1m
