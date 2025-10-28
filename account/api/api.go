@@ -199,6 +199,8 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	auth.POST("/password/reset", h.requestPasswordReset)
 	auth.POST("/password/reset/confirm", h.confirmPasswordReset)
 
+	auth.POST("/config/sync", h.syncConfig)
+
 	auth.GET("/admin/settings", h.getAdminSettings)
 	auth.POST("/admin/settings", h.updateAdminSettings)
 
