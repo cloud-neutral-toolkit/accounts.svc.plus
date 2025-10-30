@@ -53,9 +53,6 @@ func NewPeriodicSyncer(opts PeriodicOptions) (*PeriodicSyncer, error) {
 	if opts.Source == nil {
 		return nil, errors.New("client source is required")
 	}
-	if strings.TrimSpace(opts.Generator.TemplatePath) == "" {
-		return nil, errors.New("generator template path is required")
-	}
 	if strings.TrimSpace(opts.Generator.OutputPath) == "" {
 		return nil, errors.New("generator output path is required")
 	}

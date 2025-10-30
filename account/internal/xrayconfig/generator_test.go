@@ -22,7 +22,6 @@ type testConfig struct {
 
 func TestGeneratorGenerate(t *testing.T) {
 	dir := t.TempDir()
-	templatePath := filepath.Join(dir, "template.json")
 	outputPath := filepath.Join(dir, "config.json")
 
 	template := `{
@@ -37,13 +36,9 @@ func TestGeneratorGenerate(t *testing.T) {
   ]
 }`
 
-	if err := os.WriteFile(templatePath, []byte(template), 0o644); err != nil {
-		t.Fatalf("write template: %v", err)
-	}
-
 	gen := Generator{
-		TemplatePath: templatePath,
-		OutputPath:   outputPath,
+		Definition: JSONDefinition{Raw: []byte(template)},
+		OutputPath: outputPath,
 	}
 
 	clients := []Client{
@@ -55,12 +50,11 @@ func TestGeneratorGenerate(t *testing.T) {
 		t.Fatalf("generate: %v", err)
 	}
 
-	raw, err := os.ReadFile(outputPath)
-	if err != nil {
-		t.Fatalf("read output: %v", err)
-	}
-
 	var cfg testConfig
+	raw, err := gen.Render(clients)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatalf("decode output: %v", err)
 	}
@@ -86,25 +80,43 @@ func TestGeneratorGenerate(t *testing.T) {
 	if clientsSection[1].ID != "uuid-b" || clientsSection[1].Email != "" || clientsSection[1].Flow != DefaultFlow {
 		t.Fatalf("unexpected second client: %+v", clientsSection[1])
 	}
+
+	onDisk, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if string(onDisk) != string(raw) {
+		t.Fatalf("written config does not match rendered output")
+	}
 }
 
 func TestGeneratorGenerateMissingID(t *testing.T) {
 	dir := t.TempDir()
-	templatePath := filepath.Join(dir, "template.json")
 	outputPath := filepath.Join(dir, "config.json")
-
 	template := `{"inbounds":[{"settings":{"clients":[]}}]}`
-	if err := os.WriteFile(templatePath, []byte(template), 0o644); err != nil {
-		t.Fatalf("write template: %v", err)
-	}
 
 	gen := Generator{
-		TemplatePath: templatePath,
-		OutputPath:   outputPath,
+		Definition: JSONDefinition{Raw: []byte(template)},
+		OutputPath: outputPath,
 	}
 
 	err := gen.Generate([]Client{{Email: "missing@id"}})
 	if err == nil || !strings.Contains(err.Error(), "missing id") {
 		t.Fatalf("expected missing id error, got %v", err)
+	}
+}
+
+func TestGeneratorRenderUsesDefaultDefinition(t *testing.T) {
+	gen := Generator{}
+
+	data, err := gen.Render(nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("expected data from default definition")
+	}
+	if data[len(data)-1] != '\n' {
+		t.Fatal("expected render output to end with newline")
 	}
 }

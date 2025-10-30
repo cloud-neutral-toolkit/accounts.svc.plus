@@ -27,10 +27,9 @@ type Client struct {
 // Generator updates the Xray configuration file based on a template and a set of
 // active clients.
 type Generator struct {
-	// TemplatePath is the path to the base configuration template. The
-	// template must contain an "outbounds" array with objects that expose a
-	// "settings" object.
-	TemplatePath string
+	// Definition provides the base Xray configuration that will be mutated to
+	// include the provided clients. When nil, DefaultDefinition is used.
+	Definition Definition
 
 	// OutputPath is the destination path for the generated configuration
 	// (typically /usr/local/etc/xray/config.json).
@@ -45,32 +44,14 @@ type Generator struct {
 // template is loaded on every invocation to ensure updates remain additive and
 // idempotent even when multiple callers trigger regeneration.
 func (g Generator) Generate(clients []Client) error {
-	if strings.TrimSpace(g.TemplatePath) == "" {
-		return errors.New("template path is required")
-	}
 	if strings.TrimSpace(g.OutputPath) == "" {
 		return errors.New("output path is required")
 	}
 
-	rawTemplate, err := os.ReadFile(g.TemplatePath)
+	buf, err := g.Render(clients)
 	if err != nil {
-		return fmt.Errorf("read template: %w", err)
-	}
-
-	var root map[string]interface{}
-	if err := json.Unmarshal(rawTemplate, &root); err != nil {
-		return fmt.Errorf("decode template json: %w", err)
-	}
-
-	if err := replaceClients(root, clients); err != nil {
 		return err
 	}
-
-	buf, err := json.MarshalIndent(root, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode config: %w", err)
-	}
-	buf = append(buf, '\n')
 
 	mode := g.FileMode
 	if mode == 0 {
@@ -81,6 +62,31 @@ func (g Generator) Generate(clients []Client) error {
 	}
 
 	return nil
+}
+
+// Render returns the rendered configuration JSON without writing it to disk.
+// The returned buffer always ends with a newline.
+func (g Generator) Render(clients []Client) ([]byte, error) {
+	definition := g.Definition
+	if definition == nil {
+		definition = DefaultDefinition()
+	}
+
+	root, err := definition.Base()
+	if err != nil {
+		return nil, fmt.Errorf("load template: %w", err)
+	}
+
+	if err := replaceClients(root, clients); err != nil {
+		return nil, err
+	}
+
+	buf, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode config: %w", err)
+	}
+	buf = append(buf, '\n')
+	return buf, nil
 }
 
 func replaceClients(root map[string]interface{}, clients []Client) error {
