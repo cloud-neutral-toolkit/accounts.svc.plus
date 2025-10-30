@@ -1,0 +1,70 @@
+metadata:
+  version: v1
+  schemaHash: 49cee41b49a0afed72f131755569aab9b2104258d86833d83ba29905a4a7e96c
+  exportedAt: 2025-10-30T08:09:23.126876215Z
+users:
+  - uuid: 5d7e41c6-7f11-405b-bced-154491233207
+    username: shenlan
+    password: $2a$10$D5vekDyFlfgyJ3P.YfK6tuGw2WdgGhopoaaUCDjF1xr5o7B/lzJLy
+    email: manbuzhe2009@qq.com
+    emailVerified: true
+    emailVerifiedAt: 2025-10-13T13:16:57.342443+08:00
+    level: 0
+    role: admin
+    groups:
+      - Admin
+    permissions:
+      - '*'
+    createdAt: 2025-10-13T13:16:57.34396+08:00
+    updatedAt: 2025-10-30T15:55:10.810148+08:00
+    mfaTotpSecret: MFA_SECRET_PLACEHOLDER
+    mfaEnabled: true
+    mfaSecretIssuedAt: 2025-10-13T13:50:20.32674+08:00
+    mfaConfirmedAt: 2025-10-13T13:50:57.827772+08:00
+  - uuid: 6d6e6ce5-9683-483b-ad07-7b0115df4acd
+    username: Haitao Pan
+    password: $2a$10$vneWsrGLOl1pu6C0xPQp7.XkCihBpie7FG8i01rhCnx0C9Dw2QaAu
+    email: manbuzhe2008@gmail.com
+    emailVerified: true
+    emailVerifiedAt: 2025-10-13T16:35:18.907188+08:00
+    level: 20
+    role: user
+    groups:
+      - User
+    createdAt: 2025-10-13T16:35:18.936655+08:00
+    updatedAt: 2025-10-13T16:37:07.822322+08:00
+    mfaTotpSecret: MFA_SECRET_PLACEHOLDER
+    mfaEnabled: true
+    mfaSecretIssuedAt: 2025-10-13T16:35:46.634698+08:00
+    mfaConfirmedAt: 2025-10-13T16:37:07.792588+08:00
+  - uuid: e1088323-81a1-485e-a4e5-d012c55b34b0
+    username: Henry
+    password: $2a$10$.VEywxWJT5Mn/SOKwheVyeW.J5lh3qEjyOH.TSqHQ2ShjeohWMRV.
+    email: henry@qq.com
+    emailVerified: true
+    emailVerifiedAt: 2025-10-27T10:18:13.225911+08:00
+    level: 20
+    role: user
+    groups:
+      - User
+    createdAt: 2025-10-27T10:18:13.253954+08:00
+    updatedAt: 2025-10-30T15:55:10.810148+08:00
+    mfaTotpSecret: MFA_SECRET_PLACEHOLDER
+    mfaEnabled: true
+    mfaSecretIssuedAt: 2025-10-27T13:04:30.526604+08:00
+    mfaConfirmedAt: 2025-10-27T13:04:44.81372+08:00
+  - uuid: 7a8136c7-c9dc-40be-b9a0-f288b43f4d12
+    username: Demo
+    password: $2a$10$WpLN3v0DfM7cqQAK657wYOee8bw.33RW0bNdn9i7tP0dWvYz07S7O
+    email: demo@svc.plus
+    emailVerified: true
+    emailVerifiedAt: 2025-10-27T20:34:36.991099+08:00
+    level: 20
+    role: user
+    groups:
+      - User
+    createdAt: 2025-10-27T20:34:37.04563+08:00
+    updatedAt: 2025-10-30T15:55:10.810148+08:00
+    mfaTotpSecret: MFA_SECRET_PLACEHOLDER
+    mfaEnabled: false
+    mfaSecretIssuedAt: 2025-10-27T20:34:52.986381+08:00
