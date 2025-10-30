@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -177,10 +176,6 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		if syncInterval <= 0 {
 			syncInterval = 5 * time.Minute
 		}
-		templatePath := strings.TrimSpace(cfg.Xray.Sync.TemplatePath)
-		if templatePath == "" {
-			templatePath = filepath.Join("account", "config", "xray.config.template.json")
-		}
 		outputPath := strings.TrimSpace(cfg.Xray.Sync.OutputPath)
 		if outputPath == "" {
 			outputPath = "/usr/local/etc/xray/config.json"
@@ -189,7 +184,7 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 			Logger:          logger.With("component", "xray-sync"),
 			Interval:        syncInterval,
 			Source:          gormSource,
-			Generator:       xrayconfig.Generator{TemplatePath: templatePath, OutputPath: outputPath},
+			Generator:       xrayconfig.Generator{Definition: xrayconfig.DefaultDefinition(), OutputPath: outputPath},
 			ValidateCommand: cfg.Xray.Sync.ValidateCommand,
 			RestartCommand:  cfg.Xray.Sync.RestartCommand,
 		})
