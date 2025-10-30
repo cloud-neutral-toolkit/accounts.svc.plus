@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -234,53 +235,64 @@ func (s *Syncer) uploadAndImport(ctx context.Context, client *ssh.Client, conten
 }
 
 func (s *Syncer) remoteExport(ctx context.Context, client *ssh.Client) error {
-	session, err := client.NewSession()
-	if err != nil {
-		return fmt.Errorf("new ssh session: %w", err)
-	}
-	defer session.Close()
-
-	if err := s.applyEnv(session); err != nil {
-		return err
+	env := map[string]string{
+		"ACCOUNT_EXPORT_FILE": s.remoteExportPath(),
 	}
 	if s.cfg.Remote.RemoteEmail != "" {
-		if err := session.Setenv("ACCOUNT_EMAIL_KEYWORD", s.cfg.Remote.RemoteEmail); err != nil {
-			return fmt.Errorf("set env: %w", err)
-		}
-	}
-	if err := session.Setenv("ACCOUNT_EXPORT_FILE", s.remoteExportPath()); err != nil {
-		return fmt.Errorf("set export env: %w", err)
+		env["ACCOUNT_EMAIL_KEYWORD"] = s.cfg.Remote.RemoteEmail
 	}
 
 	cmd := fmt.Sprintf("cd %s && make account-export", shellQuote(s.cfg.Remote.AccountDir))
-	return s.runSession(ctx, session, cmd)
+	return s.runRemoteCommand(ctx, client, env, cmd)
 }
 
 func (s *Syncer) remoteImport(ctx context.Context, client *ssh.Client) error {
+	env := map[string]string{
+		"ACCOUNT_IMPORT_FILE": s.remoteImportPath(),
+	}
+
+	cmd := fmt.Sprintf("cd %s && make account-import", shellQuote(s.cfg.Remote.AccountDir))
+	return s.runRemoteCommand(ctx, client, env, cmd)
+}
+
+func (s *Syncer) runRemoteCommand(ctx context.Context, client *ssh.Client, extraEnv map[string]string, command string) error {
 	session, err := client.NewSession()
 	if err != nil {
 		return fmt.Errorf("new ssh session: %w", err)
 	}
 	defer session.Close()
 
-	if err := s.applyEnv(session); err != nil {
-		return err
-	}
-	if err := session.Setenv("ACCOUNT_IMPORT_FILE", s.remoteImportPath()); err != nil {
-		return fmt.Errorf("set env: %w", err)
+	env := s.composeRemoteEnv(extraEnv)
+	if len(env) > 0 {
+		command = env + " " + command
 	}
 
-	cmd := fmt.Sprintf("cd %s && make account-import", shellQuote(s.cfg.Remote.AccountDir))
-	return s.runSession(ctx, session, cmd)
+	return s.runSession(ctx, session, command)
 }
 
-func (s *Syncer) applyEnv(session *ssh.Session) error {
+func (s *Syncer) composeRemoteEnv(extra map[string]string) string {
+	combined := make(map[string]string, len(s.cfg.Remote.Env)+len(extra))
 	for key, value := range s.cfg.Remote.Env {
-		if err := session.Setenv(key, value); err != nil {
-			return fmt.Errorf("set env %s: %w", key, err)
-		}
+		combined[key] = value
 	}
-	return nil
+	for key, value := range extra {
+		combined[key] = value
+	}
+	if len(combined) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(combined))
+	for key := range combined {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", key, shellQuote(combined[key])))
+	}
+	return strings.Join(parts, " ")
 }
 
 func (s *Syncer) download(ctx context.Context, client *ssh.Client) ([]byte, error) {
