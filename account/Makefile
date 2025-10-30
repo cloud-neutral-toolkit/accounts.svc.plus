@@ -27,6 +27,7 @@ PGLOGICAL_REGION_FILE := ./sql/schema_pglogical_region.sql
 ACCOUNT_EXPORT_FILE ?= account-export.yaml
 ACCOUNT_IMPORT_FILE ?= account-export.yaml
 ACCOUNT_EMAIL_KEYWORD ?=
+ACCOUNT_SYNC_CONFIG ?= config/sync.yaml
 SUPERADMIN_USERNAME ?= Admin
 SUPERADMIN_PASSWORD ?= ChangeMe
 SUPERADMIN_EMAIL    ?= admin@svc.plus
@@ -38,8 +39,8 @@ export PATH := /usr/local/go/bin:$(PATH)
 # =========================================
 
 .PHONY: all init build clean start stop restart dev test help \
-	init-db-core init-db-replication init-db-pglogical \
-	reinit-pglogical
+        init-db-core init-db-replication init-db-pglogical \
+        reinit-pglogical account-sync-push account-sync-pull account-sync-mirror
 
 all: build
 
@@ -203,13 +204,25 @@ account-export:
 	@go run ./cmd/migratectl/main.go export --dsn "$(DB_URL)" --output "$(ACCOUNT_EXPORT_FILE)" $(if $(ACCOUNT_EMAIL_KEYWORD),--email "$(ACCOUNT_EMAIL_KEYWORD)")
 
 account-import:
-	@[ -f "$(ACCOUNT_IMPORT_FILE)" ] || (echo "❌ 未找到文件 $(ACCOUNT_IMPORT_FILE)"; exit 1)
-	@go run ./cmd/migratectl/main.go import --dsn "$(DB_URL)" --file "$(ACCOUNT_IMPORT_FILE)" \
-		$(if $(ACCOUNT_IMPORT_MERGE),--merge) \
-		$(if $(ACCOUNT_IMPORT_MERGE_STRATEGY),--merge-strategy "$(ACCOUNT_IMPORT_MERGE_STRATEGY)") \
-		$(if $(ACCOUNT_IMPORT_DRY_RUN),--dry-run) \
-		$(foreach UUID,$(ACCOUNT_IMPORT_MERGE_ALLOWLIST),--merge-allowlist $(UUID)) \
-		$(ACCOUNT_IMPORT_EXTRA_FLAGS)
+        @[ -f "$(ACCOUNT_IMPORT_FILE)" ] || (echo "❌ 未找到文件 $(ACCOUNT_IMPORT_FILE)"; exit 1)
+        @go run ./cmd/migratectl/main.go import --dsn "$(DB_URL)" --file "$(ACCOUNT_IMPORT_FILE)" \
+                $(if $(ACCOUNT_IMPORT_MERGE),--merge) \
+                $(if $(ACCOUNT_IMPORT_MERGE_STRATEGY),--merge-strategy "$(ACCOUNT_IMPORT_MERGE_STRATEGY)") \
+                $(if $(ACCOUNT_IMPORT_DRY_RUN),--dry-run) \
+                $(foreach UUID,$(ACCOUNT_IMPORT_MERGE_ALLOWLIST),--merge-allowlist $(UUID)) \
+                $(ACCOUNT_IMPORT_EXTRA_FLAGS)
+
+account-sync-push:
+        @[ -f "$(ACCOUNT_SYNC_CONFIG)" ] || (echo "❌ 未找到配置文件 $(ACCOUNT_SYNC_CONFIG)"; exit 1)
+        @go run ./cmd/syncctl/main.go push --config "$(ACCOUNT_SYNC_CONFIG)"
+
+account-sync-pull:
+        @[ -f "$(ACCOUNT_SYNC_CONFIG)" ] || (echo "❌ 未找到配置文件 $(ACCOUNT_SYNC_CONFIG)"; exit 1)
+        @go run ./cmd/syncctl/main.go pull --config "$(ACCOUNT_SYNC_CONFIG)"
+
+account-sync-mirror:
+        @[ -f "$(ACCOUNT_SYNC_CONFIG)" ] || (echo "❌ 未找到配置文件 $(ACCOUNT_SYNC_CONFIG)"; exit 1)
+        @go run ./cmd/syncctl/main.go mirror --config "$(ACCOUNT_SYNC_CONFIG)"
 
 create-super-admin:
 	@[ -n "$(SUPERADMIN_USERNAME)" ] && [ -n "$(SUPERADMIN_PASSWORD)" ] || (echo "❌ 请指定用户名与密码"; exit 1)
