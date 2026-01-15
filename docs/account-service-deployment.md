@@ -124,6 +124,106 @@ curl -k https://127.0.0.1:8443/healthz
 
 > **反向代理提示**：若在 Nginx、Envoy 等反向代理后运行账号服务，可选择在代理层终止 TLS，并将 `server.tls` 字段留空。此时应确保代理转发 `X-Forwarded-Proto`/`X-Forwarded-Host` 等头部，以便后端生成正确回调地址。若代理和服务都启用了 HTTPS，则保持 `redirectHttp=false`，避免出现重复重定向。
 
+## 3.1 Caddy + stunnel 入口与数据库隧道
+
+适用于以下目标：
+
+- 入口域名为 `https://accounts.svc.plus`，由 Caddy 统一签发和续期证书。
+- PostgreSQL 永不暴露公网，只通过 stunnel 建立 TLS 隧道。
+- 架构位置无关、平台无关，跨云复用同一套配置。
+
+示意路径：
+
+```
+入口: https://accounts.svc.plus
+API
+ │
+ │ localhost:15432
+ ▼
+stunnel (TLS)
+ │
+ │ 明文
+ ▼
+PostgreSQL :5432
+```
+
+工程师式总结：
+
+> Caddy 管“对外身份”，stunnel 管“对内通道”。
+
+模板文件：
+
+- `deploy/caddy/Caddyfile.accounts.svc.plus`
+- `deploy/stunnel/stunnel-account-db-client.conf`
+- `deploy/stunnel/stunnel-account-db-server.conf`
+- `deploy/systemd/caddy-accounts.service`
+- `deploy/systemd/stunnel-account-db-client.service`
+- `deploy/systemd/stunnel-account-db-server.service`
+- `deploy/docker-compose/caddy-stunnel/docker-compose.account.yaml`
+- `deploy/docker-compose/caddy-stunnel/docker-compose.db.yaml`
+
+示例 Caddyfile（外部 TLS 入口）：
+
+```caddyfile
+accounts.svc.plus {
+  reverse_proxy 127.0.0.1:8080
+}
+```
+
+示例 stunnel client（API/Account 服务所在机器）：
+
+```ini
+accept = 127.0.0.1:15432
+connect = vps.example.com:8443
+```
+
+示例 stunnel server（数据库所在机器）：
+
+```ini
+accept = 0.0.0.0:8443
+connect = 127.0.0.1:5432
+```
+
+将账号服务的数据库连接指向 `127.0.0.1:15432`，即可通过 stunnel 访问远端
+PostgreSQL，且对外只暴露 Caddy 的 HTTPS 入口。
+
+Systemd 示例（可按需调整路径与二进制）：
+
+```bash
+# 入口机：Caddy + stunnel client
+sudo install -d /etc/caddy /etc/stunnel
+sudo cp deploy/caddy/Caddyfile.accounts.svc.plus /etc/caddy/Caddyfile
+sudo cp deploy/stunnel/stunnel-account-db-client.conf /etc/stunnel/
+sudo cp deploy/systemd/caddy-accounts.service /etc/systemd/system/
+sudo cp deploy/systemd/stunnel-account-db-client.service /etc/systemd/system/
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now caddy-accounts.service
+sudo systemctl enable --now stunnel-account-db-client.service
+```
+
+```bash
+# 数据库机：stunnel server
+sudo install -d /etc/stunnel
+sudo cp deploy/stunnel/stunnel-account-db-server.conf /etc/stunnel/
+sudo cp deploy/systemd/stunnel-account-db-server.service /etc/systemd/system/
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now stunnel-account-db-server.service
+```
+
+Docker Compose 示例（使用 host 网络，便于绑定本机端口）：
+
+```bash
+# 入口机：Caddy + stunnel client
+docker compose -f deploy/docker-compose/caddy-stunnel/docker-compose.account.yaml up -d
+```
+
+```bash
+# 数据库机：stunnel server
+docker compose -f deploy/docker-compose/caddy-stunnel/docker-compose.db.yaml up -d
+```
+
 ## 4. Docker 部署
 
 1. **构建镜像（示例）**

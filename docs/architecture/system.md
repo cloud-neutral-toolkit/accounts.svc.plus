@@ -13,7 +13,7 @@ Describe the overall architecture with user, controller, agents.
                                        ...
                                        ┌────────────────────┐
                                        │ DeepFlow Agent #N  │
-                                       │ eBPF + WASM采流量    │
+                                       │ 采集节点流量与指标   │
                                        └────────────────────┘
 
 
@@ -43,7 +43,7 @@ Describe the overall architecture with user, controller, agents.
 │   ├─ 节点表                                                 │
 │   └─ 流量表（每日/每小时）                                 │
 │                                                             │
-│ WebUI (Vue3) → embed.FS（Go 二进制嵌入）                    │
+│ 可选管理界面（如需）                                        │
 └──────────────┬──────────────────────────────────────────────┘
                │ HTTP/gRPC 控制与拉取配置
                ▼
@@ -59,5 +59,4 @@ Describe the overall architecture with user, controller, agents.
 │  ⬆ 上报用户流量     │   │  ⬆ 上报用户流量     │   │  ⬆ 上报用户流量     │
 │  ⬇ 拉取用户配置     │   │  ⬇ 拉取用户配置     │   │  ⬇ 拉取用户配置     │
 └────────────────────┘   └────────────────────┘   └────────────────────┘
-
 

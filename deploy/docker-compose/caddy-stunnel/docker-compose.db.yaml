@@ -1,0 +1,13 @@
+version: '3.9'
+
+services:
+  stunnel_db_server:
+    image: stunnel/stunnel:latest
+    container_name: stunnel-account-db-server
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ../../stunnel/stunnel-account-db-server.conf:/etc/stunnel/stunnel.conf:ro
+      - /etc/stunnel:/etc/stunnel:ro
+      - /etc/ssl/certs:/etc/ssl/certs:ro
+    command: ["/etc/stunnel/stunnel.conf"]
