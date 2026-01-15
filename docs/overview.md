@@ -24,7 +24,6 @@ xcontrol/
 │   ├── api/            # Gin 路由控制器
 │   ├── service/        # 核心业务逻辑
 │   └── stats/          # 流量采集整合模块
-├── webui/              # Vue 前端
 ├── deploy/
 │   ├── helm/           # Helm Chart
 │   └── docker-compose.yml
@@ -37,7 +36,7 @@ xcontrol/
 [Client (vless://)]
       ↓
 [Xray-core (node)]
-      ↓   ← DeepFlow eBPF + WASM 插件监听所有 TCP/UDP
+      ↓   ← Agent 采集流量与指标
 [deepflow-agent]
       ↓
 [解析 SNI / UUID / Email / IP / TLS fingerprint]

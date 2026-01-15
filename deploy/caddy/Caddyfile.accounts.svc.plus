@@ -1,0 +1,14 @@
+{
+  # Replace with your ops mailbox for ACME.
+  email ops@example.com
+}
+
+accounts.svc.plus {
+  encode zstd gzip
+
+  # Account service upstream (plain HTTP inside).
+  reverse_proxy 127.0.0.1:8080
+
+  # Optional: keep HSTS managed in a single place.
+  # header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+}
