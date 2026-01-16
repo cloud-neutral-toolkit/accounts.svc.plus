@@ -2,7 +2,7 @@
 
 ## 概览
 
-本次检查聚焦于前后端在多租户环境下的适配度与角色权限控制实现。后端账户服务的数据模型已包含 `role`、`groups`、`permissions` 字段，可支撑细粒度的访问控制，并且前端会话 API 现已补充 `tenantId` 与 `tenants` 元数据，便于后续按照租户维度做隔离控制。【F:account/sql/schema.sql†L27-L67】【F:dashboard/app/api/auth/session/route.ts†L12-L116】
+本次检查聚焦于前后端在多租户环境下的适配度与角色权限控制实现。后端账户服务的数据模型已包含 `role`、`groups`、`permissions` 字段，可支撑细粒度的访问控制，并且前端会话 API 现已补充 `tenantId` 与 `tenants` 元数据，便于后续按照租户维度做隔离控制。【F:sql/schema.sql†L27-L67】【F:dashboard/app/api/auth/session/route.ts†L12-L116】
 
 前端 `userStore` 会解析并缓存上述字段，同时归一化多租户信息，为 React 组件提供统一上下文；新增的 `accessControl` 工具封装了访问信息判定逻辑，使页面与组件能够以声明式的方式定义访问规则。面向用户的首页、Docs 与下载中心保持公开访问，而 `/panel` 下页面默认要求登录，`/panel/management` 进一步限制为管理员与操作员角色访问。【F:dashboard/lib/userStore.tsx†L1-L161】【F:dashboard/lib/accessControl.ts†L1-L99】【F:dashboard/app/page.tsx†L1-L28】【F:dashboard/app/panel/layout.tsx†L1-L115】
 
