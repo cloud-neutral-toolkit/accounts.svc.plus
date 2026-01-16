@@ -14,7 +14,7 @@ This document summarizes the new `/api/auth/admin/settings` endpoints for managi
 
 ## Storage Model
 
-- The permission matrix is stored in the `admin_settings` table. GORM manages the model via `account/internal/model/admin_setting.go` and a dedicated migration script (`account/sql/20250305-admin-settings.sql`).
+- The permission matrix is stored in the `admin_settings` table. GORM manages the model via `account/internal/model/admin_setting.go` and a dedicated migration script (`sql/20250305-admin-settings.sql`).
 - Each cell records `module_key`, `role`, `enabled`, and a monotonically increasing `version` value. Updates occur inside a single transaction that replaces the existing matrix to guarantee consistency across modules and roles.
 - The service layer (`account/internal/service/admin_settings.go`) caches the most recent matrix in-memory and invalidates the cache whenever a write occurs or fails due to a version conflict.
 

@@ -19,10 +19,10 @@ REPLICATION_MODE ?= pgsync
 DB_ADMIN_USER ?= $(DB_USER)
 DB_ADMIN_PASS ?= $(DB_PASS)
 
-SCHEMA_FILE := ./sql/schema.sql
-PGLOGICAL_INIT_FILE := ./sql/schema_pglogical_init.sql
-PGLOGICAL_PATCH_FILE := ./sql/schema_pglogical_patch.sql
-PGLOGICAL_REGION_FILE := ./sql/schema_pglogical_region.sql
+SCHEMA_FILE := ../sql/schema.sql
+PGLOGICAL_INIT_FILE := ../sql/schema_pglogical_init.sql
+PGLOGICAL_PATCH_FILE := ../sql/schema_pglogical_patch.sql
+PGLOGICAL_REGION_FILE := ../sql/schema_pglogical_region.sql
 
 ACCOUNT_EXPORT_FILE ?= account-export.yaml
 ACCOUNT_IMPORT_FILE ?= account-export.yaml
@@ -165,7 +165,7 @@ create-db-user:
 
 migrate-db:
 	@echo ">>> 执行数据库迁移"
-	@go run ./cmd/migratectl/main.go migrate --dsn "$(DB_URL)" --dir sql/migrations
+	@go run ./cmd/migratectl/main.go migrate --dsn "$(DB_URL)" --dir ../sql/migrations
 
 dump-schema:
 	@echo ">>> 导出 schema 到 $(SCHEMA_FILE)"
@@ -215,10 +215,10 @@ drop-db:
 	fi
 
 reset-public-schema:
-	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -v db_user="$(DB_USER)" -f sql/reset_public_schema.sql
+	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -v db_user="$(DB_USER)" -f ../sql/reset_public_schema.sql
 
 reinit-db:
-	@echo ">>> 重置业务 schema (sql/schema.sql)"
+	@echo ">>> 重置业务 schema ($(SCHEMA_FILE))"
 	@$(MAKE) reset-public-schema
 	@$(MAKE) init-db-core
 

@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	defaultMigrationDir = "account/sql/migrations"
-	defaultSchemaFile   = "account/sql/schema.sql"
+	defaultMigrationDir = "sql/migrations"
+	defaultSchemaFile   = "sql/schema.sql"
 )
 
 func main() {
