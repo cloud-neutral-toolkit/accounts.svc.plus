@@ -37,7 +37,7 @@ log_error() {
 # 配置路径
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DASHBOARD_CONFIG="$ROOT_DIR/dashboard-fresh/config/runtime-service-config.base.yaml"
-ACCOUNT_CONFIG="$ROOT_DIR/account/config/account.yaml"
+ACCOUNT_CONFIG="$ROOT_DIR/config/account.yaml"
 RAG_CONFIG="$ROOT_DIR/rag-server/config/server.yaml"
 MANUAL_FILE="$ROOT_DIR/TOKEN_AUTH_MANUAL.md"
 

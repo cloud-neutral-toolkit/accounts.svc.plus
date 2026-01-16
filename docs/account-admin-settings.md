@@ -14,13 +14,13 @@ This document summarizes the new `/api/auth/admin/settings` endpoints for managi
 
 ## Storage Model
 
-- The permission matrix is stored in the `admin_settings` table. GORM manages the model via `account/internal/model/admin_setting.go` and a dedicated migration script (`sql/20250305-admin-settings.sql`).
+- The permission matrix is stored in the `admin_settings` table. GORM manages the model via `internal/model/admin_setting.go` and a dedicated migration script (`sql/20250305-admin-settings.sql`).
 - Each cell records `module_key`, `role`, `enabled`, and a monotonically increasing `version` value. Updates occur inside a single transaction that replaces the existing matrix to guarantee consistency across modules and roles.
-- The service layer (`account/internal/service/admin_settings.go`) caches the most recent matrix in-memory and invalidates the cache whenever a write occurs or fails due to a version conflict.
+- The service layer (`internal/service/admin_settings.go`) caches the most recent matrix in-memory and invalidates the cache whenever a write occurs or fails due to a version conflict.
 
 ## Test Coverage
 
-Integration tests are provided in `account/api/admin_settings_test.go`:
+Integration tests are provided in `api/admin_settings_test.go`:
 
 - `TestAdminSettingsReadWrite` exercises a full write followed by a read using the operator role.
 - `TestAdminSettingsUnauthorized` verifies that callers without an admin/operator role receive `403 Forbidden` responses for both GET and POST.
@@ -29,5 +29,5 @@ Integration tests are provided in `account/api/admin_settings_test.go`:
 Run the suite with:
 
 ```bash
-go test ./account/api -run AdminSettings
+go test ./api -run AdminSettings
 ```

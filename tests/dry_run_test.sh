@@ -159,8 +159,8 @@ echo "Starting configuration validation tests..."
 echo ""
 
 # Account service
-validate_configs "account" "account/config"
-validate_auth_config "account" "account/internal/auth/token_service.go"
+validate_configs "account" "config"
+validate_auth_config "account" "internal/auth/token_service.go"
 
 # RAG server
 validate_configs "rag-server" "rag-server/config"

@@ -19,5 +19,5 @@ Related source files:
   `NEXT_PUBLIC_REGISTER_URL` and submits the form to that URL.
 - `dashboard/app/api/auth/register/route.ts` – handles the
   `/api/auth/register` requests and forwards them to the account service.
-- `account/api/api.go` – exposes the `POST /api/auth/register` handler inside the
+- `api/api.go` – exposes the `POST /api/auth/register` handler inside the
   account service.

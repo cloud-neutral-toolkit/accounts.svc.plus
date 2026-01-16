@@ -55,7 +55,7 @@ xray:
     enabled: false
     interval: 5m
     outputPath: "/usr/local/etc/xray/config.json"
-    templatePath: "account/config/xray.config.template.json"
+    templatePath: "config/xray.config.template.json"
     validateCommand: []
     restartCommand:
       - "systemctl"

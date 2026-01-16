@@ -17,11 +17,11 @@
    ```
 
 2. **准备配置**
-   使用仓库提供的 `account/config/account.yaml`，或根据需要拷贝一份修改端口、数据库连接等字段。
+   使用仓库提供的 `config/account.yaml`，或根据需要拷贝一份修改端口、数据库连接等字段。
 
 3. **启动服务（HTTP）**
    ```bash
-   go run ./account/cmd/accountsvc --config account/config/account.yaml
+   go run ./cmd/accountsvc --config config/account.yaml
    ```
    默认监听 `:8080`，可通过 `curl http://127.0.0.1:8080/healthz` 检查服务状态。
 
@@ -101,7 +101,7 @@
 启动命令保持不变：
 
 ```bash
-go run ./account/cmd/accountsvc --config /path/to/secure-account.yaml
+go run ./cmd/accountsvc --config /path/to/secure-account.yaml
 ```
 
 常见验证步骤：
@@ -113,7 +113,7 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
   -subj "/CN=localhost"
 
 # 更新配置后启动服务
-ACCOUNT_CONFIG=/tmp/account-secure.yaml go run ./account/cmd/accountsvc --config $ACCOUNT_CONFIG
+ACCOUNT_CONFIG=/tmp/account-secure.yaml go run ./cmd/accountsvc --config $ACCOUNT_CONFIG
 
 # 使用 curl 验证 HTTPS（开发环境可加 -k 跳过校验）
 curl -k https://127.0.0.1:8443/healthz
@@ -228,7 +228,7 @@ docker compose -f deploy/docker-compose/caddy-stunnel/docker-compose.db.yaml up 
 
 1. **构建镜像（示例）**
    ```bash
-   docker build -t xcontrol/account-service -f deploy/account/Dockerfile .
+   docker build -t xcontrol/account-service -f Dockerfile .
    ```
 
 2. **运行容器（挂载配置与证书）**
@@ -237,7 +237,7 @@ docker compose -f deploy/docker-compose/caddy-stunnel/docker-compose.db.yaml up 
      --name account-service \
      -p 8443:8443 \
      -p 8080:8080 \
-     -v $(pwd)/account.yaml:/etc/xcontrol/account.yaml \
+     -v $(pwd)/config/account.yaml:/etc/xcontrol/account.yaml \
      -v $(pwd)/certs:/etc/ssl/xcontrol \
      xcontrol/account-service \
      --config /etc/xcontrol/account.yaml
@@ -278,7 +278,7 @@ docker compose -f deploy/docker-compose/caddy-stunnel/docker-compose.db.yaml up 
 - 在容器或集群层启用网络策略，仅开放必要端口。
 - 对外提供服务时务必启用 HTTPS，保护登录口令与 TOTP 码。
 - 对数据库、证书等敏感资源使用最小权限原则，并定期轮换。
-- 定期回顾 `account/api/api_test.go` 中的场景测试，确保关键登录链路持续可用。
+- 定期回顾 `api/api_test.go` 中的场景测试，确保关键登录链路持续可用。
 
 ## 9. 数据库备份、迁移与回滚示例
 

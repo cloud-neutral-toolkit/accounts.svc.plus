@@ -101,10 +101,9 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 ## 8. 代码目录规划
 
-后端代码位于根目录的 `account/` 下：
+后端代码位于根目录下：
 
 ```
-account/
   cmd/accountsvc/main.go     # 服务入口
   api/                       # REST 接口
   config/                    # 配置解析
@@ -117,6 +116,7 @@ account/
 
 前端目录扩展：
 
+- `ui/panel/app/`：控制台新增账号模块页面。
 - `dashboard/app/login/` 与 `dashboard/app/register/`：提供登录/注册页面，登录后根据身份跳转至用户或管理员界面。
 
 ## 7. 部署建议
