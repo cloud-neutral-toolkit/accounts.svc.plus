@@ -1,333 +1,294 @@
-OS := $(shell uname -s)
-SHELL := /bin/bash
-O_BIN ?= /usr/local/go/bin
-PG_MAJOR ?= 16
-NODE_MAJOR ?= 22
-BASE_IMAGE_DIR ?= deploy/base-images
-OPENRESTY_IMAGE ?= xcontrol/openresty-geoip:latest
-POSTGRES_EXT_IMAGE ?= xcontrol/postgres-extensions:16
-NODE_BUILDER_IMAGE ?= xcontrol/node-builder:22
-NODE_RUNTIME_IMAGE ?= xcontrol/node-runtime:22
-GO_BUILDER_IMAGE ?= xcontrol/go-builder:1.23
-GO_RUNTIME_IMAGE ?= xcontrol/go-runtime:1.23
-ARCH := $(shell dpkg --print-architecture)
-PG_DSN ?= postgres://shenlan:password@127.0.0.1:5432/xserver?sslmode=disable
+# =========================================
+# 📦 XControl Account Service Makefile
+# =========================================
 
-ifeq ($(shell id -u),0)
-SUDO :=
-else
-SUDO ?= sudo
-endif
+APP_NAME    := xcontrol-account
+MAIN_FILE   := ./cmd/accountsvc/main.go
+PORT        ?= 8080
+OS          := $(shell uname -s)
 
-HOSTS_FILE ?= /etc/hosts
-HOSTS_IP ?= 127.0.0.1
-HOSTS_DOMAINS ?= dev-accounts.svc.plus dev-api.svc.plus
+DB_NAME     := account
+DB_USER     := shenlan
+DB_PASS     := password
+DB_HOST     := 127.0.0.1
+DB_PORT     := 5432
+DB_URL      := postgres://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable
 
-ifeq ($(OS),Darwin)
-NGINX_PREFIX ?= /opt/homebrew/openresty/nginx
-NGINX_MAIN_TEMPLATE ?= example/macos/openresty/nginx.conf
-else
-NGINX_PREFIX ?= /usr/local/openresty/nginx
-endif
+REPLICATION_MODE ?= pgsync
 
-NGINX_CONF_ROOT ?= $(NGINX_PREFIX)/conf
-NGINX_CONF_DIR ?= $(NGINX_CONF_ROOT)/conf.d
-NGINX_MAIN_CONF ?= $(NGINX_CONF_ROOT)/nginx.conf
+DB_ADMIN_USER ?= $(DB_USER)
+DB_ADMIN_PASS ?= $(DB_PASS)
 
-NGINX_SIT_CONFIGS := example/sit/nginx/nginx.conf
-NGINX_SIT_CONFIGS += example/sit/nginx/dev.svc.plus.conf
-NGINX_SIT_CONFIGS += example/sit/nginx/dev-api.svc.plus.conf
-NGINX_SIT_CONFIGS := example/sit/nginx/dev-accounts.svc.plus.conf
+SCHEMA_FILE := ./sql/schema.sql
+PGLOGICAL_INIT_FILE := ./sql/schema_pglogical_init.sql
+PGLOGICAL_PATCH_FILE := ./sql/schema_pglogical_patch.sql
+PGLOGICAL_REGION_FILE := ./sql/schema_pglogical_region.sql
 
-NGINX_PROD_CONFIGS := example/prod/nginx/nginx.conf
-NGINX_PROD_CONFIGS := example/prod/nginx/dev.svc.plus.conf
-NGINX_PROD_CONFIGS := example/prod/nginx/api.svc.plus.conf
-NGINX_PROD_CONFIGS := example/prod/nginx/accounts.svc.plus.conf
+ACCOUNT_EXPORT_FILE ?= account-export.yaml
+ACCOUNT_IMPORT_FILE ?= account-export.yaml
+ACCOUNT_EMAIL_KEYWORD ?=
+ACCOUNT_SYNC_CONFIG ?= config/sync.yaml
+SUPERADMIN_USERNAME ?= Admin
+SUPERADMIN_PASSWORD ?= ChangeMe
+SUPERADMIN_EMAIL    ?= admin@svc.plus
 
-NGINX_ALL_CONFIGS := $(NGINX_SIT_CONFIGS) $(NGINX_PROD_CONFIGS)
+export PATH := /usr/local/go/bin:$(PATH)
 
-export PATH := $(GO_BIN):$(PATH)
+# =========================================
+# 🧩 基础命令
+# =========================================
 
-# -----------------------------------------------------------------------------
-# Environment bootstrap (hosts & services)
-# -----------------------------------------------------------------------------
+.PHONY: all init build clean start stop restart dev test help \
+	init-db-core init-db-replication init-db-pglogical \
+	reinit-pglogical account-sync-push account-sync-pull account-sync-mirror create-db-user db-reset
 
-init: configure-hosts init-nginx init-account init-rag-server
+all: build
 
-install-services: configure-hosts install-nginx install-account install-rag-server
+help:
+	@echo "🧭 XControl Account Service Makefile"
+	@echo "make init               初始化 Go 环境与数据库"
+	@echo "make init-db            执行数据库 schema（支持 REPLICATION_MODE=pgsync|pglogical）"
+	@echo "make create-db-user     创建数据库用户并授权"
+	@echo "make db-reset           重置整个 PostgreSQL 集群 (危险操作!)"
+	@echo "make migrate-db         执行数据库迁移"
+	@echo "make dump-schema        导出数据库 schema"
+	@echo "make account-export     导出账号数据为 YAML"
+	@echo "make account-import     从 YAML 导入账号数据"
+	@echo "make create-super-admin 创建超级管理员"
+	@echo "make reinit-db          重置业务 schema (不涉及 pglogical)"
+	@echo "make reinit-pglogical   重新初始化 pglogical schema"
+	@echo "make dev                热重载开发模式"
+	@echo "make clean              清理构建产物"
 
-upgrade-services: configure-hosts upgrade-nginx upgrade-account upgrade-rag-server
+# =========================================
+# 🧰 初始化
+# =========================================
 
-configure-hosts:
-	@set -e; \
-	if [ ! -f "$(HOSTS_FILE)" ]; then \
-		echo "⚠️ Hosts file $(HOSTS_FILE) not found; skipping host configuration."; \
+init: init-go init-db
+
+init-go:
+	@if [ ! -f go.mod ]; then \
+		echo ">>> go.mod not found, initializing module"; \
+		go mod init account; \
+	fi
+	go mod tidy
+	@echo ">>> 检查 Go 环境"
+	@if ! command -v go >/dev/null; then \
+		echo "未安装 Go，自动安装中..."; \
+		([ "$(OS)" = "Darwin" ] && brew install go@1.24 && brew link --overwrite --force go@1.24) || \
+		(sudo apt-get update && sudo apt-get install -y golang); \
+	fi
+	@echo ">>> 配置 Go Proxy"
+	@(curl -fsSL --max-time 5 https://goproxy.cn >/dev/null && go env -w GOPROXY=https://goproxy.cn,direct) || \
+	(go env -w GOPROXY=https://proxy.golang.org,direct)
+	@go mod tidy
+
+init-db:
+	@echo ">>> 初始化数据库 schema"
+	@command -v psql >/dev/null || (echo "❌ 未检测到 psql，请安装 PostgreSQL 客户端" && exit 1)
+	@$(MAKE) init-db-core
+	@$(MAKE) init-db-replication
+
+init-db-core:
+	@echo ">>> 初始化业务 schema ($(SCHEMA_FILE))"
+	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(SCHEMA_FILE)
+
+init-db-replication:
+	@if [ "$(REPLICATION_MODE)" = "pglogical" ]; then \
+		$(MAKE) init-db-pglogical; \
 	else \
-		for domain in $(HOSTS_DOMAINS); do \
-			if grep -qE "^[[:space:]]*$(HOSTS_IP)[[:space:]]+.*\b$$domain\b" "$(HOSTS_FILE)"; then \
-				echo "✅ Hosts entry exists for $$domain"; \
-			else \
-				echo "➕ Adding $(HOSTS_IP) $$domain to $(HOSTS_FILE)"; \
-				echo "$(HOSTS_IP) $$domain" | $(SUDO) tee -a "$(HOSTS_FILE)" >/dev/null; \
-			fi; \
-		done; \
+		echo ">>> 跳过 pglogical 初始化 (REPLICATION_MODE=$(REPLICATION_MODE))"; \
 	fi
 
-init-nginx:
-	@$(SUDO) mkdir -p "$(NGINX_CONF_DIR)"
-	@if [ -n "$(NGINX_MAIN_TEMPLATE)" ]; then \
-                if [ -f "$(NGINX_MAIN_CONF)" ]; then \
-                        if cmp -s "$(NGINX_MAIN_TEMPLATE)" "$(NGINX_MAIN_CONF)"; then \
-                                echo "✅ $(NGINX_MAIN_CONF) already up to date"; \
-                        else \
-                                echo "⬆️ Updating $(NGINX_MAIN_CONF) from template"; \
-                                $(SUDO) install -m 0644 "$(NGINX_MAIN_TEMPLATE)" "$(NGINX_MAIN_CONF)"; \
-                        fi; \
-                else \
-                        echo "➕ Installing $(NGINX_MAIN_CONF)"; \
-                        $(SUDO) install -m 0644 "$(NGINX_MAIN_TEMPLATE)" "$(NGINX_MAIN_CONF)"; \
-                fi; \
-        fi
-	@for file in $(NGINX_ALL_CONFIGS); do \
-                dest="$(NGINX_CONF_DIR)/$$(basename $$file)"; \
-                if [ -f "$$dest" ]; then \
-                        echo "✅ $$dest already exists; skipping"; \
-                else \
-                        echo "➕ Installing $$dest"; \
-                        $(SUDO) install -m 0644 "$$file" "$$dest"; \
-                fi; \
-        done
+init-db-pglogical:
+	@if [ -f $(PGLOGICAL_INIT_FILE) ]; then \
+		echo ">>> 初始化 pglogical schema (REPLICATION_MODE=pglogical)"; \
+		if PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d $(DB_NAME) \
+			-Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" 2>/dev/null | grep -qx 't'; then \
+			PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d $(DB_NAME) \
+				-v ON_ERROR_STOP=1 -f $(PGLOGICAL_INIT_FILE); \
+		elif psql "$(DB_URL)" -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" | grep -qx 't'; then \
+			psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_INIT_FILE); \
+		else \
+			echo "⚠️ 当前用户非超级用户，跳过 pglogical 初始化"; \
+		fi; \
+	fi; \
+	if [ -f $(PGLOGICAL_PATCH_FILE) ]; then \
+		echo ">>> 应用 pglogical 默认值补丁"; \
+		psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_PATCH_FILE); \
+	fi
 
-install-nginx: init-nginx reload-openresty
+# =========================================
+# 🧠 PGLogical 双节点初始化
+# =========================================
 
-upgrade-nginx:
-	@$(SUDO) mkdir -p "$(NGINX_CONF_DIR)"
-	@if [ -n "$(NGINX_MAIN_TEMPLATE)" ]; then \
-                echo "⬆️ Updating $(NGINX_MAIN_CONF)"; \
-                $(SUDO) install -m 0644 "$(NGINX_MAIN_TEMPLATE)" "$(NGINX_MAIN_CONF)"; \
-        fi
-	@for file in $(NGINX_ALL_CONFIGS); do \
-                dest="$(NGINX_CONF_DIR)/$$(basename $$file)"; \
-                echo "⬆️ Updating $$dest"; \
-                $(SUDO) install -m 0644 "$$file" "$$dest"; \
-        done
-	@$(MAKE) reload-openresty
+init-pglogical-region:
+	@[ -n "$(REGION_DB_URL)" ] || (echo "❌ 缺少 REGION_DB_URL"; exit 1)
+	@[ -n "$(NODE_NAME)" ] || (echo "❌ 缺少 NODE_NAME"; exit 1)
+	@[ -n "$(NODE_DSN)" ] || (echo "❌ 缺少 NODE_DSN"; exit 1)
+	@[ -n "$(SUBSCRIPTION_NAME)" ] || (echo "❌ 缺少 SUBSCRIPTION_NAME"; exit 1)
+	@[ -n "$(PROVIDER_DSN)" ] || (echo "❌ 缺少 PROVIDER_DSN"; exit 1)
+	@psql "$(REGION_DB_URL)" -v ON_ERROR_STOP=1 \
+		-v NODE_NAME="$(NODE_NAME)" \
+		-v NODE_DSN="$(NODE_DSN)" \
+		-v SUBSCRIPTION_NAME="$(SUBSCRIPTION_NAME)" \
+		-v PROVIDER_DSN="$(PROVIDER_DSN)" \
+		-f $(PGLOGICAL_REGION_FILE)
 
-reload-openresty:
-	@echo "🔄 Reloading OpenResty/Nginx if available..."
-	@command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q '^openresty.service' && { \
-		$(SUDO) systemctl reload openresty 2>/dev/null || $(SUDO) systemctl restart openresty 2>/dev/null || true; \
-		echo "✅ openresty.service reloaded"; \
-	} || echo "ℹ️ openresty.service not managed by systemd or systemctl missing; please reload manually."
+init-pglogical-region-cn:
+	@$(MAKE) init-pglogical-region \
+		REGION_DB_URL="$(DB_URL)" \
+		NODE_NAME="node_cn" \
+		NODE_DSN="host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx" \
+		SUBSCRIPTION_NAME="sub_from_global" \
+		PROVIDER_DSN="host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx"
 
-init-account:
-	@$(MAKE) -C account init
+init-pglogical-region-global:
+	@$(MAKE) init-pglogical-region \
+		REGION_DB_URL="$(DB_URL)" \
+		NODE_NAME="node_global" \
+		NODE_DSN="host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx" \
+		SUBSCRIPTION_NAME="sub_from_cn" \
+		PROVIDER_DSN="host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx"
 
-install-account:
-	@$(MAKE) -C account build
+# =========================================
+# 📦 数据库迁移与管理
+# =========================================
 
-upgrade-account:
-	@$(MAKE) -C account upgrade
+create-db-user:
+	@echo ">>> 创建数据库用户 $(DB_USER)"
+	@command -v psql >/dev/null || (echo "❌ 未检测到 psql，请安装 PostgreSQL 客户端" && exit 1)
+	@echo "正在以 postgres 超级用户身份创建用户..."
+	@sudo -u postgres psql -c "CREATE USER $(DB_USER) WITH PASSWORD '$(DB_PASS)';" || echo "⚠️ 用户可能已存在"
+	@sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $(DB_NAME) TO $(DB_USER);"
+	@echo "✓ 数据库用户创建完成"
 
-init-rag-server:
-	@$(MAKE) -C rag-server init
+migrate-db:
+	@echo ">>> 执行数据库迁移"
+	@go run ./cmd/migratectl/main.go migrate --dsn "$(DB_URL)" --dir sql/migrations
 
-install-rag-server:
-	@$(MAKE) -C rag-server build
+dump-schema:
+	@echo ">>> 导出 schema 到 $(SCHEMA_FILE)"
+	@pg_dump -s -O -x "$(DB_URL)" > $(SCHEMA_FILE)
 
-upgrade-rag-server:
-	@$(MAKE) -C rag-server build
-	@$(MAKE) -C rag-server restart
+db-reset:
+	@echo "⚠️ 即将重置整个 PostgreSQL 数据库集群 ..."
+	@read -p "确定要重置数据库集群? 这将删除所有数据! [y/N] " confirm && \
+	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+		echo ">>> 停止 PostgreSQL 服务 ..."; \
+		sudo systemctl stop postgresql; \
+		echo ">>> 删除数据库集群 16 main ..."; \
+		sudo pg_dropcluster --stop 16 main; \
+		echo ">>> 清理数据目录 ..."; \
+		sudo rm -rf /var/lib/postgresql/16/main; \
+		echo ">>> 清理配置目录 ..."; \
+		sudo rm -rf /etc/postgresql/16/main; \
+		echo ">>> 创建新的数据库集群 ..."; \
+		sudo pg_createcluster 16 main --start; \
+		echo "✓ PostgreSQL 集群重置完成"; \
+	else \
+		echo "取消重置"; \
+	fi
 
-.PHONY: install install-openresty install-redis install-postgresql init-db \
-        build update-dashboard-manifests build-server build-dashboard \
-        start start-openresty start-server start-dashboard \
-        stop stop-server stop-dashboard stop-openresty restart lint-cms \
-        init init-nginx install-nginx upgrade-nginx reload-openresty \
-        init-account install-account upgrade-account \
-        init-rag-server install-rag-server upgrade-rag-server \
-        configure-hosts install-services upgrade-services \
-        build-base-images docker-openresty-geoip docker-postgres-extensions \
-        docker-node-builder docker-node-runtime docker-go-builder docker-go-runtime
+drop-db:
+	@echo "⚠️  即将删除数据库 $(DB_NAME) ..."
+	@read -p "确定要删除数据库 $(DB_NAME)? [y/N] " confirm && \
+	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+		echo ">>> 强制断开现有连接 ..."; \
+		if ! PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d postgres \
+			-c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='$(DB_NAME)' AND pid <> pg_backend_pid();"; then \
+			echo "⚠️ 无法断开所有连接（需要超级用户权限）"; \
+		fi; \
+		echo ">>> 清理 pglogical schema ..."; \
+		PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d $(DB_NAME) \
+			-c "DROP SCHEMA IF EXISTS pglogical CASCADE;" >/dev/null 2>&1 || \
+			echo "⚠️ 无法删除 pglogical schema（数据库可能不存在或缺少权限）"; \
+		echo ">>> 删除数据库 $(DB_NAME) ..."; \
+		if PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d postgres \
+			-c "DROP DATABASE IF EXISTS $(DB_NAME);"; then \
+			echo ">>> 数据库已删除"; \
+		else \
+			echo ">>> 删除失败"; \
+		fi; \
+	else \
+		echo "取消删除"; \
+	fi
 
-# -----------------------------------------------------------------------------
-# Dependency installation
-# -----------------------------------------------------------------------------
+reset-public-schema:
+	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -v db_user="$(DB_USER)" -f sql/reset_public_schema.sql
 
-install: install-nodejs install-go install-openresty install-redis install-postgresql
+reinit-db:
+	@echo ">>> 重置业务 schema (sql/schema.sql)"
+	@$(MAKE) reset-public-schema
+	@$(MAKE) init-db-core
 
-# --- Node.js ---------------------------------------------------------------
-install-nodejs:
-ifeq ($(OS),Darwin)
-	( brew install node@22 && brew link --overwrite --force node@22 ) || brew install node
-	corepack enable || true
-	corepack prepare yarn@stable --activate || true
-	@echo "✅ Node: $$(node -v)"; echo "✅ Yarn: $$(yarn -v 2>/dev/null || echo n/a)"
-else
-	@echo "🟦 Installing Node.js $(NODE_MAJOR) via setup_ubuntu_2204.sh..."
-	NODE_MAJOR=$(NODE_MAJOR) bash scripts/setup_ubuntu_2204.sh install-nodejs
-endif
+reinit-pglogical:
+	@if [ "$(REPLICATION_MODE)" = "pglogical" ]; then \
+		echo ">>> 重新初始化 pglogical schema"; \
+		$(MAKE) init-db-pglogical; \
+	else \
+		echo ">>> 当前 REPLICATION_MODE=$(REPLICATION_MODE)，无需 pglogical 处理"; \
+	fi
 
-# --- Go --------------------------------------------------------------------
-install-go:
-ifeq ($(OS),Darwin)
-	brew install go
-else
-	GO_VERSION=$(GO_VERSION) bash scripts/setup_ubuntu_2204.sh install-go
-endif
+# =========================================
+# 💾 账号导入导出
+# =========================================
 
-# --- OpenResty -------------------------------------------------------------
-install-openresty:
-	@echo "🚀 Installing OpenResty using external script..."
-	@bash scripts/install-openresty.sh; \
+account-export:
+	@go run ./cmd/migratectl/main.go export --dsn "$(DB_URL)" --output "$(ACCOUNT_EXPORT_FILE)" $(if $(ACCOUNT_EMAIL_KEYWORD),--email "$(ACCOUNT_EMAIL_KEYWORD)")
 
-# --- Redis -----------------------------------------------------------------
-install-redis:
-ifeq ($(OS),Darwin)
-	brew install redis && brew services start redis
-else
-	@echo "🟥 Installing Redis via setup_ubuntu_2204.sh..."
-	bash scripts/setup_ubuntu_2204.sh install-redis
-endif
+account-import:
+	@[ -f "$(ACCOUNT_IMPORT_FILE)" ] || (echo "❌ 未找到文件 $(ACCOUNT_IMPORT_FILE)"; exit 1)
+	@go run ./cmd/migratectl/main.go import --dsn "$(DB_URL)" --file "$(ACCOUNT_IMPORT_FILE)" \
+	        $(if $(ACCOUNT_IMPORT_MERGE),--merge) \
+	        $(if $(ACCOUNT_IMPORT_MERGE_STRATEGY),--merge-strategy "$(ACCOUNT_IMPORT_MERGE_STRATEGY)") \
+	        $(if $(ACCOUNT_IMPORT_DRY_RUN),--dry-run) \
+	        $(foreach UUID,$(ACCOUNT_IMPORT_MERGE_ALLOWLIST),--merge-allowlist $(UUID)) \
+	        $(ACCOUNT_IMPORT_EXTRA_FLAGS)
 
-# --- PostgreSQL ------------------------------------------------------------
-install-postgresql:
-ifeq ($(OS),Darwin)
-	@set -e; \
-		echo "🍎 Installing PostgreSQL 16 via Homebrew..."; \
-		brew install postgresql@16 || true; \
-		brew services start postgresql@16; \
-		echo "📦 Installing pgvector extension..."; \
-		brew install pgvector || true; \
-		echo "📦 Installing pg_jieba (替代 zhparser + scws)..."; \
-		tmp_dir=$$(mktemp -d) && cd $$tmp_dir && \
-			git clone --recursive https://github.com/jaiminpan/pg_jieba.git && \
-			cd pg_jieba && mkdir build && cd build && \
-			cmake -DPostgreSQL_TYPE_INCLUDE_DIR=$$(brew --prefix postgresql@16)/include/postgresql/server .. && \
-			make -j$$(sysctl -n hw.ncpu) && sudo make install && \
-			cd / && rm -rf $$tmp_dir; \
-		echo "✅ PostgreSQL extensions installed successfully!"
-else
-	@set -e; \
-		echo "🟨 Installing PostgreSQL 16..."; \
-		bash scripts/setup_ubuntu_2204.sh install-postgresql; \
-		echo "🟨 Installing pgvector extension..."; \
-		bash scripts/setup_ubuntu_2204.sh install-pgvector; \
-		echo "🟨 Installing pg_jieba extension (替代 zhparser + scws)..."; \
-		tmp_dir=$$(mktemp -d) && cd $$tmp_dir && \
-			sudo apt-get install -y cmake g++ git postgresql-server-dev-${PG_MAJOR}; \
-			git clone --recursive https://github.com/jaiminpan/pg_jieba.git && \
-			cd pg_jieba && mkdir build && cd build && \
-			cmake -DPostgreSQL_TYPE_INCLUDE_DIR=/usr/include/postgresql/${PG_MAJOR}/server .. && \
-			make -j$$(nproc) && sudo make install && \
-			cd / && rm -rf $$tmp_dir; \
-		echo "✅ PostgreSQL extensions installed successfully!"
-endif
+account-sync-push:
+	@[ -f "$(ACCOUNT_SYNC_CONFIG)" ] || (echo "❌ 未找到配置文件 $(ACCOUNT_SYNC_CONFIG)"; exit 1)
+	@go run ./cmd/syncctl/main.go push --config "$(ACCOUNT_SYNC_CONFIG)"
 
-# -----------------------------------------------------------------------------
-# Base container images
-# -----------------------------------------------------------------------------
+account-sync-pull:
+	@[ -f "$(ACCOUNT_SYNC_CONFIG)" ] || (echo "❌ 未找到配置文件 $(ACCOUNT_SYNC_CONFIG)"; exit 1)
+	@go run ./cmd/syncctl/main.go pull --config "$(ACCOUNT_SYNC_CONFIG)"
 
-build-base-images:
-        @OPENRESTY_IMAGE=$(OPENRESTY_IMAGE) POSTGRES_EXT_IMAGE=$(POSTGRES_EXT_IMAGE) \
-        NODE_BUILDER_IMAGE=$(NODE_BUILDER_IMAGE) NODE_RUNTIME_IMAGE=$(NODE_RUNTIME_IMAGE) \
-        GO_BUILDER_IMAGE=$(GO_BUILDER_IMAGE) GO_RUNTIME_IMAGE=$(GO_RUNTIME_IMAGE) \
-                bash scripts/build-base-images.sh
+account-sync-mirror:
+	@[ -f "$(ACCOUNT_SYNC_CONFIG)" ] || (echo "❌ 未找到配置文件 $(ACCOUNT_SYNC_CONFIG)"; exit 1)
+	@go run ./cmd/syncctl/main.go mirror --config "$(ACCOUNT_SYNC_CONFIG)"
 
-docker-openresty-geoip:
-        docker build -f $(BASE_IMAGE_DIR)/openresty-geoip.Dockerfile -t $(OPENRESTY_IMAGE) $(BASE_IMAGE_DIR)
+create-super-admin:
+	@[ -n "$(SUPERADMIN_USERNAME)" ] && [ -n "$(SUPERADMIN_PASSWORD)" ] || (echo "❌ 请指定用户名与密码"; exit 1)
+	@go run ./cmd/createadmin/main.go \
+		--driver postgres \
+		--dsn "$(DB_URL)" \
+		--username "$(SUPERADMIN_USERNAME)" \
+		--password "$(SUPERADMIN_PASSWORD)" \
+		--email "$(SUPERADMIN_EMAIL)"
 
-docker-postgres-extensions:
-	docker build -f $(BASE_IMAGE_DIR)/postgres-extensions.Dockerfile -t $(POSTGRES_EXT_IMAGE) $(BASE_IMAGE_DIR)
+# =========================================
+# ⚙️ 编译与运行
+# =========================================
 
-docker-node-builder:
-	docker build -f $(BASE_IMAGE_DIR)/node-builder.Dockerfile -t $(NODE_BUILDER_IMAGE) $(BASE_IMAGE_DIR)
+build: init-go
+	@go build -o $(APP_NAME) $(MAIN_FILE)
 
-docker-node-runtime:
-        docker build -f $(BASE_IMAGE_DIR)/node-runtime.Dockerfile -t $(NODE_RUNTIME_IMAGE) $(BASE_IMAGE_DIR)
+upgrade: build
+	systemctl stop xcontrol-account
+	cp xcontrol-account /usr/bin/xcontrol-account
+	systemctl start xcontrol-account
 
-docker-go-builder:
-        docker build -f $(BASE_IMAGE_DIR)/go-builder.Dockerfile -t $(GO_BUILDER_IMAGE) $(BASE_IMAGE_DIR)
+start: build
+	@./$(APP_NAME) --config config/account.yaml
 
-docker-go-runtime:
-        docker build -f $(BASE_IMAGE_DIR)/go-runtime.Dockerfile -t $(GO_RUNTIME_IMAGE) $(BASE_IMAGE_DIR)
-
-# -----------------------------------------------------------------------------
-# Database initialization
-# -----------------------------------------------------------------------------
-init-db:
-@psql $(PG_DSN) -f rag-server/sql/schema.sql
-
-# -----------------------------------------------------------------------------
-# Build targets
-# -----------------------------------------------------------------------------
-build: update-dashboard-manifests build-cli build-server build-dashboard
-
-build-cli:
-	$(MAKE) -C rag-server/cmd/rag-server-cli build
-
-build-server:
-	$(MAKE) -C rag-server build
-
-build-dashboard:
-	$(MAKE) -C dashboard build SKIP_SYNC=1
-
-update-dashboard-manifests:
-	$(MAKE) -C dashboard sync-dl-index
-
-# -----------------------------------------------------------------------------
-# Run targets
-# -----------------------------------------------------------------------------
-start: start-openresty start-server start-dashboard
-
-start-server:
-	$(MAKE) -C rag-server start
-
-start-dashboard:
-	$(MAKE) -C dashboard start
-
-stop: stop-server stop-dashboard stop-openresty
-
-stop-server:
-	$(MAKE) -C rag-server stop
-
-stop-dashboard:
-	$(MAKE) -C dashboard stop
-
-start-openresty:
-ifeq ($(OS),Darwin)
-	@brew services start openresty >/dev/null 2>&1 || \
-	( echo "Creating LaunchAgent for OpenResty..." && \
-	  mkdir -p ~/Library/LaunchAgents && \
-	  printf '%s\n' '<?xml version="1.0" encoding="UTF-8?>' \
-		'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
-		'<plist version="1.0"><dict>' \
-		'  <key>Label</key><string>homebrew.mxcl.openresty</string>' \
-		'  <key>ProgramArguments</key>' \
-		'  <array>' \
-		'    <string>/opt/homebrew/openresty/nginx/sbin/nginx</string>' \
-		'    <string>-g</string>' \
-		'    <string>daemon off;</string>' \
-		'  </array>' \
-		'  <key>RunAtLoad</key><true/>' \
-		'</dict></plist>' \
-		> ~/Library/LaunchAgents/homebrew.mxcl.openresty.plist && \
-	  brew services start ~/Library/LaunchAgents/homebrew.mxcl.openresty.plist )
-else
-	sudo systemctl enable --now openresty || echo "⚠️ openresty.service missing or inactive"
-endif
-
-stop-openresty:
-ifeq ($(OS),Darwin)
-	-brew services stop openresty >/dev/null 2>&1
-else
-	-sudo systemctl stop openresty >/dev/null 2>&1
-endif
+stop:
+	@pkill -f "$(APP_NAME)" || echo "⚠️ 未找到运行进程"
 
 restart: stop start
 
-# -----------------------------------------------------------------------------
-# CMS configuration validation
-# -----------------------------------------------------------------------------
-lint-cms:
-	python3 scripts/validate_cms_config.py
+test:
+	go test ./...
+
+clean:
+	rm -f $(APP_NAME) *.pid *.log

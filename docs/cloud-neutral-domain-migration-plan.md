@@ -1,7 +1,7 @@
 # Cloud-Neutral 子域统一命名迁移规划
 
 ## 1. 背景与目标
-现有 Cloud-Neutral 生态的各子系统分别部署在 `svc.plus` 旗下的多个子域中，例如账号中心使用 `accounts.svc.plus`，控制台与公共站点共用 `www.svc.plus`，API 入口映射到 `rag-server.svc.plus` 等配置文件仍保留旧命名。【F:account/config/account.yaml†L10-L23】【F:dashboard/config/runtime-service-config.yaml†L1-L27】【F:deploy/openresty/rag-server.svc.plus.conf†L1-L69】
+现有 Cloud-Neutral 生态的各子系统分别部署在 `svc.plus` 旗下的多个子域中，例如账号中心使用 `accounts.svc.plus`，控制台与公共站点共用 `www.svc.plus`，API 入口映射到 `rag-server.svc.plus` 等配置文件仍保留旧命名。【F:config/account.yaml†L10-L23】【F:dashboard/config/runtime-service-config.yaml†L1-L27】【F:deploy/openresty/rag-server.svc.plus.conf†L1-L69】
 
 为降低证书、路由和跨域配置的复杂度，计划按照统一命名体系：
 
@@ -26,7 +26,7 @@
 ## 2. 现状盘点
 
 ### 2.1 用户中心（accounts.svc.plus）
-- Go 账号服务 `account/` 通过 `server.publicUrl` 指向 `https://accounts.svc.plus` 并在 `allowedOrigins` 中列出旧前端域名列表。【F:account/config/account.yaml†L6-L23】
+- Go 账号服务 `` 通过 `server.publicUrl` 指向 `https://accounts.svc.plus` 并在 `allowedOrigins` 中列出旧前端域名列表。【F:config/account.yaml†L6-L23】
 - 多份文档（例如 `docs/account-svc-plus.md`、`docs/account-xstream-desktop-integration.md`）阐述账号服务部署契约，需要同步调整对控制台和下载域的描述。【F:docs/account-svc-plus.md†L1-L37】【F:docs/account-xstream-desktop-integration.md†L1-L52】
 
 ### 2.2 控制台（console.svc.plus）

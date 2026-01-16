@@ -119,11 +119,11 @@ func SyncXrayClients(ctx context.Context, db *sql.DB, fs afero.Fs, runner comman
 
 The concrete implementation should wire in dependency-injected collaborators for database access, filesystem operations, validation, and command execution to simplify testing.
 
-The initial `Config Generator` module lives at `account/internal/xrayconfig`. It embeds the default Xray template directly in
+The initial `Config Generator` module lives at `internal/xrayconfig`. It embeds the default Xray template directly in
 the binary, overwrites the VLESS user array with the current database view (setting `flow` to `xtls-rprx-vision` unless callers
 request a different value), and writes the merged document to `/usr/local/etc/xray/config.json` using an atomic rename so that Xray always
 observes a complete file. Agent deployments can still point `xray.sync.templatePath` at a local template (for example
-`account/config/xray.config.template.json`) when they need to override the embedded definition.
+`config/xray.config.template.json`) when they need to override the embedded definition.
 
 ### Periodic Synchronization
 
@@ -134,7 +134,7 @@ now exposes a background syncer that periodically rebuilds the Xray config by:
 2. Regenerating the config with the existing generator.
 3. Optionally validating the JSON and restarting Xray using commands defined in configuration.
 
-The cadence and command hooks are controlled through `account/config/account.yaml`:
+The cadence and command hooks are controlled through `config/account.yaml`:
 
 ```yaml
 xray:

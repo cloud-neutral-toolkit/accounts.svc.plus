@@ -133,7 +133,7 @@ All test scripts generate JSON results with the following structure:
 ## Configuration
 
 No configuration files are required. The scripts automatically detect:
-- Service directories (`account/`, `rag-server/`, `dashboard-fresh/`)
+- Service directories (`/`, `rag-server/`, `dashboard-fresh/`)
 - Configuration files in each service
 - Authentication implementations
 

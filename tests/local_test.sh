@@ -179,7 +179,7 @@ echo ""
 # test_endpoint "account" "8080" "/health"
 
 # Instead, just validate that the binaries exist
-if [ -f "account/xcontrol-account" ]; then
+if [ -f "xcontrol-account" ]; then
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
     echo "✓ Account binary found"
     echo "," >> "$RESULTS_FILE"

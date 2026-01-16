@@ -6,9 +6,9 @@
 
 ### 1.1 HTTP 接口扩展
 
-仅新增 `POST /api/config/sync`，位于 `account/api` 路由注册：
+仅新增 `POST /api/config/sync`，位于 `api` 路由注册：
 
-- **Handler 位置**：`account/api/config_sync.go`（新建文件），由 `api.RegisterRoutes` 中挂载到 `auth` 保护下的子路由组。
+- **Handler 位置**：`api/config_sync.go`（新建文件），由 `api.RegisterRoutes` 中挂载到 `auth` 保护下的子路由组。
 - **认证复用**：沿用 `xc_session` Cookie。若桌面端后续需要无 Cookie 调用，可在 `api/auth` 中增加“设备 Token”生成接口，但不影响本次实现。
 - **请求结构**：
   ```text
@@ -51,17 +51,17 @@
     ]
   }
   ```
-- **重放保护**：服务端在 handler 中校验 `timestamp` ±5 分钟及 `nonce` 是否重复。重放窗口可复用现有 Redis/内存缓存（`account/internal/cache`）。
+- **重放保护**：服务端在 handler 中校验 `timestamp` ±5 分钟及 `nonce` 是否重复。重放窗口可复用现有 Redis/内存缓存（`internal/cache`）。
 
 ### 1.2 加密模块复用
 
-- **Key 派发**：在 `account/internal/store/user.go` 中新增 `SyncSecret` 字段（可选），默认读取已有 `users.sync_secret` 列；若列不存在，可在迁移脚本中与 UUID 一致生成，确保最少改动。
-- **算法实现**：在 `account/internal/crypto/syncpayload`（新目录）封装 `Encrypt(payload []byte, secret []byte)` 与 `Decrypt`，使用 `XChaCha20-Poly1305`。该算法 Go 侧可复用 `golang.org/x/crypto/chacha20poly1305`。
+- **Key 派发**：在 `internal/store/user.go` 中新增 `SyncSecret` 字段（可选），默认读取已有 `users.sync_secret` 列；若列不存在，可在迁移脚本中与 UUID 一致生成，确保最少改动。
+- **算法实现**：在 `internal/crypto/syncpayload`（新目录）封装 `Encrypt(payload []byte, secret []byte)` 与 `Decrypt`，使用 `XChaCha20-Poly1305`。该算法 Go 侧可复用 `golang.org/x/crypto/chacha20poly1305`。
 - **密钥管理**：管理员通过 `GET/POST /api/auth/admin/settings`（已存在）调整“桌面同步”开关；密钥不在接口返回，仅在数据库存储，客户端登录成功后通过 `/api/config/sync` 解包获得配置。
 
 ### 1.3 配置生成复用
 
-- **数据来源**：继续使用 `account/internal/xrayconfig`。根据 `user.UUID` 作为 tenant_id，从 `Generator.Generate()` 获得完整 JSON。
+- **数据来源**：继续使用 `internal/xrayconfig`。根据 `user.UUID` 作为 tenant_id，从 `Generator.Generate()` 获得完整 JSON。
 - **差异化控制**：在 `xrayconfig` 中新增 `HasDesktopPrivilege(uuid string) bool`（读取管理员设置或用户标记），若返回 false，则 handler 返回 `status=NO_PRIVILEGE`，客户端保持现状。
 - **审计 & 日志**：复用现有的 `logger.WithContext(ctx)`，记录 `uuid`、`deviceFingerprint`、`configVersion`。
 
@@ -147,7 +147,7 @@ struct SyncResponse {
 ## 5. 安全与运维要点
 
 - **最小数据面**：所有敏感字段都封装在加密包内，URL 与 Header 仅携带基础信息（Cookie）。
-- **限流**：继续复用 `account/api/middleware/ratelimit`（若已有）或在 handler 中增加 per-device 限流。
+- **限流**：继续复用 `api/middleware/ratelimit`（若已有）或在 handler 中增加 per-device 限流。
 - **审计**：在服务端日志中记录 `uuid`、`deviceFingerprint` hash、`status`，便于定位问题而不过度存储。
 - **滚动升级**：版本字段可确保前后端同时升级；旧客户端仍可解析 version=1。
 
