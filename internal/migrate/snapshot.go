@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	accountschema "xcontrol/sql"
+	accountschema "account/sql"
 )
 
 // SnapshotVersion identifies the canonical format of exported account snapshots.
