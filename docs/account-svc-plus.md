@@ -56,7 +56,7 @@
 
 ### 4.1 表结构草案
 
-`account/sql/schema.sql` 维护初始建表脚本：
+`sql/schema.sql` 维护初始建表脚本：
 
 ```sql
 CREATE TABLE IF NOT EXISTS users (

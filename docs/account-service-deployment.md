@@ -327,7 +327,7 @@ docker compose -f deploy/docker-compose/caddy-stunnel/docker-compose.db.yaml up 
    COMMIT;
    ```
 
-   > **提示**：如已在 CI/CD 中托管 `account/sql/schema.sql`，也可直接执行 `psql -h ... -f account/sql/schema.sql`，该脚本为幂等实现，会自动跳过已有对象。
+   > **提示**：如已在 CI/CD 中托管 `sql/schema.sql`，也可直接执行 `psql -h ... -f sql/schema.sql`，该脚本为幂等实现，会自动跳过已有对象。
 
 3. **验证数据**
 

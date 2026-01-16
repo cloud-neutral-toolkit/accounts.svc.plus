@@ -17,6 +17,7 @@ require (
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.1
+	xcontrol v0.0.0
 )
 
 require (
@@ -59,3 +60,5 @@ require (
 	golang.org/x/text v0.31.0 // indirect
 	google.golang.org/protobuf v1.36.9 // indirect
 )
+
+replace xcontrol => ..
