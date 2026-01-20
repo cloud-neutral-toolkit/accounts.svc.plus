@@ -23,11 +23,14 @@ FROM ubuntu:24.04
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends ca-certificates stunnel4 gettext-base \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/run/stunnel \
+    && chown -R nobody:nogroup /var/run/stunnel
 
 COPY --from=builder /src/account /usr/local/bin/account
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY config /app/config
 
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
