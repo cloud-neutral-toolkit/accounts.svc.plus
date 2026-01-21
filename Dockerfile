@@ -1,7 +1,7 @@
 # ------------------------------
 # Stage 1 — Build
 # ------------------------------
-FROM golang:1.25 AS builder
+FROM golang:1.24 AS builder
 
 WORKDIR /src
 
@@ -23,7 +23,7 @@ FROM ubuntu:24.04
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates stunnel4 gettext-base \
+    && apt-get install -y --no-install-recommends ca-certificates stunnel4 gettext-base netcat-openbsd \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/run/stunnel \
     && chown -R nobody:nogroup /var/run/stunnel
