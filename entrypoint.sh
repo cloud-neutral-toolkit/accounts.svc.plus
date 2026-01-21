@@ -50,14 +50,27 @@ EOF
   stunnel "${STUNNEL_CONF}"
   
   # Wait for stunnel to be up (simple check)
-  for i in {1..10}; do
+  STUNNEL_UP=0
+  for i in {1..30}; do
     if nc -z 127.0.0.1 5432; then
       echo "Stunnel is up!"
+      STUNNEL_UP=1
       break
     fi
-    echo "Waiting for Stunnel..."
+    echo "Waiting for Stunnel... ($i/30)"
     sleep 1
   done
+
+  if [ "${STUNNEL_UP}" -eq 0 ]; then
+    echo "Error: Stunnel failed to start or is not reachable on port 5432."
+    echo "Stunnel logs:"
+    if [ -f "/var/log/stunnel.log" ]; then
+      cat /var/log/stunnel.log
+    else
+      echo "No stunnel log found."
+    fi
+    exit 1
+  fi
 fi
 
 # -----------------------------------------------------------------------------
