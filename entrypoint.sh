@@ -5,7 +5,10 @@ set -euo pipefail
 # Stunnel Configuration
 # -----------------------------------------------------------------------------
 
+USE_STUNNEL=0
+
 if [ -n "${DB_TLS_HOST:-}" ] && [ -n "${DB_TLS_PORT:-}" ]; then
+  USE_STUNNEL=1
   echo "Configuring Stunnel..."
 
   STUNNEL_CONF="/etc/stunnel/stunnel.conf"
@@ -78,38 +81,9 @@ fi
 # -----------------------------------------------------------------------------
 
 CONFIG_FILE="${CONFIG_PATH:-/etc/xcontrol/account.yaml}"
-DEFAULT_CONFIG="/app/config/account.yaml" # Note: Adjusted path as config is likely copied to /app/config in Docker or we assume standard location
 
-# If config not in /etc, maybe we need to copy it there or use what's available
-# The original script assumed /etc/xcontrol/account.yaml or copied from DEFAULT_CONFIG
-# But where is DEFAULT_CONFIG? In Dockerfile:
-# COPY --from=builder /src/account /usr/local/bin/account -> Only binary
-# We need to make sure config file exists. 
-# Looking at Dockerfile again:
-# It assumes the app might have config embedded or user mounts it? 
-# Wait, original entrypoint had: DEFAULT_CONFIG="/etc/xcontrol/account.yaml"
-# AND: `cp "${DEFAULT_CONFIG}" "${CONFIG_FILE}"` -- THIS LOGIC IS WEIRD if they are same path.
-# Ah, lines 4-5:
-# CONFIG_FILE="${CONFIG_PATH:-/etc/xcontrol/account.yaml}"
-# DEFAULT_CONFIG="/etc/xcontrol/account.yaml"
-# If CONFIG_PATH is set to something else, it copies from DEFAULT. But if DEFAULT is not there?
-# The Dockerfile DOES NOT copy config files to /etc/xcontrol.
-# Check Dockerfile again:
-# It copies entrypoint.sh. It does NOT copy config folder.
-# This means the original image probably expected config mounted or baked in separately?
-# Or maybe the builder stage had it? No, builder stage copies . . but runtime only copies /src/account binary.
-# The user might be mounting config at runtime.
-# However, for Cloud Run, we want to bake a default config or generate it.
-# Let's assume we need to provide a base config if one isn't there.
-# I will blindly respect the original logic but adding my specific injection logic.
-
-# In my plan I said "Inject DB_PASSWORD".
-
+# Copy default config if missing
 if [ ! -f "${CONFIG_FILE}" ]; then
-  # If we don't have a config file at all, we might be in trouble if we don't have a source.
-  # Let's hope the user mounts it or we can generate a minimal one.
-  # For now, let's assume the previous logic was correct for their env,
-  # OR we can improve it by creating a default one if missing.
   if [ -f "/app/config/account.yaml" ]; then
      mkdir -p "$(dirname "${CONFIG_FILE}")"
      cp "/app/config/account.yaml" "${CONFIG_FILE}"
@@ -140,26 +114,56 @@ if [ -n "${PORT:-}" ]; then
   mv "${tmp_cfg}" "${CONFIG_FILE}"
 fi
 
-# Inject DB Password into DSN if DB_PASSWORD is set
-if [ -n "${DB_PASSWORD:-}" ]; then
-    # Simply replacing 'password' in the DSN if it matches the default pattern, 
-    # or appending if we want to be smarter. 
-    # Default DSN: postgres://shenlan:password@127.0.0.1:5432/account?sslmode=disable
-    # We will try to replace ":password@" with ":${DB_PASSWORD}@"
-    # This is a bit brittle but simple.
-    sed -i "s|:password@|:${DB_PASSWORD}@|g" "${CONFIG_FILE}"
+# Database Configuration
+DEFAULT_DB_USER="shenlan"
+DEFAULT_DB_PASS="password"
+DEFAULT_DB_HOST="127.0.0.1"
+DEFAULT_DB_PORT="5432"
+DEFAULT_DB_NAME="account"
+DEFAULT_SSLMODE="disable"
+
+# If Stunnel is active, force connection to localhost:5432
+if [ "$USE_STUNNEL" -eq 1 ]; then
+    DB_HOST="127.0.0.1"
+    DB_PORT="5432"
+fi
+
+# If DB_HOST is set (either by user or Stunnel logic), reconstruct DSN
+if [ -n "${DB_HOST:-}" ]; then
+    DB_USER="${DB_USER:-$DEFAULT_DB_USER}"
+    DB_PASS="${DB_PASSWORD:-$DEFAULT_DB_PASS}"
+    DB_PORT="${DB_PORT:-$DEFAULT_DB_PORT}"
+    DB_NAME="${DB_NAME:-$DEFAULT_DB_NAME}"
+    DB_SSLMODE="${DB_SSLMODE:-$DEFAULT_SSLMODE}"
+
+    # Construct DSN
+    # Format: postgres://user:password@host:port/dbname?sslmode=disable
+    DSN="postgres://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=${DB_SSLMODE}"
+
+    echo "Updating database configuration (DSN)..."
+    # Escape pipe characters in DSN to avoid sed issues
+    ESCAPED_DSN=$(printf '%s\n' "$DSN" | sed 's/|/\\|/g')
+    sed -i "s|dsn: \".*\"|dsn: \"${ESCAPED_DSN}\"|g" "${CONFIG_FILE}"
+
+elif [ -n "${DB_PASSWORD:-}" ]; then
+    # Legacy fallback: User only provided password, assuming default host/user
+    echo "Updating database password..."
+    ESCAPED_PASS=$(printf '%s\n' "$DB_PASSWORD" | sed 's/|/\\|/g')
+    sed -i "s|:password@|:${ESCAPED_PASS}@|g" "${CONFIG_FILE}"
 fi
 
 # Inject Auth Secrets
 if [ -n "${AUTH_PUBLIC_TOKEN:-}" ]; then
-  sed -i "s|publicToken: \".*\"|publicToken: \"${AUTH_PUBLIC_TOKEN}\"|g" "${CONFIG_FILE}"
+  ESCAPED_TOKEN=$(printf '%s\n' "$AUTH_PUBLIC_TOKEN" | sed 's/|/\\|/g')
+  sed -i "s|publicToken: \".*\"|publicToken: \"${ESCAPED_TOKEN}\"|g" "${CONFIG_FILE}"
 fi
 if [ -n "${AUTH_REFRESH_SECRET:-}" ]; then
-  sed -i "s|refreshSecret: \".*\"|refreshSecret: \"${AUTH_REFRESH_SECRET}\"|g" "${CONFIG_FILE}"
+  ESCAPED_SECRET=$(printf '%s\n' "$AUTH_REFRESH_SECRET" | sed 's/|/\\|/g')
+  sed -i "s|refreshSecret: \".*\"|refreshSecret: \"${ESCAPED_SECRET}\"|g" "${CONFIG_FILE}"
 fi
 if [ -n "${AUTH_ACCESS_SECRET:-}" ]; then
-  sed -i "s|accessSecret: \".*\"|accessSecret: \"${AUTH_ACCESS_SECRET}\"|g" "${CONFIG_FILE}"
+  ESCAPED_SECRET=$(printf '%s\n' "$AUTH_ACCESS_SECRET" | sed 's/|/\\|/g')
+  sed -i "s|accessSecret: \".*\"|accessSecret: \"${ESCAPED_SECRET}\"|g" "${CONFIG_FILE}"
 fi
 
 exec /usr/local/bin/account --config "${CONFIG_FILE}" "$@"
-
