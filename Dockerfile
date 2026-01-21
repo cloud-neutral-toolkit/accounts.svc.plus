@@ -3,6 +3,9 @@
 # ------------------------------
 FROM golang:1.24 AS builder
 
+ARG GOPROXY
+ENV GOPROXY=${GOPROXY}
+
 WORKDIR /src
 
 # 先复制 go.mod / go.sum，使 Docker 构建缓存层可复用
@@ -13,7 +16,7 @@ RUN go mod download
 COPY . .
 
 # 编译
-RUN CGO_ENABLED=0 go build -o account ./cmd/accountsvc/main.go
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o account ./cmd/accountsvc/main.go
 
 # ------------------------------
 # Stage 2 — Runtime
@@ -23,7 +26,7 @@ FROM ubuntu:24.04
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates stunnel4 gettext-base netcat-openbsd \
+    && apt-get install -y --no-install-recommends ca-certificates stunnel4 gettext-base netcat-openbsd curl \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/run/stunnel \
     && chown -R nobody:nogroup /var/run/stunnel
