@@ -40,7 +40,8 @@ export PATH := /usr/local/go/bin:$(PATH)
 
 .PHONY: all init build clean start stop restart dev test help \
 	init-db-core init-db-replication init-db-pglogical \
-	reinit-pglogical account-sync-push account-sync-pull account-sync-mirror create-db-user db-reset
+	reinit-pglogical account-sync-push account-sync-pull account-sync-mirror create-db-user db-reset \
+	gcp-deploy gcp-replace-service
 
 all: build
 
@@ -292,3 +293,20 @@ test:
 
 clean:
 	rm -f $(APP_NAME) *.pid *.log
+
+# =========================================
+# ☁️ Google Cloud Run
+# =========================================
+
+CLOUD_RUN_SERVICE := accounts-svc-plus
+GCP_REGION        := asia-northeast1
+
+gcp-deploy:
+	gcloud run deploy $(CLOUD_RUN_SERVICE) \
+		--source . \
+		--region $(GCP_REGION) \
+		--update-secrets="PGADMIN_PASSWORD=admin_password:latest,DB_PASSWORD=admin_password:latest" \
+		--set-env-vars="DB_TLS_HOST=postgresql.onwalk.net,DB_TLS_PORT=443,DB_USER=postgres,DB_NAME=postgres"
+
+gcp-replace-service:
+	gcloud run services replace deploy/gcp/cloud-run/service.yaml --region $(GCP_REGION)

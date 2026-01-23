@@ -43,6 +43,8 @@ EOF
 
   if [ -f "/etc/stunnel/ca.pem" ]; then
     echo "CAfile = /etc/stunnel/ca.pem" >> "${STUNNEL_CONF}"
+  elif [ -f "/etc/ssl/certs/ca-certificates.crt" ]; then
+    echo "CAfile = /etc/ssl/certs/ca-certificates.crt" >> "${STUNNEL_CONF}"
   fi
   if [ -f "/etc/stunnel/cert.pem" ] && [ -f "/etc/stunnel/key.pem" ]; then
     echo "cert = /etc/stunnel/cert.pem" >> "${STUNNEL_CONF}"
