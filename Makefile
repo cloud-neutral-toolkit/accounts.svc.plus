@@ -19,6 +19,13 @@ REPLICATION_MODE ?= pgsync
 DB_ADMIN_USER ?= $(DB_USER)
 DB_ADMIN_PASS ?= $(DB_PASS)
 
+GCP_PROJECT ?=
+GCP_REGION ?= asia-northeast1
+CLOUD_RUN_SERVICE ?= accounts-svc-plus
+CLOUD_RUN_SERVICE_YAML ?= deploy/gcp/cloud-run/service.yaml
+CLOUD_RUN_STUNNEL_CONF ?= deploy/gcp/cloud-run/stunnel.conf
+CLOUD_RUN_IMAGE ?= $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/cloud-run-source-deploy/accounts.svc.plus/accounts-svc-plus:latest
+
 SCHEMA_FILE := ./sql/schema.sql
 PGLOGICAL_INIT_FILE := ./sql/schema_pglogical_init.sql
 PGLOGICAL_PATCH_FILE := ./sql/schema_pglogical_patch.sql
@@ -40,7 +47,8 @@ export PATH := /usr/local/go/bin:$(PATH)
 
 .PHONY: all init build clean start stop restart dev test help \
 	init-db-core init-db-replication init-db-pglogical \
-	reinit-pglogical account-sync-push account-sync-pull account-sync-mirror create-db-user db-reset
+	reinit-pglogical account-sync-push account-sync-pull account-sync-mirror create-db-user db-reset \
+	cloudrun-build cloudrun-deploy cloudrun-stunnel
 
 all: build
 
@@ -59,6 +67,9 @@ help:
 	@echo "make reinit-pglogical   重新初始化 pglogical schema"
 	@echo "make dev                热重载开发模式"
 	@echo "make clean              清理构建产物"
+	@echo "make cloudrun-build     构建并推送 Cloud Run 镜像"
+	@echo "make cloudrun-deploy    部署 Cloud Run Service"
+	@echo "make cloudrun-stunnel   更新 Cloud Run stunnel 配置 secret"
 
 # =========================================
 # 🧰 初始化
@@ -292,3 +303,32 @@ test:
 
 clean:
 	rm -f $(APP_NAME) *.pid *.log
+
+# =========================================
+# ☁️ GCP Cloud Run
+# =========================================
+
+cloudrun-build:
+	@if [ -z "$(GCP_PROJECT)" ]; then \
+		echo "❌ GCP_PROJECT 不能为空"; \
+		exit 1; \
+	fi
+	@gcloud builds submit --tag "$(CLOUD_RUN_IMAGE)" .
+
+cloudrun-deploy:
+	@if [ -z "$(GCP_PROJECT)" ]; then \
+		echo "❌ GCP_PROJECT 不能为空"; \
+		exit 1; \
+	fi
+	@gcloud run services replace "$(CLOUD_RUN_SERVICE_YAML)" --region "$(GCP_REGION)" --project "$(GCP_PROJECT)"
+
+cloudrun-stunnel:
+	@if [ -z "$(GCP_PROJECT)" ]; then \
+		echo "❌ GCP_PROJECT 不能为空"; \
+		exit 1; \
+	fi
+	@if [ ! -f "$(CLOUD_RUN_STUNNEL_CONF)" ]; then \
+		echo "❌ 未找到 stunnel 配置: $(CLOUD_RUN_STUNNEL_CONF)"; \
+		exit 1; \
+	fi
+	@gcloud secrets versions add stunnel-config --data-file "$(CLOUD_RUN_STUNNEL_CONF)" --project "$(GCP_PROJECT)"

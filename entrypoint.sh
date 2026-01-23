@@ -2,11 +2,16 @@
 set -euo pipefail
 
 CONFIG_FILE="${CONFIG_PATH:-/etc/xcontrol/account.yaml}"
-DEFAULT_CONFIG="/etc/xcontrol/account.yaml"
+CONFIG_TEMPLATE="${CONFIG_TEMPLATE:-/app/config/account.yaml}"
 mkdir -p "$(dirname "${CONFIG_FILE}")"
 
 if [ ! -f "${CONFIG_FILE}" ]; then
-  cp "${DEFAULT_CONFIG}" "${CONFIG_FILE}"
+  if [ -f "${CONFIG_TEMPLATE}" ]; then
+    envsubst < "${CONFIG_TEMPLATE}" > "${CONFIG_FILE}"
+  else
+    echo "missing config template: ${CONFIG_TEMPLATE}" >&2
+    exit 1
+  fi
 fi
 
 if [ -n "${PORT:-}" ]; then
@@ -26,4 +31,4 @@ if [ -n "${PORT:-}" ]; then
   CONFIG_FILE="${tmp_cfg}"
 fi
 
-exec /usr/local/bin/accountsvc --config "${CONFIG_FILE}" "$@"
+exec /usr/local/bin/account --config "${CONFIG_FILE}" "$@"
