@@ -13,7 +13,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 )
 
-const defaultDir = "sql/migrations"
+const defaultDir = "account/sql/migrations"
 
 // Runner coordinates golang-migrate operations.
 type Runner struct {
@@ -21,7 +21,7 @@ type Runner struct {
 }
 
 // NewRunner creates a runner that reads migration files from dir. When dir is
-// empty, the default directory under sql/migrations is used.
+// empty, the default directory under account/sql/migrations is used.
 func NewRunner(dir string) *Runner {
 	if dir == "" {
 		dir = defaultDir

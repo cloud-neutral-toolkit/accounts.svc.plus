@@ -1,3 +1,0 @@
-# Alternative configuration for production deployments targeting the CN region.
-environment: prod
-region: cn

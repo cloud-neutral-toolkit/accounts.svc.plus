@@ -12,10 +12,10 @@
 
 ```bash
 # 初始化或升级 schema
-go run ./account/cmd/migratectl/main.go migrate --dsn "$DB_URL"
+go run ./cmd/migratectl/main.go migrate --dsn "$DB_URL"
 
 # 对比 CN 与 Global 节点结构一致性
-go run ./account/cmd/migratectl/main.go check --cn "$CN_DSN" --global "$GLOBAL_DSN"
+go run ./cmd/migratectl/main.go check --cn "$CN_DSN" --global "$GLOBAL_DSN"
 
 ## 仅异步同步（pgsync）
 
@@ -28,13 +28,13 @@ go run ./account/cmd/migratectl/main.go check --cn "$CN_DSN" --global "$GLOBAL_D
    make -C account init-db REPLICATION_MODE=pgsync DB_URL="$DEST_DB_URL"
    ```
 
-2. 编辑 `sql/pgsync.users.example.yaml`，替换源端与目标端 DSN。
+2. 编辑 `account/sql/pgsync.users.example.yaml`，替换源端与目标端 DSN。
 
 3. 使用 pgsync 持续同步，可结合 cron 运行增量同步：
 
    ```bash
    # 全量初始化
-   pgsync --config sql/pgsync.users.example.yaml --once
+   pgsync --config account/sql/pgsync.users.example.yaml --once
 
    # 每分钟增量同步
    * * * * * /usr/local/bin/pgsync --config /path/to/pgsync.users.yaml >> /var/log/pgsync.log 2>&1
@@ -126,7 +126,7 @@ psql "$REGION_GLOBAL_DB_URL" -v ON_ERROR_STOP=1 \
   -v NODE_DSN='host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx' \
   -v SUBSCRIPTION_NAME=sub_from_cn \
   -v PROVIDER_DSN='host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx' \
-  -f sql/schema_pglogical_region.sql
+  -f account/sql/schema_pglogical_region.sql
 
 # CN 节点示例
 psql "$REGION_CN_DB_URL" -v ON_ERROR_STOP=1 \
@@ -134,7 +134,7 @@ psql "$REGION_CN_DB_URL" -v ON_ERROR_STOP=1 \
   -v NODE_DSN='host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx' \
   -v SUBSCRIPTION_NAME=sub_from_global \
   -v PROVIDER_DSN='host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxx' \
-  -f sql/schema_pglogical_region.sql
+  -f account/sql/schema_pglogical_region.sql
 ```
 
 也可以通过新的 `make init-pglogical-region` 目标自定义变量，例如：

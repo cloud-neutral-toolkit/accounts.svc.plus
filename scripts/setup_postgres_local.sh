@@ -17,9 +17,7 @@ DB_USER="${DB_USER:-shenlan}"
 DB_PASS="${DB_PASS:-password}"
 DB_PORT="${DB_PORT:-5432}"
 DB_HOST="${DB_HOST:-127.0.0.1}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-SCHEMA_FILE="${SCHEMA_FILE:-${ROOT_DIR}/sql/schema.sql}"
+SCHEMA_FILE="${SCHEMA_FILE:-./sql/schema.sql}"
 
 PG_SERVICE_NAME="${PG_SERVICE_NAME:-postgresql}"
 OS=$(uname -s)

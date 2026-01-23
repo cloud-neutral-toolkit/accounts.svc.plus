@@ -14,7 +14,7 @@ auth:
     refreshExpiry: "168h"
 
 server:
-  addr: "0.0.0.0:8080"
+  addr: ":8080"
   readTimeout: 15s
   writeTimeout: 15s
   publicUrl: "https://accounts.svc.plus"
@@ -69,7 +69,7 @@ xray:
     enabled: false
     interval: 5m
     outputPath: "/usr/local/etc/xray/config.json"
-    templatePath: "config/xray.config.template.json"
+    templatePath: "account/config/xray.config.template.json"
     validateCommand: []
     restartCommand:
       - "systemctl"
