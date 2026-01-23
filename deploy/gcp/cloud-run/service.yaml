@@ -20,7 +20,7 @@ spec:
       containers:
       # --- 主应用容器 ---
       - name: accounts-api
-        image: asia-northeast1-docker.pkg.dev/xzerolab-480008/cloud-run-source-deploy/accounts.svc.plus/accounts-svc-plus:217c617b25328b3529ba2ec983d5a4f71849cf30
+        image: asia-northeast1-docker.pkg.dev/xzerolab-480008/cloud-run-source-deploy/accounts.svc.plus/accounts-svc-plus:be98cb244a9f7492d2e7dd4019fbb057c6cde91e
         ports:
         - name: http1
           containerPort: 8080
