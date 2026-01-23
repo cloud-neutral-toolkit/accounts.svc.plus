@@ -31,4 +31,21 @@ if [ -n "${PORT:-}" ]; then
   CONFIG_FILE="${tmp_cfg}"
 fi
 
+if [ -n "${DB_HOST:-}" ] && [ -n "${DB_PORT:-}" ]; then
+  if [ "${DB_HOST}" = "127.0.0.1" ] || [ "${DB_HOST}" = "localhost" ]; then
+    if command -v nc >/dev/null; then
+      wait_seconds="${STUNNEL_WAIT_SECONDS:-30}"
+      i=0
+      while ! nc -z "${DB_HOST}" "${DB_PORT}" >/dev/null 2>&1; do
+        i=$((i + 1))
+        if [ "${i}" -ge "${wait_seconds}" ]; then
+          echo "stunnel not ready after ${wait_seconds}s on ${DB_HOST}:${DB_PORT}" >&2
+          break
+        fi
+        sleep 1
+      done
+    fi
+  fi
+fi
+
 exec /usr/local/bin/account --config "${CONFIG_FILE}" "$@"
