@@ -31,7 +31,7 @@ server:
 
 store:
   driver: "postgres"
-  dsn: "postgres://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=disable"
+  dsn: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=disable"
   maxOpenConns: 30
   maxIdleConns: 10
 
