@@ -1,7 +1,7 @@
 # ------------------------------
 # Stage 1 — Build
 # ------------------------------
-FROM golang:1.24 AS builder
+FROM golang:1.25.1 AS builder
 
 ARG GOPROXY
 ENV GOPROXY=${GOPROXY}
