@@ -173,8 +173,13 @@ accounts.svc.plus {
 示例 stunnel client（API/Account 服务所在机器）：
 
 ```ini
+[postgres-client]
+client = yes
 accept = 127.0.0.1:15432
-connect = vps.example.com:8443
+connect = postgresql.onwalk.net:443
+verify = 2
+CAfile = /etc/ssl/certs/ca-certificates.crt
+checkHost = postgresql.onwalk.net
 ```
 
 示例 stunnel server（数据库所在机器）：
