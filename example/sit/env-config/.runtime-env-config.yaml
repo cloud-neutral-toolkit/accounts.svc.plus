@@ -1,3 +1,0 @@
-# Example runtime environment configuration for the SIT environment.
-environment: sit
-region: default

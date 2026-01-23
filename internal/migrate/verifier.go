@@ -9,7 +9,7 @@ import (
 	"account/internal/utils"
 )
 
-const defaultSchemaPath = "sql/schema.sql"
+const defaultSchemaPath = "account/sql/schema.sql"
 
 // Verifier validates that the live database matches the canonical schema.sql.
 type Verifier struct{}

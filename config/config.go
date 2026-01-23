@@ -156,12 +156,12 @@ type AgentCredential struct {
 }
 
 // Load reads the configuration file at the provided path. When path is empty,
-// it defaults to config/account.yaml. If the file does not exist an
+// it defaults to account/config/account.yaml. If the file does not exist an
 // empty configuration is returned.
 func Load(path string) (*Config, error) {
 	p := path
 	if p == "" {
-		p = filepath.Join("config", "account.yaml")
+		p = filepath.Join("account", "config", "account.yaml")
 	}
 
 	b, err := os.ReadFile(p)

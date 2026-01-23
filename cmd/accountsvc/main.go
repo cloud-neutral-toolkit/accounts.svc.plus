@@ -256,9 +256,6 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 	if addr == "" {
 		addr = ":8080"
 	}
-	if port := strings.TrimSpace(os.Getenv("PORT")); port != "" {
-		addr = "0.0.0.0:" + port
-	}
 
 	tlsSettings := cfg.Server.TLS
 	certFile := strings.TrimSpace(tlsSettings.CertFile)

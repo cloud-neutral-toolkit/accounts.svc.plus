@@ -1,3 +1,0 @@
-# Example runtime environment configuration for the production environment (global region).
-environment: prod
-region: global
