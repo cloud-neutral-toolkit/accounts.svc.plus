@@ -95,9 +95,8 @@ if [ ! -f "${CONFIG_FILE}" ]; then
   fi
 fi
 
-# Modify Config if needed
+# Modify server port if Cloud Run provides PORT
 if [ -n "${PORT:-}" ]; then
-  # Use sed for simpler replacement if format allows, but awk is robust
   tmp_cfg=$(mktemp)
   awk -v port="$PORT" '
     /^server:/ {print; in_server=1; addr_written=0; next}
@@ -128,7 +127,11 @@ if [ "$USE_STUNNEL" -eq 1 ]; then
     DB_PORT="5432"
 fi
 
-# If DB_HOST is set (either by user or Stunnel logic), reconstruct DSN
+# Override store driver/DSN from environment and fallback to memory when absent
+store_driver="${STORE_DRIVER:-}"
+store_dsn="${DB_DSN:-${DATABASE_URL:-}}"
+
+# If DB_HOST is set (either by user or Stunnel logic), construct DSN
 if [ -n "${DB_HOST:-}" ]; then
     DB_USER="${DB_USER:-$DEFAULT_DB_USER}"
     DB_PASS="${DB_PASSWORD:-$DEFAULT_DB_PASS}"
@@ -139,17 +142,49 @@ if [ -n "${DB_HOST:-}" ]; then
     # Construct DSN
     # Format: postgres://user:password@host:port/dbname?sslmode=disable
     DSN="postgres://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=${DB_SSLMODE}"
+    store_dsn="$DSN"
+    if [ -z "${store_driver}" ]; then
+        store_driver="postgres"
+    fi
+elif [ -n "${store_dsn}" ]; then
+    if [ -z "${store_driver}" ]; then
+        store_driver="postgres"
+    fi
+elif [ -z "${store_driver}" ] && [ -z "${store_dsn}" ]; then
+    store_driver="memory"
+fi
 
-    echo "Updating database configuration (DSN)..."
-    # Escape pipe characters in DSN to avoid sed issues
-    ESCAPED_DSN=$(printf '%s\n' "$DSN" | sed 's/|/\\|/g')
-    sed -i "s|dsn: \".*\"|dsn: \"${ESCAPED_DSN}\"|g" "${CONFIG_FILE}"
+# Apply store configuration to config file
+if [ -n "${store_driver}" ] || [ -n "${store_dsn}" ]; then
+  tmp_cfg=$(mktemp)
+  awk -v driver="$store_driver" -v dsn="$store_dsn" '
+    BEGIN {in_store=0; driver_written=0; dsn_written=0}
+    /^store:/ {print; in_store=1; next}
+    in_store && /^  driver:/ {
+      if (driver != "") {print "  driver: \"" driver "\""; driver_written=1; next}
+    }
+    in_store && /^  dsn:/ {
+      if (dsn != "") {print "  dsn: \"" dsn "\""; dsn_written=1; next}
+    }
+    in_store && /^[^ ]/ {
+      if (driver != "" && driver_written == 0) {print "  driver: \"" driver "\""; driver_written=1}
+      if (dsn != "" && dsn_written == 0) {print "  dsn: \"" dsn "\""; dsn_written=1}
+      in_store=0
+    }
+    {print}
+    END {
+      if (in_store) {
+        if (driver != "" && driver_written == 0) print "  driver: \"" driver "\"";
+        if (dsn != "" && dsn_written == 0) print "  dsn: \"" dsn "\"";
+      }
+    }
+  ' "${CONFIG_FILE}" > "${tmp_cfg}"
+  mv "${tmp_cfg}" "${CONFIG_FILE}"
+fi
 
-elif [ -n "${DB_PASSWORD:-}" ]; then
-    # Legacy fallback: User only provided password, assuming default host/user
-    echo "Updating database password..."
-    ESCAPED_PASS=$(printf '%s\n' "$DB_PASSWORD" | sed 's/|/\\|/g')
-    sed -i "s|:password@|:${ESCAPED_PASS}@|g" "${CONFIG_FILE}"
+# Inject DB Password into DSN if DB_PASSWORD is set
+if [ -n "${DB_PASSWORD:-}" ]; then
+    sed -i "s|:password@|:${DB_PASSWORD}@|g" "${CONFIG_FILE}"
 fi
 
 # Inject Auth Secrets
