@@ -1,3 +1,5 @@
+.env
+
 models/
 pg_jieba/
 hf_cache/

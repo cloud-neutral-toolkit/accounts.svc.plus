@@ -25,6 +25,8 @@ spec:
         - name: http1
           containerPort: 8080
         env:
+        - name: CONFIG_TEMPLATE
+          value: "/app/config/account.cloudrun.yaml"
         - name: PGADMIN_PASSWORD
           value: admin_password
         - name: DB_PASSWORD
@@ -35,7 +37,7 @@ spec:
         - name: DB_HOST
           value: "127.0.0.1"
         - name: DB_PORT
-          value: "5432"
+          value: "15432"
         - name: DB_USER
           value: postgres
         - name: DB_NAME
