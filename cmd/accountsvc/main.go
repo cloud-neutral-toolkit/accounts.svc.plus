@@ -82,9 +82,6 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		c.Next()
 		logger.Info("request", "method", c.Request.Method, "path", c.FullPath(), "status", c.Writer.Status(), "latency", time.Since(start))
 	})
-	r.GET("/healthz", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
 
 	storeCfg := store.Config{
 		Driver:       cfg.Store.Driver,
