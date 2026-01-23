@@ -14,7 +14,7 @@ auth:
     refreshExpiry: "168h"
 
 server:
-  addr: ":8080"
+  addr: "0.0.0.0:8080"
   readTimeout: 15s
   writeTimeout: 15s
   publicUrl: "https://accounts.svc.plus"
