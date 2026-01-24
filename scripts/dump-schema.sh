@@ -16,4 +16,11 @@ if [ -n "${SERVER_MAJOR}" ] && [ -n "${LOCAL_MAJOR}" ] && [ "${SERVER_MAJOR}" !=
   exit 0
 fi
 
-${PG_DUMP_BIN} -s -O -x "${DB_URL}" > "${SCHEMA_FILE}"
+TMP_SCHEMA="/tmp/schema.$$.sql"
+${PG_DUMP_BIN} -s -O -x "${DB_URL}" > "${TMP_SCHEMA}"
+if [ ! -w "${SCHEMA_FILE}" ]; then
+  echo "⚠️ ${SCHEMA_FILE} 不可写，已将导出结果保留在 ${TMP_SCHEMA}"
+  exit 0
+fi
+
+mv "${TMP_SCHEMA}" "${SCHEMA_FILE}"
