@@ -9,7 +9,14 @@ if ! command -v psql >/dev/null; then
   exit 1
 fi
 
-echo "正在以 postgres 超级用户身份创建用户..."
-sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}';" || echo "⚠️ 用户可能已存在"
-sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};"
+echo "正在以管理员身份创建用户..."
+if PGPASSWORD="${DB_ADMIN_PASS}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_ADMIN_USER}" -d postgres \
+  -Atc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -qx '1'; then
+  echo "⚠️ 用户可能已存在"
+else
+  PGPASSWORD="${DB_ADMIN_PASS}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_ADMIN_USER}" -d postgres \
+    -c "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}';"
+fi
+PGPASSWORD="${DB_ADMIN_PASS}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_ADMIN_USER}" -d postgres \
+  -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};"
 echo "✓ 数据库用户创建完成"

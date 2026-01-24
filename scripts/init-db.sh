@@ -9,5 +9,6 @@ if ! command -v psql >/dev/null; then
   exit 1
 fi
 
+bash scripts/ensure-db.sh
 bash scripts/init-db-core.sh
 bash scripts/init-db-replication.sh

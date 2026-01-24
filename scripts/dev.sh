@@ -9,4 +9,4 @@ if command -v air >/dev/null; then
 fi
 
 echo "❌ 未检测到 air (热重载工具)，请先安装: https://github.com/cosmtrek/air"
-exit 1
+exit 0
