@@ -40,13 +40,22 @@ SUPERADMIN_PASSWORD ?= ChangeMe
 SUPERADMIN_EMAIL    ?= admin@svc.plus
 
 export PATH := /usr/local/go/bin:$(PATH)
+export APP_NAME MAIN_FILE PORT OS \
+	DB_NAME DB_USER DB_PASS DB_HOST DB_PORT DB_URL \
+	REPLICATION_MODE DB_ADMIN_USER DB_ADMIN_PASS \
+	GCP_PROJECT GCP_REGION CLOUD_RUN_SERVICE CLOUD_RUN_SERVICE_YAML CLOUD_RUN_STUNNEL_CONF CLOUD_RUN_IMAGE \
+	SCHEMA_FILE PGLOGICAL_INIT_FILE PGLOGICAL_PATCH_FILE PGLOGICAL_REGION_FILE \
+	ACCOUNT_EXPORT_FILE ACCOUNT_IMPORT_FILE ACCOUNT_EMAIL_KEYWORD ACCOUNT_SYNC_CONFIG \
+	SUPERADMIN_USERNAME SUPERADMIN_PASSWORD SUPERADMIN_EMAIL \
+	ACCOUNT_IMPORT_MERGE ACCOUNT_IMPORT_MERGE_STRATEGY ACCOUNT_IMPORT_DRY_RUN \
+	ACCOUNT_IMPORT_MERGE_ALLOWLIST ACCOUNT_IMPORT_EXTRA_FLAGS
 
 # =========================================
 # 🧩 基础命令
 # =========================================
 
 .PHONY: all init build clean start stop restart dev test help \
-	init-db-core init-db-replication init-db-pglogical \
+	init-go init-db init-db-core init-db-replication init-db-pglogical \
 	reinit-pglogical account-sync-push account-sync-pull account-sync-mirror create-db-user db-reset \
 	cloudrun-build cloudrun-deploy cloudrun-stunnel
 
@@ -78,257 +87,119 @@ help:
 init: init-go init-db
 
 init-go:
-	@if [ ! -f go.mod ]; then \
-		echo ">>> go.mod not found, initializing module"; \
-		go mod init account; \
-	fi
-	go mod tidy
-	@echo ">>> 检查 Go 环境"
-	@if ! command -v go >/dev/null; then \
-		echo "未安装 Go，自动安装中..."; \
-		([ "$(OS)" = "Darwin" ] && brew install go@1.24 && brew link --overwrite --force go@1.24) || \
-		(sudo apt-get update && sudo apt-get install -y golang); \
-	fi
-	@echo ">>> 配置 Go Proxy"
-	@(curl -fsSL --max-time 5 https://goproxy.cn >/dev/null && go env -w GOPROXY=https://goproxy.cn,direct) || \
-	(go env -w GOPROXY=https://proxy.golang.org,direct)
-	@go mod tidy
+	@bash scripts/init-go.sh
 
 init-db:
-	@echo ">>> 初始化数据库 schema"
-	@command -v psql >/dev/null || (echo "❌ 未检测到 psql，请安装 PostgreSQL 客户端" && exit 1)
-	@$(MAKE) init-db-core
-	@$(MAKE) init-db-replication
+	@bash scripts/init-db.sh
 
 init-db-core:
-	@echo ">>> 初始化业务 schema ($(SCHEMA_FILE))"
-	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(SCHEMA_FILE)
+	@bash scripts/init-db-core.sh
 
 init-db-replication:
-	@if [ "$(REPLICATION_MODE)" = "pglogical" ]; then \
-		$(MAKE) init-db-pglogical; \
-	else \
-		echo ">>> 跳过 pglogical 初始化 (REPLICATION_MODE=$(REPLICATION_MODE))"; \
-	fi
+	@bash scripts/init-db-replication.sh
 
 init-db-pglogical:
-	@if [ -f $(PGLOGICAL_INIT_FILE) ]; then \
-		echo ">>> 初始化 pglogical schema (REPLICATION_MODE=pglogical)"; \
-		if PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d $(DB_NAME) \
-			-Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" 2>/dev/null | grep -qx 't'; then \
-			PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d $(DB_NAME) \
-				-v ON_ERROR_STOP=1 -f $(PGLOGICAL_INIT_FILE); \
-		elif psql "$(DB_URL)" -Atc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user" | grep -qx 't'; then \
-			psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_INIT_FILE); \
-		else \
-			echo "⚠️ 当前用户非超级用户，跳过 pglogical 初始化"; \
-		fi; \
-	fi; \
-	if [ -f $(PGLOGICAL_PATCH_FILE) ]; then \
-		echo ">>> 应用 pglogical 默认值补丁"; \
-		psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $(PGLOGICAL_PATCH_FILE); \
-	fi
+	@bash scripts/init-db-pglogical.sh
 
 # =========================================
 # 🧠 PGLogical 双节点初始化
 # =========================================
 
 init-pglogical-region:
-	@[ -n "$(REGION_DB_URL)" ] || (echo "❌ 缺少 REGION_DB_URL"; exit 1)
-	@[ -n "$(NODE_NAME)" ] || (echo "❌ 缺少 NODE_NAME"; exit 1)
-	@[ -n "$(NODE_DSN)" ] || (echo "❌ 缺少 NODE_DSN"; exit 1)
-	@[ -n "$(SUBSCRIPTION_NAME)" ] || (echo "❌ 缺少 SUBSCRIPTION_NAME"; exit 1)
-	@[ -n "$(PROVIDER_DSN)" ] || (echo "❌ 缺少 PROVIDER_DSN"; exit 1)
-	@psql "$(REGION_DB_URL)" -v ON_ERROR_STOP=1 \
-		-v NODE_NAME="$(NODE_NAME)" \
-		-v NODE_DSN="$(NODE_DSN)" \
-		-v SUBSCRIPTION_NAME="$(SUBSCRIPTION_NAME)" \
-		-v PROVIDER_DSN="$(PROVIDER_DSN)" \
-		-f $(PGLOGICAL_REGION_FILE)
+	@bash scripts/init-pglogical-region.sh
 
 init-pglogical-region-cn:
-	@$(MAKE) init-pglogical-region \
-		REGION_DB_URL="$(DB_URL)" \
-		NODE_NAME="node_cn" \
-		NODE_DSN="host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx" \
-		SUBSCRIPTION_NAME="sub_from_global" \
-		PROVIDER_DSN="host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx"
+	@bash scripts/init-pglogical-region-cn.sh
 
 init-pglogical-region-global:
-	@$(MAKE) init-pglogical-region \
-		REGION_DB_URL="$(DB_URL)" \
-		NODE_NAME="node_global" \
-		NODE_DSN="host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx" \
-		SUBSCRIPTION_NAME="sub_from_cn" \
-		PROVIDER_DSN="host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx"
+	@bash scripts/init-pglogical-region-global.sh
 
 # =========================================
 # 📦 数据库迁移与管理
 # =========================================
 
 create-db-user:
-	@echo ">>> 创建数据库用户 $(DB_USER)"
-	@command -v psql >/dev/null || (echo "❌ 未检测到 psql，请安装 PostgreSQL 客户端" && exit 1)
-	@echo "正在以 postgres 超级用户身份创建用户..."
-	@sudo -u postgres psql -c "CREATE USER $(DB_USER) WITH PASSWORD '$(DB_PASS)';" || echo "⚠️ 用户可能已存在"
-	@sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $(DB_NAME) TO $(DB_USER);"
-	@echo "✓ 数据库用户创建完成"
+	@bash scripts/create-db-user.sh
 
 migrate-db:
-	@echo ">>> 执行数据库迁移"
-	@go run ./cmd/migratectl/main.go migrate --dsn "$(DB_URL)" --dir sql/migrations
+	@bash scripts/migrate-db.sh
 
 dump-schema:
-	@echo ">>> 导出 schema 到 $(SCHEMA_FILE)"
-	@pg_dump -s -O -x "$(DB_URL)" > $(SCHEMA_FILE)
+	@bash scripts/dump-schema.sh
 
 db-reset:
-	@echo "⚠️ 即将重置整个 PostgreSQL 数据库集群 ..."
-	@read -p "确定要重置数据库集群? 这将删除所有数据! [y/N] " confirm && \
-	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
-		echo ">>> 停止 PostgreSQL 服务 ..."; \
-		sudo systemctl stop postgresql; \
-		echo ">>> 删除数据库集群 16 main ..."; \
-		sudo pg_dropcluster --stop 16 main; \
-		echo ">>> 清理数据目录 ..."; \
-		sudo rm -rf /var/lib/postgresql/16/main; \
-		echo ">>> 清理配置目录 ..."; \
-		sudo rm -rf /etc/postgresql/16/main; \
-		echo ">>> 创建新的数据库集群 ..."; \
-		sudo pg_createcluster 16 main --start; \
-		echo "✓ PostgreSQL 集群重置完成"; \
-	else \
-		echo "取消重置"; \
-	fi
+	@bash scripts/db-reset.sh
 
 drop-db:
-	@echo "⚠️  即将删除数据库 $(DB_NAME) ..."
-	@read -p "确定要删除数据库 $(DB_NAME)? [y/N] " confirm && \
-	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
-		echo ">>> 强制断开现有连接 ..."; \
-		if ! PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d postgres \
-			-c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='$(DB_NAME)' AND pid <> pg_backend_pid();"; then \
-			echo "⚠️ 无法断开所有连接（需要超级用户权限）"; \
-		fi; \
-		echo ">>> 清理 pglogical schema ..."; \
-		PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d $(DB_NAME) \
-			-c "DROP SCHEMA IF EXISTS pglogical CASCADE;" >/dev/null 2>&1 || \
-			echo "⚠️ 无法删除 pglogical schema（数据库可能不存在或缺少权限）"; \
-		echo ">>> 删除数据库 $(DB_NAME) ..."; \
-		if PGPASSWORD="$(DB_ADMIN_PASS)" psql -h $(DB_HOST) -U $(DB_ADMIN_USER) -d postgres \
-			-c "DROP DATABASE IF EXISTS $(DB_NAME);"; then \
-			echo ">>> 数据库已删除"; \
-		else \
-			echo ">>> 删除失败"; \
-		fi; \
-	else \
-		echo "取消删除"; \
-	fi
+	@bash scripts/drop-db.sh
 
 reset-public-schema:
-	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -v db_user="$(DB_USER)" -f sql/reset_public_schema.sql
+	@bash scripts/reset-public-schema.sh
 
 reinit-db:
-	@echo ">>> 重置业务 schema (sql/schema.sql)"
-	@$(MAKE) reset-public-schema
-	@$(MAKE) init-db-core
+	@bash scripts/reinit-db.sh
 
 reinit-pglogical:
-	@if [ "$(REPLICATION_MODE)" = "pglogical" ]; then \
-		echo ">>> 重新初始化 pglogical schema"; \
-		$(MAKE) init-db-pglogical; \
-	else \
-		echo ">>> 当前 REPLICATION_MODE=$(REPLICATION_MODE)，无需 pglogical 处理"; \
-	fi
+	@bash scripts/reinit-pglogical.sh
 
 # =========================================
 # 💾 账号导入导出
 # =========================================
 
 account-export:
-	@go run ./cmd/migratectl/main.go export --dsn "$(DB_URL)" --output "$(ACCOUNT_EXPORT_FILE)" $(if $(ACCOUNT_EMAIL_KEYWORD),--email "$(ACCOUNT_EMAIL_KEYWORD)")
+	@bash scripts/account-export.sh
 
 account-import:
-	@[ -f "$(ACCOUNT_IMPORT_FILE)" ] || (echo "❌ 未找到文件 $(ACCOUNT_IMPORT_FILE)"; exit 1)
-	@go run ./cmd/migratectl/main.go import --dsn "$(DB_URL)" --file "$(ACCOUNT_IMPORT_FILE)" \
-	        $(if $(ACCOUNT_IMPORT_MERGE),--merge) \
-	        $(if $(ACCOUNT_IMPORT_MERGE_STRATEGY),--merge-strategy "$(ACCOUNT_IMPORT_MERGE_STRATEGY)") \
-	        $(if $(ACCOUNT_IMPORT_DRY_RUN),--dry-run) \
-	        $(foreach UUID,$(ACCOUNT_IMPORT_MERGE_ALLOWLIST),--merge-allowlist $(UUID)) \
-	        $(ACCOUNT_IMPORT_EXTRA_FLAGS)
+	@bash scripts/account-import.sh
 
 account-sync-push:
-	@[ -f "$(ACCOUNT_SYNC_CONFIG)" ] || (echo "❌ 未找到配置文件 $(ACCOUNT_SYNC_CONFIG)"; exit 1)
-	@go run ./cmd/syncctl/main.go push --config "$(ACCOUNT_SYNC_CONFIG)"
+	@bash scripts/account-sync-push.sh
 
 account-sync-pull:
-	@[ -f "$(ACCOUNT_SYNC_CONFIG)" ] || (echo "❌ 未找到配置文件 $(ACCOUNT_SYNC_CONFIG)"; exit 1)
-	@go run ./cmd/syncctl/main.go pull --config "$(ACCOUNT_SYNC_CONFIG)"
+	@bash scripts/account-sync-pull.sh
 
 account-sync-mirror:
-	@[ -f "$(ACCOUNT_SYNC_CONFIG)" ] || (echo "❌ 未找到配置文件 $(ACCOUNT_SYNC_CONFIG)"; exit 1)
-	@go run ./cmd/syncctl/main.go mirror --config "$(ACCOUNT_SYNC_CONFIG)"
+	@bash scripts/account-sync-mirror.sh
 
 create-super-admin:
-	@[ -n "$(SUPERADMIN_USERNAME)" ] && [ -n "$(SUPERADMIN_PASSWORD)" ] || (echo "❌ 请指定用户名与密码"; exit 1)
-	@go run ./cmd/createadmin/main.go \
-		--driver postgres \
-		--dsn "$(DB_URL)" \
-		--username "$(SUPERADMIN_USERNAME)" \
-		--password "$(SUPERADMIN_PASSWORD)" \
-		--email "$(SUPERADMIN_EMAIL)"
+	@bash scripts/create-super-admin.sh
 
 # =========================================
 # ⚙️ 编译与运行
 # =========================================
 
 build: init-go
-	@go build -o $(APP_NAME) $(MAIN_FILE)
+	@bash scripts/build.sh
 
 upgrade: build
-	systemctl stop xcontrol-account
-	cp xcontrol-account /usr/bin/xcontrol-account
-	systemctl start xcontrol-account
+	@bash scripts/upgrade.sh
 
 start: build
-	@./$(APP_NAME) --config config/account.yaml
+	@bash scripts/start.sh
 
 stop:
-	@pkill -f "$(APP_NAME)" || echo "⚠️ 未找到运行进程"
+	@bash scripts/stop.sh
 
 restart: stop start
 
 test:
-	go test ./...
+	@bash scripts/test.sh
 
 clean:
-	rm -f $(APP_NAME) *.pid *.log
+	@bash scripts/clean.sh
+
+dev:
+	@bash scripts/dev.sh
 
 # =========================================
 # ☁️ GCP Cloud Run
 # =========================================
 
 cloudrun-build:
-	@if [ -z "$(GCP_PROJECT)" ]; then \
-		echo "❌ GCP_PROJECT 不能为空"; \
-		exit 1; \
-	fi
-	@gcloud builds submit --tag "$(CLOUD_RUN_IMAGE)" .
+	@bash scripts/cloudrun-build.sh
 
 cloudrun-deploy:
-	@if [ -z "$(GCP_PROJECT)" ]; then \
-		echo "❌ GCP_PROJECT 不能为空"; \
-		exit 1; \
-	fi
-	@gcloud run services replace "$(CLOUD_RUN_SERVICE_YAML)" --region "$(GCP_REGION)" --project "$(GCP_PROJECT)"
+	@bash scripts/cloudrun-deploy.sh
 
 cloudrun-stunnel:
-	@if [ -z "$(GCP_PROJECT)" ]; then \
-		echo "❌ GCP_PROJECT 不能为空"; \
-		exit 1; \
-	fi
-	@if [ ! -f "$(CLOUD_RUN_STUNNEL_CONF)" ]; then \
-		echo "❌ 未找到 stunnel 配置: $(CLOUD_RUN_STUNNEL_CONF)"; \
-		exit 1; \
-	fi
-	@gcloud secrets versions add stunnel-config --data-file "$(CLOUD_RUN_STUNNEL_CONF)" --project "$(GCP_PROJECT)"
+	@bash scripts/cloudrun-stunnel.sh
