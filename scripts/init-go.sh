@@ -23,10 +23,6 @@ if ! command -v go >/dev/null; then
 fi
 
 echo ">>> 配置 Go Proxy"
-if curl -fsSL --max-time 5 https://goproxy.cn >/dev/null; then
-  go env -w GOPROXY=https://goproxy.cn,direct
-else
-  go env -w GOPROXY=https://proxy.golang.org,direct
-fi
+go env -w GOPROXY=https://proxy.golang.org,direct
 
 go mod tidy
