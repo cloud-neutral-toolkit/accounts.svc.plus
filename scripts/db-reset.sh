@@ -4,6 +4,10 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 
 echo "⚠️ 即将重置整个 PostgreSQL 数据库集群 ..."
+if [ "${OS}" = "Darwin" ]; then
+  echo "⚠️ macOS 不支持 pg_dropcluster/systemctl，跳过重置"
+  exit 0
+fi
 read -r -p "确定要重置数据库集群? 这将删除所有数据! [y/N] " confirm
 if [ "${confirm}" = "y" ] || [ "${confirm}" = "Y" ]; then
   echo ">>> 停止 PostgreSQL 服务 ..."

@@ -8,8 +8,8 @@ PORT        ?= 8080
 OS          := $(shell uname -s)
 
 DB_NAME     := account
-DB_USER     := shenlan
-DB_PASS     := password
+DB_USER     ?= $(or $(POSTGRES_USER),shenlan)
+DB_PASS     ?= $(or $(POSTGRES_PASSWORD),password)
 DB_HOST     := 127.0.0.1
 DB_PORT     := 15432
 DB_URL      := postgres://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable
@@ -56,6 +56,7 @@ export APP_NAME MAIN_FILE PORT OS \
 
 .PHONY: all init build clean start stop restart dev test help \
 	init-go init-db init-db-core init-db-replication init-db-pglogical \
+	stunnel-start \
 	reinit-pglogical account-sync-push account-sync-pull account-sync-mirror create-db-user db-reset \
 	cloudrun-build cloudrun-deploy cloudrun-stunnel
 
@@ -141,6 +142,9 @@ reinit-db:
 
 reinit-pglogical:
 	@bash scripts/reinit-pglogical.sh
+
+stunnel-start:
+	@bash scripts/stunnel-start.sh
 
 # =========================================
 # 💾 账号导入导出
