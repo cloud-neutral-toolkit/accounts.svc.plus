@@ -11,7 +11,7 @@ DB_NAME     := account
 DB_USER     := shenlan
 DB_PASS     := password
 DB_HOST     := 127.0.0.1
-DB_PORT     := 5432
+DB_PORT     := 15432
 DB_URL      := postgres://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable
 
 REPLICATION_MODE ?= pgsync
