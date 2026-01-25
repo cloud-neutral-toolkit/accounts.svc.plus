@@ -14,6 +14,7 @@ server:
     - "https://www.svc.plus"
     - "https://global-homepage.svc.plus"
     - "https://accounts.svc.plus"
+    - "https://console.svc.plus"
     - "https://localhost:8443"
     - "http://localhost:8080"
     - "http://127.0.0.1:8080"
