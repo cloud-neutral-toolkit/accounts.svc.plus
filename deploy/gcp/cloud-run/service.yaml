@@ -51,11 +51,11 @@ spec:
           value: account
         # --- SMTP Configuration ---
         - name: SMTP_HOST
-          value: "smtp.gmail.com"
+          value: "smtp.qq.com"
         - name: SMTP_PORT
           value: "587"
         - name: SMTP_FROM
-          value: "XControl Account <no-reply@svc.plus>"
+          value: "XControl Account <manbuzhe2009@qq.com>"
         - name: SMTP_USERNAME
           valueFrom:
             secretKeyRef:
