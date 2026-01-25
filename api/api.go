@@ -1270,27 +1270,33 @@ func (h *handler) enqueueEmailVerification(ctx context.Context, user *store.User
 		return errors.New("user email is empty")
 	}
 
+	normalizedEmail := strings.ToLower(email)
 	ttl := h.verificationTTL
 	if ttl <= 0 {
 		ttl = defaultEmailVerificationTTL
 	}
 
-	expiresAt := time.Now().Add(ttl)
-	code, err := h.newVerificationCode()
-	if err != nil {
-		return err
-	}
-
-	normalizedEmail := strings.ToLower(email)
-	verification := emailVerification{
-		userID:    user.ID,
-		email:     normalizedEmail,
-		code:      code,
-		expiresAt: expiresAt,
-	}
-
 	h.verificationMu.Lock()
-	h.verifications[normalizedEmail] = verification
+	var code string
+	var expiresAt time.Time
+	if existing, ok := h.verifications[normalizedEmail]; ok && time.Now().Before(existing.expiresAt) {
+		code = existing.code
+		expiresAt = existing.expiresAt
+	} else {
+		var err error
+		code, err = h.newVerificationCode()
+		if err != nil {
+			h.verificationMu.Unlock()
+			return err
+		}
+		expiresAt = time.Now().Add(ttl)
+		h.verifications[normalizedEmail] = emailVerification{
+			userID:    user.ID,
+			email:     normalizedEmail,
+			code:      code,
+			expiresAt: expiresAt,
+		}
+	}
 	h.verificationMu.Unlock()
 
 	name := strings.TrimSpace(user.Name)
@@ -1310,7 +1316,8 @@ func (h *handler) enqueueEmailVerification(ctx context.Context, user *store.User
 	}
 
 	if err := h.emailSender.Send(ctx, msg); err != nil {
-		h.removeEmailVerification(normalizedEmail)
+		// Log but don't delete immediately to allow retries with same code
+		slog.Error("failed to send verification email", "err", err, "email", email)
 		return err
 	}
 
@@ -1355,23 +1362,27 @@ func (h *handler) issueRegistrationVerification(ctx context.Context, email strin
 		ttl = defaultEmailVerificationTTL
 	}
 
-	code, err := h.newVerificationCode()
-	if err != nil {
-		return registrationVerification{}, err
-	}
-
-	verification := registrationVerification{
-		email:     normalized,
-		code:      code,
-		expiresAt: time.Now().Add(ttl),
-	}
-
 	h.registrationMu.Lock()
-	h.registrationVerifications[normalized] = verification
+	var verification registrationVerification
+	if existing, ok := h.registrationVerifications[normalized]; ok && time.Now().Before(existing.expiresAt) {
+		verification = existing
+	} else {
+		code, err := h.newVerificationCode()
+		if err != nil {
+			h.registrationMu.Unlock()
+			return registrationVerification{}, err
+		}
+		verification = registrationVerification{
+			email:     normalized,
+			code:      code,
+			expiresAt: time.Now().Add(ttl),
+		}
+		h.registrationVerifications[normalized] = verification
+	}
 	h.registrationMu.Unlock()
 
 	// [DEBUG] Log the verification code to stdout so we can see it in logs
-	slog.Info("issued registration verification code", "email", normalized, "code", code)
+	slog.Info("issued registration verification code", "email", normalized, "code", verification.code)
 
 	trimmedEmail := strings.TrimSpace(email)
 	if trimmedEmail == "" {
@@ -1381,13 +1392,13 @@ func (h *handler) issueRegistrationVerification(ctx context.Context, email strin
 	subject := "Verify your email for XControl"
 	plainBody := fmt.Sprintf(
 		"Hello,\n\nUse the following verification code to continue creating your XControl account: %s\n\nThis code expires at %s UTC (in %d minutes).\nIf you did not request this email you can ignore it.\n",
-		code,
+		verification.code,
 		verification.expiresAt.UTC().Format(time.RFC3339),
 		int(ttl.Minutes()),
 	)
 	htmlBody := fmt.Sprintf(
 		"<p>Hello,</p><p>Use the following verification code to continue creating your XControl account:</p><p><strong>%s</strong></p><p>This code expires at %s UTC (in %d minutes).</p><p>If you did not request this email you can ignore it.</p>",
-		html.EscapeString(code),
+		html.EscapeString(verification.code),
 		verification.expiresAt.UTC().Format(time.RFC3339),
 		int(ttl.Minutes()),
 	)
@@ -1400,7 +1411,8 @@ func (h *handler) issueRegistrationVerification(ctx context.Context, email strin
 	}
 
 	if err := h.emailSender.Send(ctx, msg); err != nil {
-		h.removeRegistrationVerification(normalized)
+		// Log but don't delete to allow reuse/resend attempts
+		slog.Error("failed to send registration verification email", "err", err, "email", email)
 		return registrationVerification{}, err
 	}
 
