@@ -67,9 +67,9 @@ go run ./cmd/migratectl/main.go check --cn "$CN_DSN" --global "$GLOBAL_DSN"
    make -C account init-pglogical-region \
      REGION_DB_URL="$REGION_DB_URL" \
      NODE_NAME=node_cn \
-     NODE_DSN="host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx" \
+     NODE_DSN="host=cn-homepage.svc.plus port=5432 dbname=account user=${PGLOGICAL_USER} password=${PGLOGICAL_PASSWORD}" \
      SUBSCRIPTION_NAME=sub_from_global \
-     PROVIDER_DSN="host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx"
+     PROVIDER_DSN="host=global-homepage.svc.plus port=5432 dbname=account user=${PGLOGICAL_USER} password=${PGLOGICAL_PASSWORD}"
    ```
 
 4. 在另一侧节点重复执行并互为订阅，实现双主写入。
@@ -85,21 +85,21 @@ pglogical schema 与业务 schema 分离，以防逻辑复制函数污染业务�
 bash
 复制代码
 sudo -u postgres psql -d account -c "GRANT USAGE ON SCHEMA pglogical TO PUBLIC;"
-2️⃣ 授权业务用户（shenlan）
+2️⃣ 授权业务用户（app_user）
 sql
 复制代码
 -- 登录 postgres
 sudo -u postgres psql -d account
 
--- 授权 shenlan 对 public schema 全权限
-ALTER SCHEMA public OWNER TO shenlan;
-GRANT ALL ON SCHEMA public TO shenlan;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO shenlan;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO shenlan;
-GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO shenlan;
+-- 授权 app_user 对 public schema 全权限
+ALTER SCHEMA public OWNER TO app_user;
+GRANT ALL ON SCHEMA public TO app_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO app_user;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO app_user;
+GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO app_user;
 
 -- 授权 pglogical schema 使用权限（仅使用，不可修改）
-GRANT USAGE ON SCHEMA pglogical TO shenlan;
+GRANT USAGE ON SCHEMA pglogical TO app_user;
 
 \q
 ⚙️ 执行顺序建议
@@ -123,17 +123,17 @@ GRANT USAGE ON SCHEMA pglogical TO shenlan;
 # Global 节点示例
 psql "$REGION_GLOBAL_DB_URL" -v ON_ERROR_STOP=1 \
   -v NODE_NAME=node_global \
-  -v NODE_DSN='host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx' \
+  -v NODE_DSN='host=global-homepage.svc.plus port=5432 dbname=account user=${PGLOGICAL_USER} password=${PGLOGICAL_PASSWORD}' \
   -v SUBSCRIPTION_NAME=sub_from_cn \
-  -v PROVIDER_DSN='host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx' \
+  -v PROVIDER_DSN='host=cn-homepage.svc.plus port=5432 dbname=account user=${PGLOGICAL_USER} password=${PGLOGICAL_PASSWORD}' \
   -f account/sql/schema_pglogical_region.sql
 
 # CN 节点示例
 psql "$REGION_CN_DB_URL" -v ON_ERROR_STOP=1 \
   -v NODE_NAME=node_cn \
-  -v NODE_DSN='host=cn-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxxx' \
+  -v NODE_DSN='host=cn-homepage.svc.plus port=5432 dbname=account user=${PGLOGICAL_USER} password=${PGLOGICAL_PASSWORD}' \
   -v SUBSCRIPTION_NAME=sub_from_global \
-  -v PROVIDER_DSN='host=global-homepage.svc.plus port=5432 dbname=account user=pglogical password=xxx' \
+  -v PROVIDER_DSN='host=global-homepage.svc.plus port=5432 dbname=account user=${PGLOGICAL_USER} password=${PGLOGICAL_PASSWORD}' \
   -f account/sql/schema_pglogical_region.sql
 ```
 
@@ -143,12 +143,12 @@ psql "$REGION_CN_DB_URL" -v ON_ERROR_STOP=1 \
 make init-pglogical-region \
   REGION_DB_URL="$REGION_DB_URL" \
   NODE_NAME=node_example \
-  NODE_DSN="host=example port=5432 dbname=account user=pglogical password=secret" \
+  NODE_DSN="host=example port=5432 dbname=account user=${PGLOGICAL_USER} password=${PGLOGICAL_PASSWORD}" \
   SUBSCRIPTION_NAME=sub_from_peer \
-  PROVIDER_DSN="host=peer port=5432 dbname=account user=pglogical password=secret"
+  PROVIDER_DSN="host=peer port=5432 dbname=account user=${PGLOGICAL_USER} password=${PGLOGICAL_PASSWORD}"
 ```
 
-- 若使用业务账号（如 `shenlan`）执行初始化，PostgreSQL 会提示缺少超级用户权限并跳过 `pglogical` 初始化。
+- 若使用业务账号（如 `app_user`）执行初始化，PostgreSQL 会提示缺少超级用户权限并跳过 `pglogical` 初始化。
 - 建议改用 `postgres` 等超级用户连接执行，或由管理员预先安装 `pglogical` 扩展并授予业务用户访问权限。
 - 如果扩展已由管理员创建，可直接重新运行 `make init-pglogical-region-cn` 完成复制集与订阅配置。
 

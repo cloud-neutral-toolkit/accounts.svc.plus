@@ -7,8 +7,12 @@ MAIN_FILE   := ./cmd/accountsvc/main.go
 PORT        ?= 8080
 OS          := $(shell uname -s)
 
+# Load local environment overrides if present.
+-include .env
+export
+
 DB_NAME     := account
-DB_USER     ?= $(or $(POSTGRES_USER),shenlan)
+DB_USER     ?= $(or $(POSTGRES_USER),postgres)
 DB_PASS     ?= $(or $(POSTGRES_PASSWORD),password)
 DB_HOST     := 127.0.0.1
 DB_PORT     := 15432
@@ -54,7 +58,7 @@ export APP_NAME MAIN_FILE PORT OS \
 # 🧩 基础命令
 # =========================================
 
-.PHONY: all init build clean start stop restart dev test help \
+.PHONY: all init build clean start stop restart dev test help integration-test \
 	init-go init-db init-db-core init-db-replication init-db-pglogical \
 	stunnel-start \
 	reinit-pglogical account-sync-push account-sync-pull account-sync-mirror create-db-user db-reset \
@@ -77,6 +81,7 @@ help:
 	@echo "make reinit-pglogical   重新初始化 pglogical schema"
 	@echo "make dev                热重载开发模式"
 	@echo "make clean              清理构建产物"
+	@echo "make integration-test   运行集成测试用例（初始化 + 创建管理员）"
 	@echo "make cloudrun-build     构建并推送 Cloud Run 镜像"
 	@echo "make cloudrun-deploy    部署 Cloud Run Service"
 	@echo "make cloudrun-stunnel   更新 Cloud Run stunnel 配置 secret"
@@ -167,6 +172,9 @@ account-sync-mirror:
 
 create-super-admin:
 	@bash scripts/create-super-admin.sh
+
+integration-test:
+	@bash integration-test/superadmin-login/run-test-scripts.sh
 
 # =========================================
 # ⚙️ 编译与运行
