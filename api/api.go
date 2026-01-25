@@ -359,11 +359,6 @@ func (h *handler) register(c *gin.Context) {
 			return
 		}
 
-		if !verification.verified {
-			respondError(c, http.StatusBadRequest, "verification_required", "verification code is required")
-			return
-		}
-
 		if verification.code != code {
 			respondError(c, http.StatusBadRequest, "invalid_code", "verification code is invalid or expired")
 			return
