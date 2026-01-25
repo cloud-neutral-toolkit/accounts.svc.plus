@@ -70,6 +70,14 @@ printf "xxxx xxxx xxxx xxxx" | gcloud secrets versions add smtp-password --data-
     4.  验证域名所有权（输入发送到域名邮箱的验证码）。
 *   **风险**：接收方可能会看到 "由 gmail.com 代发" 的提示。
 
+### 情况 C：直接使用个人 Gmail (无域名)
+*   **适用场景**：您只想用个人的 `gmail.com` 邮箱发送通知，不强制要求域名。
+*   **配置方式**：
+    *   **SMTP Username**: 您的完整 Gmail 地址 (例如 `yourname@gmail.com`)。
+    *   **SMTP Password**: 您的 16 位**应用专用密码**。
+    *   **SMTP From**: 设置为 `XControl <yourname@gmail.com>`。
+    *   **Cloud Run Env**: 将 `SMTP_FROM` 环境变量修改为您的 Gmail 地址。
+
 ---
 
 ## 4. 部署到 Cloud Run
