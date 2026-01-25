@@ -13,7 +13,7 @@ set -euo pipefail
 # 配置参数（可通过环境变量覆盖）
 # -----------------------------------------------------------------------------
 DB_NAME="${DB_NAME:-account}"
-DB_USER="${DB_USER:-shenlan}"
+DB_USER="${DB_USER:-${POSTGRES_USER:-postgres}}"
 DB_PASS="${DB_PASS:-password}"
 DB_PORT="${DB_PORT:-5432}"
 DB_HOST="${DB_HOST:-127.0.0.1}"
