@@ -44,11 +44,11 @@ session:
     password: ""
 
 smtp:
-  host: "smtp.example.com"
-  port: 587
-  username: "apikey"
-  password: "change-me"
-  from: "XControl Account <no-reply@example.com>"
+  host: "${SMTP_HOST}"
+  port: ${SMTP_PORT}
+  username: "${SMTP_USERNAME}"
+  password: "${SMTP_PASSWORD}"
+  from: "${SMTP_FROM}"
   replyTo: ""
   timeout: 10s
   tls:

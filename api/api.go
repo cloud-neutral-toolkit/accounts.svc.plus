@@ -1375,6 +1375,9 @@ func (h *handler) issueRegistrationVerification(ctx context.Context, email strin
 	h.registrationVerifications[normalized] = verification
 	h.registrationMu.Unlock()
 
+	// [DEBUG] Log the verification code to stdout so we can see it in logs
+	slog.Info("issued registration verification code", "email", normalized, "code", code)
+
 	trimmedEmail := strings.TrimSpace(email)
 	if trimmedEmail == "" {
 		trimmedEmail = normalized
