@@ -10,7 +10,8 @@
 
 local:
   # 本地 PostgreSQL 连接地址，用于导入/导出账号数据
-  dsn: "postgres://shenlan:password@127.0.0.1:5432/account?sslmode=disable"
+  # 提示：本地默认从 .env 读取 POSTGRES_USER / POSTGRES_PASSWORD
+  dsn: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/account?sslmode=disable"
   # 可选：按 email 关键字过滤导出的账号
   email_keyword: ""
   # 导出的快照文件路径（默认 account-export.yaml）
@@ -47,4 +48,3 @@ remote:
 
   # SSH 连接超时时间
   timeout: 30s
-
