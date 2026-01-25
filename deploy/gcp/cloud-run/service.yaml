@@ -49,6 +49,23 @@ spec:
           value: postgres
         - name: DB_NAME
           value: account
+        # --- SMTP Configuration ---
+        - name: SMTP_HOST
+          value: "smtp.gmail.com"
+        - name: SMTP_PORT
+          value: "587"
+        - name: SMTP_FROM
+          value: "XControl Account <no-reply@svc.plus>"
+        - name: SMTP_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: smtp-username
+              key: latest
+        - name: SMTP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: smtp-password
+              key: latest
         resources:
           limits:
             cpu: 1000m
