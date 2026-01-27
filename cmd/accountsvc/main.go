@@ -211,10 +211,12 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 				{
 					Definition: xrayconfig.XHTTPDefinition(),
 					OutputPath: "/usr/local/etc/xray/config.json", // Match user's xhttp config path
+					Domain:     cfg.Xray.Sync.Domain,
 				},
 				{
 					Definition: xrayconfig.TCPDefinition(),
 					OutputPath: "/usr/local/etc/xray/tcp-config.json", // Match user's tcp config path
+					Domain:     cfg.Xray.Sync.Domain,
 				},
 			},
 			ValidateCommand: cfg.Xray.Sync.ValidateCommand,

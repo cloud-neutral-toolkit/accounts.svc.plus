@@ -119,6 +119,7 @@ type Xray struct {
 type XraySync struct {
 	Enabled         bool          `yaml:"enabled"`
 	Interval        time.Duration `yaml:"interval"`
+	Domain          string        `yaml:"domain"`
 	OutputPath      string        `yaml:"outputPath"`
 	TemplatePath    string        `yaml:"templatePath"`
 	ValidateCommand []string      `yaml:"validateCommand"`
