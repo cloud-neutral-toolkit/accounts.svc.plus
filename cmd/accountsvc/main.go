@@ -204,10 +204,19 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 			outputPath = "/usr/local/etc/xray/config.json"
 		}
 		syncer, err := xrayconfig.NewPeriodicSyncer(xrayconfig.PeriodicOptions{
-			Logger:          logger.With("component", "xray-sync"),
-			Interval:        syncInterval,
-			Source:          gormSource,
-			Generator:       xrayconfig.Generator{Definition: xrayconfig.DefaultDefinition(), OutputPath: outputPath},
+			Logger:   logger.With("component", "xray-sync"),
+			Interval: syncInterval,
+			Source:   gormSource,
+			Generators: []xrayconfig.Generator{
+				{
+					Definition: xrayconfig.XHTTPDefinition(),
+					OutputPath: "/usr/local/etc/xray/config.json", // Match user's xhttp config path
+				},
+				{
+					Definition: xrayconfig.TCPDefinition(),
+					OutputPath: "/usr/local/etc/xray/tcp-config.json", // Match user's tcp config path
+				},
+			},
 			ValidateCommand: cfg.Xray.Sync.ValidateCommand,
 			RestartCommand:  cfg.Xray.Sync.RestartCommand,
 		})
