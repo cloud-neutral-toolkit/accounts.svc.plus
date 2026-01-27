@@ -5,6 +5,12 @@ import _ "embed"
 var (
 	//go:embed template_server.json
 	serverTemplateJSON []byte
+
+	//go:embed template_tcp.json
+	tcpTemplateJSON []byte
+
+	//go:embed template_xhttp.json
+	xhttpTemplateJSON []byte
 )
 
 // DefaultDefinition returns the built-in Xray configuration definition used when
@@ -12,5 +18,15 @@ var (
 // that configuration rendering no longer depends on filesystem state at
 // runtime.
 func DefaultDefinition() Definition {
-	return JSONDefinition{Raw: append([]byte(nil), serverTemplateJSON...)}
+	return TCPDefinition()
+}
+
+// TCPDefinition returns the Xray configuration for TCP transport.
+func TCPDefinition() Definition {
+	return JSONDefinition{Raw: append([]byte(nil), tcpTemplateJSON...)}
+}
+
+// XHTTPDefinition returns the Xray configuration for XHTTP transport.
+func XHTTPDefinition() Definition {
+	return JSONDefinition{Raw: append([]byte(nil), xhttpTemplateJSON...)}
 }

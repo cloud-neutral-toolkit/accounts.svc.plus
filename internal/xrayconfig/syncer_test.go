@@ -35,24 +35,24 @@ func TestNewPeriodicSyncerValidation(t *testing.T) {
 		{
 			name: "missing source",
 			opts: PeriodicOptions{
-				Interval:  time.Minute,
-				Generator: Generator{Definition: JSONDefinition{Raw: []byte(minimalTemplate)}, OutputPath: output},
+				Interval:   time.Minute,
+				Generators: []Generator{{Definition: JSONDefinition{Raw: []byte(minimalTemplate)}, OutputPath: output}},
 			},
 		},
 		{
 			name: "missing output",
 			opts: PeriodicOptions{
-				Interval:  time.Minute,
-				Source:    staticSource{},
-				Generator: Generator{Definition: JSONDefinition{Raw: []byte(minimalTemplate)}},
+				Interval:   time.Minute,
+				Source:     staticSource{},
+				Generators: []Generator{{Definition: JSONDefinition{Raw: []byte(minimalTemplate)}}},
 			},
 		},
 		{
 			name: "non-positive interval",
 			opts: PeriodicOptions{
-				Interval:  0,
-				Source:    staticSource{},
-				Generator: Generator{Definition: JSONDefinition{Raw: []byte(minimalTemplate)}, OutputPath: output},
+				Interval:   0,
+				Source:     staticSource{},
+				Generators: []Generator{{Definition: JSONDefinition{Raw: []byte(minimalTemplate)}, OutputPath: output}},
 			},
 		},
 	}
@@ -71,7 +71,7 @@ func TestPeriodicSyncerSyncSuccess(t *testing.T) {
 	opts := PeriodicOptions{
 		Interval:        time.Minute,
 		Source:          staticSource{clients: []Client{{ID: "uuid-a", Email: "a@example"}, {ID: "uuid-b"}}},
-		Generator:       Generator{Definition: JSONDefinition{Raw: []byte(minimalTemplate)}, OutputPath: output},
+		Generators:      []Generator{{Definition: JSONDefinition{Raw: []byte(minimalTemplate)}, OutputPath: output}},
 		ValidateCommand: []string{"echo", "validate"},
 		RestartCommand:  []string{"echo", "restart"},
 	}
@@ -112,9 +112,9 @@ func TestPeriodicSyncerSyncSuccess(t *testing.T) {
 func TestPeriodicSyncerSyncError(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "config.json")
 	opts := PeriodicOptions{
-		Interval:  time.Minute,
-		Source:    staticSource{err: errors.New("boom")},
-		Generator: Generator{Definition: JSONDefinition{Raw: []byte(minimalTemplate)}, OutputPath: output},
+		Interval:   time.Minute,
+		Source:     staticSource{err: errors.New("boom")},
+		Generators: []Generator{{Definition: JSONDefinition{Raw: []byte(minimalTemplate)}, OutputPath: output}},
 	}
 	syncer, err := NewPeriodicSyncer(opts)
 	if err != nil {
@@ -135,7 +135,7 @@ func TestPeriodicSyncerStartStop(t *testing.T) {
 			calls.Add(1)
 			return src.ListClients(ctx)
 		}),
-		Generator: Generator{Definition: JSONDefinition{Raw: []byte(minimalTemplate)}, OutputPath: output},
+		Generators: []Generator{{Definition: JSONDefinition{Raw: []byte(minimalTemplate)}, OutputPath: output}},
 	}
 	syncer, err := NewPeriodicSyncer(opts)
 	if err != nil {
@@ -162,9 +162,9 @@ func TestPeriodicSyncerOnSyncCallback(t *testing.T) {
 	var results []SyncResult
 	var mu sync.Mutex
 	opts := PeriodicOptions{
-		Interval:  5 * time.Millisecond,
-		Source:    staticSource{clients: []Client{{ID: "uuid-a"}}},
-		Generator: Generator{Definition: JSONDefinition{Raw: []byte(minimalTemplate)}, OutputPath: output},
+		Interval:   5 * time.Millisecond,
+		Source:     staticSource{clients: []Client{{ID: "uuid-a"}}},
+		Generators: []Generator{{Definition: JSONDefinition{Raw: []byte(minimalTemplate)}, OutputPath: output}},
 		OnSync: func(res SyncResult) {
 			mu.Lock()
 			defer mu.Unlock()

@@ -22,7 +22,7 @@ type PeriodicOptions struct {
 	Logger          *slog.Logger
 	Interval        time.Duration
 	Source          ClientSource
-	Generator       Generator
+	Generators      []Generator
 	ValidateCommand []string
 	RestartCommand  []string
 	Runner          commandRunner
@@ -34,7 +34,7 @@ type PeriodicSyncer struct {
 	logger          *slog.Logger
 	interval        time.Duration
 	source          ClientSource
-	generator       Generator
+	generators      []Generator
 	validateCommand []string
 	restartCommand  []string
 	runner          commandRunner
@@ -53,8 +53,13 @@ func NewPeriodicSyncer(opts PeriodicOptions) (*PeriodicSyncer, error) {
 	if opts.Source == nil {
 		return nil, errors.New("client source is required")
 	}
-	if strings.TrimSpace(opts.Generator.OutputPath) == "" {
-		return nil, errors.New("generator output path is required")
+	if len(opts.Generators) == 0 {
+		return nil, errors.New("at least one generator is required")
+	}
+	for i, g := range opts.Generators {
+		if strings.TrimSpace(g.OutputPath) == "" {
+			return nil, fmt.Errorf("generator %d output path is required", i)
+		}
 	}
 	if opts.Interval <= 0 {
 		return nil, errors.New("interval must be positive")
@@ -71,7 +76,7 @@ func NewPeriodicSyncer(opts PeriodicOptions) (*PeriodicSyncer, error) {
 		logger:          logger,
 		interval:        opts.Interval,
 		source:          opts.Source,
-		generator:       opts.Generator,
+		generators:      append([]Generator(nil), opts.Generators...),
 		validateCommand: append([]string(nil), opts.ValidateCommand...),
 		restartCommand:  append([]string(nil), opts.RestartCommand...),
 		runner:          runner,
@@ -148,8 +153,10 @@ func (s *PeriodicSyncer) sync(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("list clients: %w", err)
 	}
-	if err := s.generator.Generate(clients); err != nil {
-		return 0, fmt.Errorf("generate config: %w", err)
+	for _, g := range s.generators {
+		if err := g.Generate(clients); err != nil {
+			return 0, fmt.Errorf("generate config for %s: %w", g.OutputPath, err)
+		}
 	}
 	if len(s.validateCommand) > 0 {
 		if err := s.runCommand(ctx, s.validateCommand, "validate config"); err != nil {

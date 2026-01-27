@@ -131,6 +131,21 @@ CREATE TABLE public.subscriptions (
   CONSTRAINT subscriptions_user_external_uk UNIQUE (user_uuid, external_id)
 );
 
+CREATE TABLE public.nodes (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  location TEXT NOT NULL,
+  address TEXT NOT NULL,
+  port INTEGER NOT NULL DEFAULT 443,
+  server_name TEXT,
+  protocols JSONB NOT NULL DEFAULT '[]'::jsonb,
+  available BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  version BIGINT NOT NULL DEFAULT 0,
+  origin_node TEXT NOT NULL DEFAULT 'local'
+);
+
 -- =========================================
 -- Indexes
 -- =========================================
@@ -141,6 +156,7 @@ CREATE INDEX idx_sessions_user_uuid ON public.sessions (user_uuid);
 CREATE INDEX idx_admin_settings_version ON public.admin_settings (version);
 CREATE INDEX idx_subscriptions_user_uuid ON public.subscriptions (user_uuid);
 CREATE INDEX idx_subscriptions_status ON public.subscriptions (status);
+CREATE INDEX idx_nodes_available ON public.nodes (available);
 
 -- =========================================
 -- Triggers
@@ -190,3 +206,12 @@ CREATE TRIGGER trg_admin_settings_bump_version
 CREATE TRIGGER trg_subscriptions_set_updated_at
   BEFORE UPDATE ON public.subscriptions
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- nodes
+CREATE TRIGGER trg_nodes_set_updated_at
+  BEFORE UPDATE ON public.nodes
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+CREATE TRIGGER trg_nodes_bump_version
+  BEFORE UPDATE ON public.nodes
+  FOR EACH ROW EXECUTE FUNCTION public.bump_version();
