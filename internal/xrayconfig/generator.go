@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 )
 
 const (
@@ -38,6 +39,9 @@ type Generator struct {
 	// FileMode controls the permissions for the generated file. When zero it
 	// defaults to 0644.
 	FileMode fs.FileMode
+
+	// Domain is the hostname used to interpolate templates (e.g. for cert paths).
+	Domain string
 }
 
 // Generate writes a new Xray configuration with the provided clients. The base
@@ -72,9 +76,9 @@ func (g Generator) Render(clients []Client) ([]byte, error) {
 		definition = DefaultDefinition()
 	}
 
-	root, err := definition.Base()
+	root, err := g.renderTemplate(definition)
 	if err != nil {
-		return nil, fmt.Errorf("load template: %w", err)
+		return nil, fmt.Errorf("render template: %w", err)
 	}
 
 	if err := replaceClients(root, clients); err != nil {
@@ -87,6 +91,35 @@ func (g Generator) Render(clients []Client) ([]byte, error) {
 	}
 	buf = append(buf, '\n')
 	return buf, nil
+}
+
+func (g Generator) renderTemplate(definition Definition) (map[string]interface{}, error) {
+	jsonDef, ok := definition.(JSONDefinition)
+	if !ok {
+		return definition.Base()
+	}
+
+	tmpl, err := template.New("xray").Parse(string(jsonDef.Raw))
+	if err != nil {
+		return nil, fmt.Errorf("parse template: %w", err)
+	}
+
+	data := struct {
+		Domain string
+	}{
+		Domain: g.Domain,
+	}
+
+	var buf strings.Builder
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return nil, fmt.Errorf("execute template: %w", err)
+	}
+
+	var root map[string]interface{}
+	if err := json.Unmarshal([]byte(buf.String()), &root); err != nil {
+		return nil, fmt.Errorf("unmarshal rendered template: %w", err)
+	}
+	return root, nil
 }
 
 func replaceClients(root map[string]interface{}, clients []Client) error {

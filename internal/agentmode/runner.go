@@ -82,10 +82,12 @@ func Run(ctx context.Context, opts Options) error {
 		{
 			Definition: xrayconfig.XHTTPDefinition(),
 			OutputPath: "/usr/local/etc/xray/config.json",
+			Domain:     opts.Xray.Sync.Domain,
 		},
 		{
 			Definition: xrayconfig.TCPDefinition(),
 			OutputPath: "/usr/local/etc/xray/tcp-config.json",
+			Domain:     opts.Xray.Sync.Domain,
 		},
 	}
 	if templatePath := strings.TrimSpace(opts.Xray.Sync.TemplatePath); templatePath != "" {
@@ -100,6 +102,7 @@ func Run(ctx context.Context, opts Options) error {
 			{
 				Definition: xrayconfig.JSONDefinition{Raw: append([]byte(nil), payload...)},
 				OutputPath: effectivePath,
+				Domain:     opts.Xray.Sync.Domain,
 			},
 		}
 	}
