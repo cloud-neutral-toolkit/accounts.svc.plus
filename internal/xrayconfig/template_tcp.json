@@ -43,8 +43,8 @@
                     "certificates": [
                         {
                             "ocspStapling": 3600,
-                            "certificateFile": "/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/ha-proxy-jp.svc.plus/ha-proxy-jp.svc.plus.crt",
-                            "keyFile": "/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/ha-proxy-jp.svc.plus/ha-proxy-jp.svc.plus.key"
+                            "certificateFile": "/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{{.Domain}}/{{.Domain}}.crt",
+                            "keyFile": "/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{{.Domain}}/{{.Domain}}.key"
                         }
                     ]
                 }
