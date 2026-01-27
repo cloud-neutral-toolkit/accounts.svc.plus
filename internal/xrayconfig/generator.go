@@ -136,6 +136,19 @@ func replaceClients(root map[string]interface{}, clients []Client) error {
 		return errors.New("template missing inbound entry")
 	}
 
+	inbound, ok := inboundsSlice[0].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("template inbound 0 has unexpected type %T", inboundsSlice[0])
+	}
+
+	// Determine if we should include flow based on network
+	includeFlow := true
+	if streamSettings, ok := inbound["streamSettings"].(map[string]interface{}); ok {
+		if network, _ := streamSettings["network"].(string); network == "xhttp" {
+			includeFlow = false
+		}
+	}
+
 	clientObjects := make([]interface{}, 0, len(clients))
 	for idx, client := range clients {
 		id := strings.TrimSpace(client.ID)
@@ -148,17 +161,15 @@ func replaceClients(root map[string]interface{}, clients []Client) error {
 		if email := strings.TrimSpace(client.Email); email != "" {
 			entry["email"] = email
 		}
-		flow := strings.TrimSpace(client.Flow)
-		if flow == "" {
-			flow = DefaultFlow
-		}
-		entry["flow"] = flow
-		clientObjects = append(clientObjects, entry)
-	}
 
-	inbound, ok := inboundsSlice[0].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("template inbound 0 has unexpected type %T", inboundsSlice[0])
+		if includeFlow {
+			flow := strings.TrimSpace(client.Flow)
+			if flow == "" {
+				flow = DefaultFlow
+			}
+			entry["flow"] = flow
+		}
+		clientObjects = append(clientObjects, entry)
 	}
 
 	settingsValue, ok := inbound["settings"]
