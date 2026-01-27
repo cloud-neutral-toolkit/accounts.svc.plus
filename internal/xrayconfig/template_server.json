@@ -43,8 +43,8 @@
                     "certificates": [
                         {
                             "ocspStapling": 3600,
-                            "certificateFile": "/etc/ssl/onwalk.net.pem",
-                            "keyFile": "/etc/ssl/onwalk.net.key"
+                            "certificateFile": "/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{{.Domain}}/{{.Domain}}.crt",
+                            "keyFile": "/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{{.Domain}}/{{.Domain}}.key"
                         }
                     ]
                 }
