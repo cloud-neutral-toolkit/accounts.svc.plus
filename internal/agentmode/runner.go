@@ -78,13 +78,30 @@ func Run(ctx context.Context, opts Options) error {
 	tracker := newSyncTracker()
 	source := NewHTTPClientSource(client, tracker)
 
-	generator := xrayconfig.Generator{Definition: xrayconfig.DefaultDefinition(), OutputPath: outputPath}
+	generators := []xrayconfig.Generator{
+		{
+			Definition: xrayconfig.XHTTPDefinition(),
+			OutputPath: "/usr/local/etc/xray/config.json",
+		},
+		{
+			Definition: xrayconfig.TCPDefinition(),
+			OutputPath: "/usr/local/etc/xray/tcp-config.json",
+		},
+	}
 	if templatePath := strings.TrimSpace(opts.Xray.Sync.TemplatePath); templatePath != "" {
 		payload, err := os.ReadFile(templatePath)
 		if err != nil {
 			return fmt.Errorf("load xray template %s: %w", templatePath, err)
 		}
-		generator.Definition = xrayconfig.JSONDefinition{Raw: append([]byte(nil), payload...)}
+		// If custom template is provided, we use it for the primary output path
+		// specified in config, or fallback to the first default.
+		effectivePath := outputPath
+		generators = []xrayconfig.Generator{
+			{
+				Definition: xrayconfig.JSONDefinition{Raw: append([]byte(nil), payload...)},
+				OutputPath: effectivePath,
+			},
+		}
 	}
 
 	syncLogger := logger.With("component", "agent-xray-sync")
@@ -92,7 +109,7 @@ func Run(ctx context.Context, opts Options) error {
 		Logger:          syncLogger,
 		Interval:        syncInterval,
 		Source:          source,
-		Generator:       generator,
+		Generators:      generators,
 		ValidateCommand: opts.Xray.Sync.ValidateCommand,
 		RestartCommand:  opts.Xray.Sync.RestartCommand,
 		OnSync: func(result xrayconfig.SyncResult) {
