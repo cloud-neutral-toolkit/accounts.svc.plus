@@ -43,7 +43,7 @@ server:
 store:
   driver: "postgres"
   # 提示：本地默认从 .env 读取 POSTGRES_USER / POSTGRES_PASSWORD
-  dsn: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/account?sslmode=disable"
+  dsn: "postgres://postgres:otdcRLTJamszk3AE@127.0.0.1:15432/account?sslmode=disable"
   maxOpenConns: 30
   maxIdleConns: 10
 
