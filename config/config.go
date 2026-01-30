@@ -93,6 +93,7 @@ type OAuth struct {
 type OAuthProvider struct {
 	ClientID     string `yaml:"clientId"`
 	ClientSecret string `yaml:"clientSecret"`
+	RedirectURL  string `yaml:"redirectUrl"`
 }
 
 // Token defines token authentication configuration.
