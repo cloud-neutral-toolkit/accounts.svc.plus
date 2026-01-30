@@ -1077,3 +1077,34 @@ RETURNING uuid, created_at, updated_at`
 
 	return nil
 }
+
+// ListUsers returns all users from the postgres store.
+func (s *postgresStore) ListUsers(ctx context.Context) ([]User, error) {
+	caps, err := s.capabilities(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	query := s.selectUserQuery(caps, "ORDER BY created_at ASC")
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, *user)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return users, nil
+}

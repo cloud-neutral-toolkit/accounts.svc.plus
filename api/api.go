@@ -264,6 +264,10 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.GET("/admin/settings", h.getAdminSettings)
 	authProtected.POST("/admin/settings", h.updateAdminSettings)
 
+	authProtected.GET("/users", h.listUsers)
+	authProtected.POST("/admin/users/:userId/role", h.updateUserRole)
+	authProtected.DELETE("/admin/users/:userId/role", h.resetUserRole)
+
 	registerAdminRoutes(authProtected, h)
 }
 
@@ -2365,6 +2369,101 @@ func (h *handler) oauthCallback(c *gin.Context) {
 	}
 	targetURL := fmt.Sprintf("%s/login?public_token=%s", strings.TrimSuffix(frontendURL, "/"), publicToken)
 	c.Redirect(http.StatusTemporaryRedirect, targetURL)
+}
+
+func (h *handler) listUsers(c *gin.Context) {
+	if _, ok := h.requireAdminOrOperator(c); !ok {
+		return
+	}
+
+	users, err := h.store.ListUsers(c.Request.Context())
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "list_users_failed", "failed to fetch users")
+		return
+	}
+
+	sanitized := make([]gin.H, 0, len(users))
+	for _, u := range users {
+		sanitized = append(sanitized, sanitizeUser(&u, nil))
+	}
+
+	c.JSON(http.StatusOK, sanitized)
+}
+
+func (h *handler) updateUserRole(c *gin.Context) {
+	if _, ok := h.requireAdminOrOperator(c); !ok {
+		return
+	}
+
+	userId := c.Param("userId")
+	if userId == "" {
+		respondError(c, http.StatusBadRequest, "userId_required", "userId is required")
+		return
+	}
+
+	var req struct {
+		Role string `json:"role"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
+		return
+	}
+
+	role := strings.ToLower(strings.TrimSpace(req.Role))
+	if _, ok := allowedAdminRoles[role]; !ok {
+		respondError(c, http.StatusBadRequest, "invalid_role", "specified role is not allowed")
+		return
+	}
+
+	user, err := h.store.GetUserByID(c.Request.Context(), userId)
+	if err != nil {
+		if errors.Is(err, store.ErrUserNotFound) {
+			respondError(c, http.StatusNotFound, "user_not_found", "user not found")
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "update_failed", "failed to fetch user")
+		return
+	}
+
+	user.Role = role
+	// Role field update will trigger Level update in store if implemented according to plan
+	// In store.go, normalizeUserRoleFields handles it.
+	if err := h.store.UpdateUser(c.Request.Context(), user); err != nil {
+		respondError(c, http.StatusInternalServerError, "update_failed", "failed to update user")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "role updated", "user": sanitizeUser(user, nil)})
+}
+
+func (h *handler) resetUserRole(c *gin.Context) {
+	if _, ok := h.requireAdminOrOperator(c); !ok {
+		return
+	}
+
+	userId := c.Param("userId")
+	if userId == "" {
+		respondError(c, http.StatusBadRequest, "userId_required", "userId is required")
+		return
+	}
+
+	user, err := h.store.GetUserByID(c.Request.Context(), userId)
+	if err != nil {
+		if errors.Is(err, store.ErrUserNotFound) {
+			respondError(c, http.StatusNotFound, "user_not_found", "user not found")
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "update_failed", "failed to fetch user")
+		return
+	}
+
+	user.Role = store.RoleUser
+	if err := h.store.UpdateUser(c.Request.Context(), user); err != nil {
+		respondError(c, http.StatusInternalServerError, "update_failed", "failed to update user")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "role reset", "user": sanitizeUser(user, nil)})
 }
 
 func (h *handler) generateState() string {
