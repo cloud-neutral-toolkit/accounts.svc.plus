@@ -67,7 +67,9 @@ type Store interface {
 
 	UpsertSubscription(ctx context.Context, subscription *Subscription) error
 	ListSubscriptionsByUser(ctx context.Context, userID string) ([]Subscription, error)
+	CancelSubscription(ctx context.Context, userID, externalID string, cancelledAt time.Time) (*Subscription, error)
 	CreateIdentity(ctx context.Context, identity *Identity) error
+	ListUsers(ctx context.Context) ([]User, error)
 }
 
 // Domain level errors returned by the store implementation.
@@ -611,4 +613,22 @@ func (s *memoryStore) CreateIdentity(ctx context.Context, identity *Identity) er
 	stored := *identity
 	s.identities[key] = &stored
 	return nil
+}
+
+// ListUsers returns all users in the in-memory store.
+func (s *memoryStore) ListUsers(ctx context.Context) ([]User, error) {
+	_ = ctx
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]User, 0, len(s.byID))
+	for _, user := range s.byID {
+		result = append(result, *cloneUser(user))
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.Before(result[j].CreatedAt)
+	})
+
+	return result, nil
 }
