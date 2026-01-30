@@ -78,6 +78,21 @@ type Session struct {
 type Auth struct {
 	Enable bool  `yaml:"enable"`
 	Token  Token `yaml:"token"`
+	OAuth  OAuth `yaml:"oauth"`
+}
+
+// OAuth defines OAuth2 configuration for multiple providers.
+type OAuth struct {
+	RedirectURL string        `yaml:"redirectUrl"`
+	FrontendURL string        `yaml:"frontendUrl"`
+	GitHub      OAuthProvider `yaml:"github"`
+	Google      OAuthProvider `yaml:"google"`
+}
+
+// OAuthProvider defines configuration for a single OAuth2 provider.
+type OAuthProvider struct {
+	ClientID     string `yaml:"clientId"`
+	ClientSecret string `yaml:"clientSecret"`
 }
 
 // Token defines token authentication configuration.
