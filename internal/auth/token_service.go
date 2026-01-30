@@ -59,6 +59,11 @@ func (s *TokenService) ValidatePublicToken(publicToken string) bool {
 	return publicToken == s.publicToken
 }
 
+// GeneratePublicToken returns the configured public token.
+func (s *TokenService) GeneratePublicToken(userID, email string, roles []string) string {
+	return s.publicToken
+}
+
 // GenerateTokenPair generates a new token pair
 func (s *TokenService) GenerateTokenPair(userID, email string, roles []string) (*TokenPair, error) {
 	// Generate refresh token (JWT)
