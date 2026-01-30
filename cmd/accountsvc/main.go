@@ -257,7 +257,33 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 	if agentRegistry != nil {
 		options = append(options, api.WithAgentStatusReader(agentRegistry))
 	}
-	api.RegisterRoutes(r, options...)
+	// Initialize OAuth providers
+	oauthProviders := make(map[string]auth.OAuthProvider)
+	if cfg.Auth.Enable {
+		if cfg.Auth.OAuth.GitHub.ClientID != "" {
+			oauthProviders["github"] = auth.NewGitHubProvider(
+				cfg.Auth.OAuth.GitHub.ClientID,
+				cfg.Auth.OAuth.GitHub.ClientSecret,
+				cfg.Auth.OAuth.RedirectURL,
+			)
+		}
+		if cfg.Auth.OAuth.Google.ClientID != "" {
+			oauthProviders["google"] = auth.NewGoogleProvider(
+				cfg.Auth.OAuth.Google.ClientID,
+				cfg.Auth.OAuth.Google.ClientSecret,
+				cfg.Auth.OAuth.RedirectURL,
+			)
+		}
+	}
+
+	api.RegisterRoutes(r,
+		api.WithStore(st),
+		api.WithEmailSender(emailSender),
+		api.WithEmailVerification(cfg.Auth.Enable),
+		api.WithTokenService(tokenService),
+		api.WithOAuthProviders(oauthProviders),
+		api.WithOAuthFrontendURL(cfg.Auth.OAuth.FrontendURL),
+	)
 
 	if agentRegistry != nil {
 		registerAgentAPIRoutes(r, agentRegistry, gormSource, logger)
