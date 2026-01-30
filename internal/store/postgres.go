@@ -1029,3 +1029,51 @@ func decodeStringSlice(raw []byte) []string {
 	}
 	return normalizeStringSlice(values)
 }
+func (s *postgresStore) CreateIdentity(ctx context.Context, identity *Identity) error {
+	if identity == nil {
+		return errors.New("identity is required")
+	}
+
+	normalizedUserID := strings.TrimSpace(identity.UserID)
+	if normalizedUserID == "" {
+		return ErrUserNotFound
+	}
+
+	provider := strings.TrimSpace(identity.Provider)
+	externalID := strings.TrimSpace(identity.ExternalID)
+	if provider == "" || externalID == "" {
+		return errors.New("provider and external_id are required")
+	}
+
+	const query = `INSERT INTO identities (user_uuid, provider, external_id)
+VALUES ($1, $2, $3)
+RETURNING uuid, created_at, updated_at`
+
+	var (
+		idValue   any
+		createdAt time.Time
+		updatedAt time.Time
+	)
+
+	err := s.db.QueryRowContext(ctx, query, normalizedUserID, provider, externalID).Scan(&idValue, &createdAt, &updatedAt)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			if pgErr.Code == "23505" { // unique_violation
+				return errors.New("identity already exists")
+			}
+		}
+		return err
+	}
+
+	identifier, err := formatIdentifier(idValue)
+	if err != nil {
+		return err
+	}
+
+	identity.ID = identifier
+	identity.CreatedAt = createdAt.UTC()
+	identity.UpdatedAt = updatedAt.UTC()
+
+	return nil
+}

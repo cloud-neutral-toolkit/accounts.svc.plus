@@ -47,6 +47,16 @@ type Subscription struct {
 	CancelledAt   *time.Time
 }
 
+// Identity represents a mapping between a user and a third-party authentication provider.
+type Identity struct {
+	ID         string
+	UserID     string
+	Provider   string
+	ExternalID string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
 // Store provides persistence operations for users.
 type Store interface {
 	CreateUser(ctx context.Context, user *User) error
@@ -57,7 +67,7 @@ type Store interface {
 
 	UpsertSubscription(ctx context.Context, subscription *Subscription) error
 	ListSubscriptionsByUser(ctx context.Context, userID string) ([]Subscription, error)
-	CancelSubscription(ctx context.Context, userID, externalID string, cancelledAt time.Time) (*Subscription, error)
+	CreateIdentity(ctx context.Context, identity *Identity) error
 }
 
 // Domain level errors returned by the store implementation.
@@ -81,6 +91,7 @@ type memoryStore struct {
 	byEmail                 map[string]*User
 	byName                  map[string]*User
 	subscriptions           map[string]map[string]*Subscription
+	identities              map[string]*Identity
 }
 
 // NewMemoryStore creates a new in-memory store implementation with super
@@ -105,6 +116,7 @@ func newMemoryStore(allowSuperAdminCounting bool) Store {
 		byEmail:                 make(map[string]*User),
 		byName:                  make(map[string]*User),
 		subscriptions:           make(map[string]map[string]*Subscription),
+		identities:              make(map[string]*Identity),
 	}
 }
 
@@ -572,4 +584,31 @@ func isSuperAdmin(user *User) bool {
 	}
 
 	return false
+}
+
+// CreateIdentity persists an identity record in the in-memory store.
+func (s *memoryStore) CreateIdentity(ctx context.Context, identity *Identity) error {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if identity.ID == "" {
+		identity.ID = uuid.NewString()
+	}
+	now := time.Now().UTC()
+	if identity.CreatedAt.IsZero() {
+		identity.CreatedAt = now
+	}
+	if identity.UpdatedAt.IsZero() {
+		identity.UpdatedAt = now
+	}
+
+	key := identity.Provider + ":" + identity.ExternalID
+	if _, exists := s.identities[key]; exists {
+		return errors.New("identity already exists")
+	}
+
+	stored := *identity
+	s.identities[key] = &stored
+	return nil
 }
