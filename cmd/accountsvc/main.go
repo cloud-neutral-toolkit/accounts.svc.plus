@@ -261,17 +261,25 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 	oauthProviders := make(map[string]auth.OAuthProvider)
 	if cfg.Auth.Enable {
 		if cfg.Auth.OAuth.GitHub.ClientID != "" {
+			redirectURL := cfg.Auth.OAuth.GitHub.RedirectURL
+			if redirectURL == "" {
+				redirectURL = cfg.Auth.OAuth.RedirectURL
+			}
 			oauthProviders["github"] = auth.NewGitHubProvider(
 				cfg.Auth.OAuth.GitHub.ClientID,
 				cfg.Auth.OAuth.GitHub.ClientSecret,
-				cfg.Auth.OAuth.RedirectURL,
+				redirectURL,
 			)
 		}
 		if cfg.Auth.OAuth.Google.ClientID != "" {
+			redirectURL := cfg.Auth.OAuth.Google.RedirectURL
+			if redirectURL == "" {
+				redirectURL = cfg.Auth.OAuth.RedirectURL
+			}
 			oauthProviders["google"] = auth.NewGoogleProvider(
 				cfg.Auth.OAuth.Google.ClientID,
 				cfg.Auth.OAuth.Google.ClientSecret,
-				cfg.Auth.OAuth.RedirectURL,
+				redirectURL,
 			)
 		}
 	}
