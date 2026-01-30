@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -2367,7 +2368,12 @@ func (h *handler) oauthCallback(c *gin.Context) {
 	if frontendURL == "" {
 		frontendURL = "http://localhost:3000"
 	}
-	targetURL := fmt.Sprintf("%s/login?public_token=%s", strings.TrimSuffix(frontendURL, "/"), publicToken)
+	targetURL := fmt.Sprintf("%s/login?public_token=%s&userId=%s&email=%s&role=%s",
+		strings.TrimSuffix(frontendURL, "/"),
+		publicToken,
+		user.ID,
+		url.QueryEscape(user.Email),
+		user.Role)
 	c.Redirect(http.StatusTemporaryRedirect, targetURL)
 }
 
