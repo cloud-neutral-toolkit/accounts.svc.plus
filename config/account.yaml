@@ -10,8 +10,8 @@ auth:
     publicToken: "${AUTH_TOKEN_PUBLIC_TOKEN:-xcontrol-public-token-2024}"
     refreshSecret: "${AUTH_TOKEN_REFRESH_SECRET:-xcontrol-refresh-secret-2024}"
     accessSecret: "${AUTH_TOKEN_ACCESS_SECRET:-xcontrol-access-secret-2024}"
-    accessExpiry: "${AUTH_TOKEN_ACCESS_EXPIRY:-1h}"
-    refreshExpiry: "${AUTH_TOKEN_REFRESH_EXPIRY:-168h}"
+    accessExpiry: "1h"
+    refreshExpiry: "168h"
   oauth:
     redirectUrl: "${OAUTH_REDIRECT_URL}"
     frontendUrl: "${OAUTH_FRONTEND_URL:-https://console.svc.plus}"
@@ -41,6 +41,9 @@ server:
     - "http://127.0.0.1:3001"
     - "http://localhost:3000"
     - "http://127.0.0.1:3000"
+    - "https://openclawdbot.svc.plus"
+    - "http://localhost:18789"
+    - "http://127.0.0.1:18789"
   tls:
     enabled: false
     certFile: ""
