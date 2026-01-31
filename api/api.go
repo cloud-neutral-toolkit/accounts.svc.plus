@@ -66,6 +66,7 @@ type handler struct {
 	tokenService              *auth.TokenService
 	oauthProviders            map[string]auth.OAuthProvider
 	oauthFrontendURL          string
+	publicURL                 string
 }
 
 type mfaChallenge struct {
@@ -188,6 +189,13 @@ func WithOAuthProviders(providers map[string]auth.OAuthProvider) Option {
 	}
 }
 
+// WithServerPublicURL configures the public URL of the account service.
+func WithServerPublicURL(url string) Option {
+	return func(h *handler) {
+		h.publicURL = url
+	}
+}
+
 // WithOAuthFrontendURL configures the frontend URL for OAuth2 redirects.
 func WithOAuthFrontendURL(url string) Option {
 	return func(h *handler) {
@@ -252,6 +260,8 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.POST("/mfa/totp/verify", h.verifyTOTP)
 	authProtected.POST("/mfa/disable", h.disableMFA)
 	authProtected.GET("/mfa/status", h.mfaStatus)
+
+	authProtected.GET("/agent/nodes", h.listAgentNodes)
 
 	authProtected.POST("/password/reset", h.requestPasswordReset)
 	authProtected.POST("/password/reset/confirm", h.confirmPasswordReset)
