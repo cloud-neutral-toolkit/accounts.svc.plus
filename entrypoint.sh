@@ -31,6 +31,10 @@ if [ -n "${PORT:-}" ]; then
   CONFIG_FILE="${tmp_cfg}"
 fi
 
+# Default to 127.0.0.1:15432 if not specified, to ensure we wait for stunnel
+DB_HOST="${DB_HOST:-127.0.0.1}"
+DB_PORT="${DB_PORT:-15432}"
+
 if [ -n "${DB_HOST:-}" ] && [ -n "${DB_PORT:-}" ]; then
   if [ "${DB_HOST}" = "127.0.0.1" ] || [ "${DB_HOST}" = "localhost" ]; then
     if command -v nc >/dev/null; then
