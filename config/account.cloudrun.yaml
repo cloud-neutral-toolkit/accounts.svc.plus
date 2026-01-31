@@ -78,9 +78,4 @@ agent:
     insecureSkipVerify: false
 
 agents:
-  credentials:
-    - id: "account-primary"
-      name: "Account Server (local agent)"
-      token: "replace-with-agent-token"
-      groups:
-        - "default"
+  credentials: []
