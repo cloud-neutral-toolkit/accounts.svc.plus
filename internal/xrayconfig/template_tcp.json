@@ -1,59 +1,31 @@
 {
     "log": {
-        "loglevel": "warning"
+        "loglevel": "info"
     },
     "routing": {
         "domainStrategy": "IPIfNonMatch",
-        "rules": [
-            {
-                "type": "field",
-                "ip": [
-                    "geoip:cn"
-                ],
-                "outboundTag": "block"
-            }
-        ]
+        "rules": []
     },
     "inbounds": [
         {
-            "listen": "0.0.0.0",
-            "port": 1443,
-            "protocol": "vless",
+            "listen": "127.0.0.1",
+            "port": 1080,
+            "protocol": "socks",
             "settings": {
-                "clients": [
-                    {
-                        "id": "{{ UUID }}",
-                        "flow": "xtls-rprx-vision"
-                    }
-                ],
-                "decryption": "none",
-                "fallbacks": [
-                    {
-                        "dest": "8001",
-                        "xver": 1
-                    },
-                    {
-                        "alpn": "h2",
-                        "dest": "8002",
-                        "xver": 1
-                    }
+                "udp": true
+            },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": [
+                    "http",
+                    "tls"
                 ]
-            },
-            "streamSettings": {
-                "network": "tcp",
-                "security": "tls",
-                "tlsSettings": {
-                    "rejectUnknownSni": true,
-                    "minVersion": "1.2",
-                    "certificates": [
-                        {
-                            "ocspStapling": 3600,
-                            "certificateFile": "/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{{.Domain}}/{{.Domain}}.crt",
-                            "keyFile": "/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{{.Domain}}/{{.Domain}}.key"
-                        }
-                    ]
-                }
-            },
+            }
+        },
+        {
+            "listen": "127.0.0.1",
+            "port": 10801,
+            "protocol": "http",
             "sniffing": {
                 "enabled": true,
                 "destOverride": [
@@ -65,6 +37,34 @@
     ],
     "outbounds": [
         {
+            "protocol": "vless",
+            "settings": {
+                "vnext": [
+                    {
+                        "address": "{{.Domain}}",
+                        "port": 1443,
+                        "users": [
+                            {
+                                "id": "{{ UUID }}",
+                                "encryption": "none",
+                                "flow": "xtls-rprx-vision"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "tls",
+                "tlsSettings": {
+                    "serverName": "{{.Domain}}",
+                    "allowInsecure": false,
+                    "fingerprint": "chrome"
+                }
+            },
+            "tag": "proxy"
+        },
+        {
             "protocol": "freedom",
             "tag": "direct"
         },
@@ -72,13 +72,5 @@
             "protocol": "blackhole",
             "tag": "block"
         }
-    ],
-    "policy": {
-        "levels": {
-            "0": {
-                "handshake": 2,
-                "connIdle": 120
-            }
-        }
-    }
+    ]
 }
