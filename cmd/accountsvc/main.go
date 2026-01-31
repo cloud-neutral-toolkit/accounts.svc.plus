@@ -191,6 +191,20 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		if err != nil {
 			return err
 		}
+	} else if token := os.Getenv("INTERNAL_SERVICE_TOKEN"); token != "" {
+		// Fallback: if no credentials configured but we have an internal token,
+		// register a default internal agent.
+		agentRegistry, err = agentserver.NewRegistry(agentserver.Config{
+			Credentials: []agentserver.Credential{{
+				ID:     "internal-agent",
+				Name:   "Internal Agent",
+				Token:  token,
+				Groups: []string{"internal"},
+			}},
+		})
+		if err != nil {
+			return err
+		}
 	}
 
 	var stopXraySync func(context.Context) error
@@ -510,7 +524,8 @@ func registerAgentAPIRoutes(r *gin.Engine, registry *agentserver.Registry, sourc
 	if registry == nil {
 		return
 	}
-	group := r.Group("/api/agent/v1")
+	// Use /api/agent-server/v1 to avoid conflict with /api/agent prefix used by admin/user API
+	group := r.Group("/api/agent-server/v1")
 	group.Use(agentAuthMiddleware(registry))
 	group.GET("/users", agentListUsersHandler(source))
 	group.POST("/status", agentReportStatusHandler(registry, logger))

@@ -261,8 +261,6 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.POST("/mfa/disable", h.disableMFA)
 	authProtected.GET("/mfa/status", h.mfaStatus)
 
-	authProtected.GET("/agent/nodes", h.listAgentNodes)
-
 	authProtected.POST("/password/reset", h.requestPasswordReset)
 	authProtected.POST("/password/reset/confirm", h.confirmPasswordReset)
 
@@ -278,6 +276,13 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.GET("/users", h.listUsers)
 	authProtected.POST("/admin/users/:userId/role", h.updateUserRole)
 	authProtected.DELETE("/admin/users/:userId/role", h.resetUserRole)
+
+	// Agent User routes - /api/agent/nodes
+	agentUser := r.Group("/api/agent")
+	if h.tokenService != nil {
+		agentUser.Use(h.tokenService.AuthMiddleware())
+	}
+	agentUser.GET("/nodes", h.listAgentNodes)
 
 	registerAdminRoutes(authProtected, h)
 }
