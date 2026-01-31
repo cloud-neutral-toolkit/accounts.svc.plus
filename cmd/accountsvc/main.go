@@ -290,7 +290,10 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		api.WithEmailVerification(cfg.Auth.Enable),
 		api.WithTokenService(tokenService),
 		api.WithOAuthProviders(oauthProviders),
+		api.WithTokenService(tokenService),
+		api.WithOAuthProviders(oauthProviders),
 		api.WithOAuthFrontendURL(cfg.Auth.OAuth.FrontendURL),
+		api.WithServerPublicURL(cfg.Server.PublicURL),
 	)
 
 	if agentRegistry != nil {
