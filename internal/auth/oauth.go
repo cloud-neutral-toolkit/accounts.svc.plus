@@ -12,9 +12,10 @@ import (
 
 // OAuthUserProfile represents the unified user profile info from OAuth providers.
 type OAuthUserProfile struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
-	Name  string `json:"name"`
+	ID       string `json:"id"`
+	Email    string `json:"email"`
+	Name     string `json:"name"`
+	Verified bool   `json:"verified"`
 }
 
 // OAuthProvider defines the interface for different OAuth2 providers.
@@ -95,13 +96,35 @@ func (p *GitHubProvider) FetchProfile(ctx context.Context, token *oauth2.Token) 
 		if err == nil {
 			defer resp.Body.Close()
 			var emails []struct {
-				Email   string `json:"email"`
-				Primary bool   `json:"primary"`
+				Email    string `json:"email"`
+				Primary  bool   `json:"primary"`
+				Verified bool   `json:"verified"`
 			}
 			if err := json.NewDecoder(resp.Body).Decode(&emails); err == nil {
 				for _, e := range emails {
 					if e.Primary {
 						profile.Email = e.Email
+						profile.Verified = e.Verified
+						break
+					}
+				}
+			}
+		}
+	} else {
+		// If we got email from /user, we still want to know if it's verified.
+		// GitHub /user doesn't return verification status, usually it's better
+		// to always fetch from /user/emails for accuracy if verification is required.
+		resp, err := client.Get("https://api.github.com/user/emails")
+		if err == nil {
+			defer resp.Body.Close()
+			var emails []struct {
+				Email    string `json:"email"`
+				Verified bool   `json:"verified"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&emails); err == nil {
+				for _, e := range emails {
+					if e.Email == profile.Email {
+						profile.Verified = e.Verified
 						break
 					}
 				}
@@ -144,17 +167,19 @@ func (p *GoogleProvider) FetchProfile(ctx context.Context, token *oauth2.Token) 
 	defer resp.Body.Close()
 
 	var user struct {
-		ID    string `json:"id"`
-		Email string `json:"email"`
-		Name  string `json:"name"`
+		ID            string `json:"id"`
+		Email         string `json:"email"`
+		Name          string `json:"name"`
+		VerifiedEmail bool   `json:"verified_email"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
 		return nil, err
 	}
 
 	return &OAuthUserProfile{
-		ID:    user.ID,
-		Email: user.Email,
-		Name:  user.Name,
+		ID:       user.ID,
+		Email:    user.Email,
+		Name:     user.Name,
+		Verified: user.VerifiedEmail,
 	}, nil
 }
