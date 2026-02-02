@@ -1,5 +1,5 @@
 .env
-
+account.log
 models/
 pg_jieba/
 hf_cache/

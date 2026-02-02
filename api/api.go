@@ -229,26 +229,26 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	auth := r.Group("/api/auth")
+	authGroup := r.Group("/api/auth")
 
-	auth.POST("/register", h.register)
-	auth.POST("/register/verify", h.verifyEmail)
-	auth.POST("/register/send", h.sendEmailVerification)
+	authGroup.POST("/register", h.register)
+	authGroup.POST("/register/verify", h.verifyEmail)
+	authGroup.POST("/register/send", h.sendEmailVerification)
 
-	auth.POST("/login", h.login)
+	authGroup.POST("/login", h.login)
 
 	// Token exchange endpoint - converts public token to access/refresh tokens
-	auth.POST("/token/exchange", h.exchangeToken)
+	authGroup.POST("/token/exchange", h.exchangeToken)
 
 	// OAuth2 routes
-	auth.GET("/oauth/login/:provider", h.oauthLogin)
-	auth.GET("/oauth/callback/:provider", h.oauthCallback)
+	authGroup.GET("/oauth/login/:provider", h.oauthLogin)
+	authGroup.GET("/oauth/callback/:provider", h.oauthCallback)
 
 	// Token refresh endpoint - generates new access token using refresh token
-	auth.POST("/token/refresh", h.refreshToken)
+	authGroup.POST("/token/refresh", h.refreshToken)
 
 	// Protected routes requiring authentication
-	authProtected := auth.Group("")
+	authProtected := authGroup.Group("")
 	if h.tokenService != nil {
 		authProtected.Use(h.tokenService.AuthMiddleware())
 		authProtected.Use(auth.RequireActiveUser(h.store))
