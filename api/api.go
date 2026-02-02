@@ -251,6 +251,7 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected := auth.Group("")
 	if h.tokenService != nil {
 		authProtected.Use(h.tokenService.AuthMiddleware())
+		authProtected.Use(auth.RequireActiveUser(h.store))
 	}
 
 	authProtected.GET("/session", h.session)
@@ -281,6 +282,7 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	agentUser := r.Group("/api/agent")
 	if h.tokenService != nil {
 		agentUser.Use(h.tokenService.AuthMiddleware())
+		agentUser.Use(auth.RequireActiveUser(h.store))
 	}
 	agentUser.GET("/nodes", h.listAgentNodes)
 
@@ -374,6 +376,16 @@ func (h *handler) register(c *gin.Context) {
 
 	if email == "" || password == "" {
 		respondError(c, http.StatusBadRequest, "missing_credentials", "email and password are required")
+		return
+	}
+
+	blacklisted, err := h.store.IsBlacklisted(c.Request.Context(), email)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "blacklist_check_failed", "failed to verify email status")
+		return
+	}
+	if blacklisted {
+		respondError(c, http.StatusForbidden, "email_blacklisted", "this email address is blocked")
 		return
 	}
 
@@ -592,6 +604,16 @@ func (h *handler) sendEmailVerification(c *gin.Context) {
 	// 基础邮箱校验，避免明显无效地址触发外发
 	if !strings.Contains(email, "@") {
 		respondError(c, http.StatusBadRequest, "invalid_email", "email must be a valid address")
+		return
+	}
+
+	blacklisted, err := h.store.IsBlacklisted(c.Request.Context(), email)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "blacklist_check_failed", "failed to verify email status")
+		return
+	}
+	if blacklisted {
+		respondError(c, http.StatusForbidden, "email_blacklisted", "this email address is blocked")
 		return
 	}
 

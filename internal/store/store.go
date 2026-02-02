@@ -13,21 +13,24 @@ import (
 
 // User represents an account within the account service domain.
 type User struct {
-	ID                string
-	Name              string
-	Email             string
-	Level             int
-	Role              string
-	Groups            []string
-	Permissions       []string
-	EmailVerified     bool
-	PasswordHash      string
-	MFATOTPSecret     string
-	MFAEnabled        bool
-	MFASecretIssuedAt time.Time
-	MFAConfirmedAt    time.Time
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                 string
+	Name               string
+	Email              string
+	Level              int
+	Role               string
+	Groups             []string
+	Permissions        []string
+	EmailVerified      bool
+	PasswordHash       string
+	MFATOTPSecret      string
+	MFAEnabled         bool
+	MFASecretIssuedAt  time.Time
+	MFAConfirmedAt     time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	Active             bool
+	ProxyUUID          string
+	ProxyUUIDExpiresAt *time.Time
 }
 
 // Subscription represents a recurring or usage-based billing relationship.
@@ -70,6 +73,13 @@ type Store interface {
 	CancelSubscription(ctx context.Context, userID, externalID string, cancelledAt time.Time) (*Subscription, error)
 	CreateIdentity(ctx context.Context, identity *Identity) error
 	ListUsers(ctx context.Context) ([]User, error)
+	DeleteUser(ctx context.Context, id string) error
+
+	// Email Blacklist
+	AddToBlacklist(ctx context.Context, email string) error
+	RemoveFromBlacklist(ctx context.Context, email string) error
+	IsBlacklisted(ctx context.Context, email string) (bool, error)
+	ListBlacklist(ctx context.Context) ([]string, error)
 }
 
 // Domain level errors returned by the store implementation.
@@ -162,6 +172,8 @@ func (s *memoryStore) CreateUser(ctx context.Context, user *User) error {
 	normalizeUserRoleFields(&stored)
 	stored.Groups = cloneStringSlice(stored.Groups)
 	stored.Permissions = cloneStringSlice(stored.Permissions)
+	stored.Active = true
+	stored.ProxyUUID = uuid.NewString()
 	s.byID[userCopy.ID] = &stored
 	if loweredEmail != "" {
 		s.byEmail[loweredEmail] = &stored
@@ -271,6 +283,9 @@ func (s *memoryStore) UpdateUser(ctx context.Context, user *User) error {
 	updated.Role = user.Role
 	updated.Groups = cloneStringSlice(user.Groups)
 	updated.Permissions = cloneStringSlice(user.Permissions)
+	updated.Active = user.Active
+	updated.ProxyUUID = user.ProxyUUID
+	updated.ProxyUUIDExpiresAt = user.ProxyUUIDExpiresAt
 	normalizeUserRoleFields(&updated)
 	if user.CreatedAt.IsZero() {
 		updated.CreatedAt = existing.CreatedAt
@@ -631,4 +646,34 @@ func (s *memoryStore) ListUsers(ctx context.Context) ([]User, error) {
 	})
 
 	return result, nil
+}
+
+func (s *memoryStore) DeleteUser(ctx context.Context, id string) error {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.byID[id]
+	if !ok {
+		return nil
+	}
+	delete(s.byID, id)
+	delete(s.byEmail, strings.ToLower(user.Email))
+	delete(s.byName, strings.ToLower(user.Name))
+	return nil
+}
+
+func (s *memoryStore) AddToBlacklist(ctx context.Context, email string) error {
+	return nil
+}
+
+func (s *memoryStore) RemoveFromBlacklist(ctx context.Context, email string) error {
+	return nil
+}
+
+func (s *memoryStore) IsBlacklisted(ctx context.Context, email string) (bool, error) {
+	return false, nil
+}
+
+func (s *memoryStore) ListBlacklist(ctx context.Context) ([]string, error) {
+	return []string{}, nil
 }
