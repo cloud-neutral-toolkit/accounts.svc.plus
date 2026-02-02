@@ -278,15 +278,17 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.POST("/admin/users/:userId/role", h.updateUserRole)
 	authProtected.DELETE("/admin/users/:userId/role", h.resetUserRole)
 
-	// Agent User routes - /api/agent/nodes
-	agentUser := r.Group("/api/agent")
+	// Public /api routes for admin/management (expected by frontend at /api/admin/...)
+	apiGroup := r.Group("/api")
 	if h.tokenService != nil {
-		agentUser.Use(h.tokenService.AuthMiddleware())
-		agentUser.Use(auth.RequireActiveUser(h.store))
+		apiGroup.Use(h.tokenService.AuthMiddleware())
+		apiGroup.Use(auth.RequireActiveUser(h.store))
 	}
-	agentUser.GET("/nodes", h.listAgentNodes)
+	registerAdminRoutes(apiGroup, h)
 
-	registerAdminRoutes(authProtected, h)
+	// User agent routes - /api/agent/nodes
+	agentGroup := apiGroup.Group("/agent")
+	agentGroup.GET("/nodes", h.listAgentNodes)
 }
 
 type registerRequest struct {
