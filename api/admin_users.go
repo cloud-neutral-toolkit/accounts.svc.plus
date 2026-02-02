@@ -71,7 +71,8 @@ func (h *handler) renewProxyUUID(c *gin.Context) {
 
 	userID := c.Param("userId")
 	var req struct {
-		ExpiresInDays int `json:"expires_in_days"`
+		ExpiresInDays int    `json:"expires_in_days"`
+		ExpiresAt     string `json:"expires_at"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
@@ -93,7 +94,15 @@ func (h *handler) renewProxyUUID(c *gin.Context) {
 	// I'll just use a placeholder for now or assume the user wants a new one.
 	// Wait, schema says it has a default gen_random_uuid().
 
-	if req.ExpiresInDays > 0 {
+	if req.ExpiresAt != "" {
+		t, err := time.Parse("2006-01-02", req.ExpiresAt)
+		if err != nil {
+			respondError(c, http.StatusBadRequest, "invalid_date", "invalid date format, use YYYY-MM-DD")
+			return
+		}
+		expiration := t.UTC()
+		user.ProxyUUIDExpiresAt = &expiration
+	} else if req.ExpiresInDays > 0 {
 		expiration := time.Now().UTC().AddDate(0, 0, req.ExpiresInDays)
 		user.ProxyUUIDExpiresAt = &expiration
 	} else {
