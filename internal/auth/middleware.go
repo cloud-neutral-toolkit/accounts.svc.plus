@@ -7,7 +7,38 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"account/internal/store"
 )
+
+// RequireActiveUser ensures the user account is active
+func RequireActiveUser(s store.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := GetUserID(c)
+		if userID == "" || userID == "system" {
+			c.Next()
+			return
+		}
+
+		user, err := s.GetUserByID(c.Request.Context(), userID)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+			c.Abort()
+			return
+		}
+
+		if !user.Active {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":   "account_suspended",
+				"message": "your account has been suspended",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
 
 // Context keys for storing user information
 type contextKey string
