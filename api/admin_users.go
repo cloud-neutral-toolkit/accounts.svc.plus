@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 func (h *handler) pauseUser(c *gin.Context) {
@@ -162,4 +163,8 @@ func (h *handler) removeFromBlacklist(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "email removed from blacklist"})
+}
+
+func generateRandomUUID() string {
+	return uuid.New().String()
 }
