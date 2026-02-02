@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"account/internal/auth"
+	"account/internal/store"
 )
 
 type vlessNode struct {
@@ -37,6 +39,10 @@ func (h *handler) listAgentNodes(c *gin.Context) {
 
 	user, err := h.store.GetUserByID(c.Request.Context(), userID)
 	if err != nil {
+		if errors.Is(err, store.ErrUserNotFound) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user_not_found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch user"})
 		return
 	}
