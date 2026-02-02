@@ -2344,9 +2344,14 @@ func (h *handler) oauthCallback(c *gin.Context) {
 		return
 	}
 
-	// 1. Check if user exists by identity
+	if !profile.Verified {
+		respondError(c, http.StatusUnauthorized, "email_not_verified", "oauth email must be verified")
+		return
+	}
+
+	var user *store.User
 	ctx := c.Request.Context()
-	user, err := h.store.GetUserByEmail(ctx, profile.Email)
+	existingUser, err := h.store.GetUserByEmail(ctx, profile.Email)
 	if err != nil && !errors.Is(err, store.ErrUserNotFound) {
 		respondError(c, http.StatusInternalServerError, "store_error", "database error")
 		return
@@ -2357,24 +2362,15 @@ func (h *handler) oauthCallback(c *gin.Context) {
 		user = &store.User{
 			Name:          profile.Name,
 			Email:         profile.Email,
-			EmailVerified: true, // Trusted provider
+			EmailVerified: true, // Trusted provider, verified above
 			Level:         store.LevelUser,
 			Role:          store.RoleUser,
 			Groups:        []string{"User"},
+			Active:        true,
 		}
 		if err := h.store.CreateUser(ctx, user); err != nil {
 			respondError(c, http.StatusInternalServerError, "user_creation_failed", "failed to create user")
 			return
-		}
-
-		// Track identity
-		identity := &store.Identity{
-			UserID:     user.ID,
-			Provider:   providerName,
-			ExternalID: profile.ID,
-		}
-		if err := h.store.CreateIdentity(ctx, identity); err != nil {
-			slog.Warn("failed to create identity record", "err", err, "userID", user.ID)
 		}
 
 		// Provision trial
@@ -2390,6 +2386,28 @@ func (h *handler) oauthCallback(c *gin.Context) {
 			Meta:          map[string]any{"expiresAt": trialExpiresAt},
 		}
 		h.store.UpsertSubscription(ctx, trial)
+	} else {
+		user = existingUser
+		// Ensure user is verified if they logged in via OAuth
+		if !user.EmailVerified {
+			user.EmailVerified = true
+			if err := h.store.UpdateUser(ctx, user); err != nil {
+				slog.Warn("failed to update user verification status during oauth", "err", err, "userID", user.ID)
+			}
+		}
+	}
+
+	// Always ensure identity record exists (bind OAuth ID to User Email)
+	identity := &store.Identity{
+		UserID:     user.ID,
+		Provider:   providerName,
+		ExternalID: profile.ID,
+	}
+	if err := h.store.CreateIdentity(ctx, identity); err != nil {
+		// Only log error if it's not a "already exists" error
+		if !strings.Contains(err.Error(), "exists") {
+			slog.Warn("failed to create identity record during oauth binding", "err", err, "userID", user.ID)
+		}
 	}
 
 	// Create session or generate public token for frontend redirect
