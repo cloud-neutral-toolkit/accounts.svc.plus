@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -29,11 +30,39 @@ func (h *handler) listAgentNodes(c *gin.Context) {
 
 	// Get current user ID to use as VLESS UUID
 	userID := auth.GetUserID(c)
-	users := []string{}
-	if userID != "" {
-		users = append(users, userID)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
 	}
 
+	user, err := h.store.GetUserByID(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch user"})
+		return
+	}
+
+	if !user.Active {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":   "account_paused",
+			"message": "account is paused",
+		})
+		return
+	}
+
+	proxyUUID := user.ProxyUUID
+	if proxyUUID == "" {
+		proxyUUID = user.ID
+	}
+
+	if user.ProxyUUIDExpiresAt != nil && time.Now().UTC().After(*user.ProxyUUIDExpiresAt) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":   "proxy_uuid_expired",
+			"message": "proxy access has expired, please renew",
+		})
+		return
+	}
+
+	users := []string{proxyUUID}
 	nodes := make([]vlessNode, 0)
 
 	if h.publicURL != "" {

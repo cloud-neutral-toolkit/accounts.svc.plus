@@ -76,7 +76,16 @@ CREATE TABLE public.users (
   mfa_secret_issued_at TIMESTAMPTZ,
   mfa_confirmed_at TIMESTAMPTZ,
   email_verified_at TIMESTAMPTZ,
-  email_verified BOOLEAN GENERATED ALWAYS AS ((email_verified_at IS NOT NULL)) STORED
+  email_verified BOOLEAN GENERATED ALWAYS AS ((email_verified_at IS NOT NULL)) STORED,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  proxy_uuid UUID NOT NULL DEFAULT gen_random_uuid(),
+  proxy_uuid_expires_at TIMESTAMPTZ
+);
+
+CREATE TABLE public.email_blacklist (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE public.identities (

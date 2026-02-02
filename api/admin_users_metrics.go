@@ -86,4 +86,15 @@ func registerAdminRoutes(group *gin.RouterGroup, h *handler) {
 	admin := group.Group("/admin")
 	admin.GET("/users/metrics", h.adminUsersMetrics)
 	admin.GET("/agents/status", h.adminAgentStatus)
+
+	// User management
+	admin.POST("/users/:userId/pause", h.pauseUser)
+	admin.POST("/users/:userId/resume", h.resumeUser)
+	admin.DELETE("/users/:userId", h.deleteUser)
+	admin.POST("/users/:userId/renew-uuid", h.renewProxyUUID)
+
+	// Email blacklist
+	admin.GET("/blacklist", h.listBlacklist)
+	admin.POST("/blacklist", h.addToBlacklist)
+	admin.DELETE("/blacklist/:email", h.removeFromBlacklist)
 }

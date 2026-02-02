@@ -76,16 +76,19 @@ func New(ctx context.Context, cfg Config) (Store, func(context.Context) error, e
 }
 
 type schemaCapabilities struct {
-	hasMFATOTPSecret     bool
-	hasMFAEnabled        bool
-	hasMFASecretIssuedAt bool
-	hasMFAConfirmedAt    bool
-	hasCreatedAt         bool
-	hasUpdatedAt         bool
-	hasLevel             bool
-	hasRole              bool
-	hasGroups            bool
-	hasPermissions       bool
+	hasMFATOTPSecret      bool
+	hasMFAEnabled         bool
+	hasMFASecretIssuedAt  bool
+	hasMFAConfirmedAt     bool
+	hasCreatedAt          bool
+	hasUpdatedAt          bool
+	hasLevel              bool
+	hasRole               bool
+	hasGroups             bool
+	hasPermissions        bool
+	hasActive             bool
+	hasProxyUUID          bool
+	hasProxyUUIDExpiresAt bool
 }
 
 func (c schemaCapabilities) supportsMFA() bool {
@@ -178,6 +181,25 @@ func (s *postgresStore) CreateUser(ctx context.Context, user *User) error {
 		columns = append(columns, "permissions")
 		placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
 		args = append(args, encoded)
+		idx++
+	}
+
+	if caps.hasActive {
+		columns = append(columns, "active")
+		placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
+		args = append(args, user.Active)
+		idx++
+	}
+	if caps.hasProxyUUID {
+		columns = append(columns, "proxy_uuid")
+		placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
+		args = append(args, nullForEmpty(user.ProxyUUID))
+		idx++
+	}
+	if caps.hasProxyUUIDExpiresAt {
+		columns = append(columns, "proxy_uuid_expires_at")
+		placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
+		args = append(args, user.ProxyUUIDExpiresAt)
 		idx++
 	}
 
@@ -314,9 +336,12 @@ func scanUser(row rowScanner) (*User, error) {
 		roleValue       sql.NullString
 		groupsRaw       []byte
 		permissionsRaw  []byte
+		activeValue     sql.NullBool
+		proxyUUID       sql.NullString
+		proxyExpiresAt  sql.NullTime
 	)
 
-	if err := row.Scan(&idValue, &username, &email, &emailVerified, &password, &mfaSecret, &mfaEnabled, &mfaSecretIssued, &mfaConfirmed, &createdAt, &updatedAt, &levelValue, &roleValue, &groupsRaw, &permissionsRaw); err != nil {
+	if err := row.Scan(&idValue, &username, &email, &emailVerified, &password, &mfaSecret, &mfaEnabled, &mfaSecretIssued, &mfaConfirmed, &createdAt, &updatedAt, &levelValue, &roleValue, &groupsRaw, &permissionsRaw, &activeValue, &proxyUUID, &proxyExpiresAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrUserNotFound
 		}
@@ -347,6 +372,12 @@ func scanUser(row rowScanner) (*User, error) {
 	user.Role = strings.TrimSpace(roleValue.String)
 	user.Groups = decodeStringSlice(groupsRaw)
 	user.Permissions = decodeStringSlice(permissionsRaw)
+	user.Active = activeValue.Valid && activeValue.Bool
+	user.ProxyUUID = strings.TrimSpace(proxyUUID.String)
+	if proxyExpiresAt.Valid {
+		t := proxyExpiresAt.Time.UTC()
+		user.ProxyUUIDExpiresAt = &t
+	}
 	normalizeUserRoleFields(user)
 	return user, nil
 }
@@ -452,6 +483,22 @@ func (s *postgresStore) UpdateUser(ctx context.Context, user *User) error {
 		}
 		builder.WriteString(fmt.Sprintf(", permissions = $%d", idx))
 		args = append(args, encoded)
+		idx++
+	}
+
+	if caps.hasActive {
+		builder.WriteString(fmt.Sprintf(", active = $%d", idx))
+		args = append(args, user.Active)
+		idx++
+	}
+	if caps.hasProxyUUID {
+		builder.WriteString(fmt.Sprintf(", proxy_uuid = $%d", idx))
+		args = append(args, nullForEmpty(user.ProxyUUID))
+		idx++
+	}
+	if caps.hasProxyUUIDExpiresAt {
+		builder.WriteString(fmt.Sprintf(", proxy_uuid_expires_at = $%d", idx))
+		args = append(args, user.ProxyUUIDExpiresAt)
 		idx++
 	}
 
@@ -932,7 +979,25 @@ func (s *postgresStore) capabilities(ctx context.Context) (schemaCapabilities, e
     WHERE table_name = 'users'
       AND table_schema = ANY (current_schemas(false))
       AND column_name = 'permissions'
-  ) AS has_permissions`
+  ) AS has_permissions,
+  EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND table_schema = ANY (current_schemas(false))
+      AND column_name = 'active'
+  ) AS has_active,
+  EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND table_schema = ANY (current_schemas(false))
+      AND column_name = 'proxy_uuid'
+  ) AS has_proxy_uuid,
+  EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND table_schema = ANY (current_schemas(false))
+      AND column_name = 'proxy_uuid_expires_at'
+  ) AS has_proxy_uuid_expires_at`
 
 	row := s.db.QueryRowContext(ctx, query)
 	var caps schemaCapabilities
@@ -947,6 +1012,9 @@ func (s *postgresStore) capabilities(ctx context.Context) (schemaCapabilities, e
 		&caps.hasRole,
 		&caps.hasGroups,
 		&caps.hasPermissions,
+		&caps.hasActive,
+		&caps.hasProxyUUID,
+		&caps.hasProxyUUIDExpiresAt,
 	); err != nil {
 		return schemaCapabilities{}, err
 	}
@@ -1007,8 +1075,23 @@ func (s *postgresStore) selectUserQuery(caps schemaCapabilities, whereClause str
 		permissionsExpr = "coalesce(permissions, '[]'::jsonb)"
 	}
 
-	return fmt.Sprintf(`SELECT uuid, username, email, email_verified, password, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s FROM users %s`,
-		secretExpr, enabledExpr, issuedExpr, confirmedExpr, createdExpr, updatedExpr, levelExpr, roleExpr, groupsExpr, permissionsExpr, whereClause)
+	activeExpr := "true"
+	if caps.hasActive {
+		activeExpr = "coalesce(active, true)"
+	}
+
+	proxyUUIDExpr := "NULL::uuid"
+	if caps.hasProxyUUID {
+		proxyUUIDExpr = "proxy_uuid"
+	}
+
+	proxyExpiresAtExpr := "NULL::timestamptz"
+	if caps.hasProxyUUIDExpiresAt {
+		proxyExpiresAtExpr = "proxy_uuid_expires_at"
+	}
+
+	return fmt.Sprintf(`SELECT uuid, username, email, email_verified, password, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s FROM users %s`,
+		secretExpr, enabledExpr, issuedExpr, confirmedExpr, createdExpr, updatedExpr, levelExpr, roleExpr, groupsExpr, permissionsExpr, activeExpr, proxyUUIDExpr, proxyExpiresAtExpr, whereClause)
 }
 
 func encodeStringSlice(values []string) ([]byte, error) {
@@ -1107,4 +1190,48 @@ func (s *postgresStore) ListUsers(ctx context.Context) ([]User, error) {
 	}
 
 	return users, nil
+}
+
+func (s *postgresStore) DeleteUser(ctx context.Context, id string) error {
+	const query = "DELETE FROM users WHERE uuid = $1"
+	_, err := s.db.ExecContext(ctx, query, id)
+	return err
+}
+
+func (s *postgresStore) AddToBlacklist(ctx context.Context, email string) error {
+	const query = "INSERT INTO email_blacklist (email) VALUES ($1) ON CONFLICT (email) DO NOTHING"
+	_, err := s.db.ExecContext(ctx, query, strings.ToLower(email))
+	return err
+}
+
+func (s *postgresStore) RemoveFromBlacklist(ctx context.Context, email string) error {
+	const query = "DELETE FROM email_blacklist WHERE email = $1"
+	_, err := s.db.ExecContext(ctx, query, strings.ToLower(email))
+	return err
+}
+
+func (s *postgresStore) IsBlacklisted(ctx context.Context, email string) (bool, error) {
+	const query = "SELECT EXISTS(SELECT 1 FROM email_blacklist WHERE email = $1)"
+	var exists bool
+	err := s.db.QueryRowContext(ctx, query, strings.ToLower(email)).Scan(&exists)
+	return exists, err
+}
+
+func (s *postgresStore) ListBlacklist(ctx context.Context) ([]string, error) {
+	const query = "SELECT email FROM email_blacklist ORDER BY created_at DESC"
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var emails []string
+	for rows.Next() {
+		var email string
+		if err := rows.Scan(&email); err != nil {
+			return nil, err
+		}
+		emails = append(emails, email)
+	}
+	return emails, nil
 }
