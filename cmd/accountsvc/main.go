@@ -57,6 +57,53 @@ func (m mailerAdapter) Send(ctx context.Context, msg api.EmailMessage) error {
 	return m.sender.Send(ctx, mail)
 }
 
+type metricsAdapter struct {
+	st store.Store
+}
+
+func (a *metricsAdapter) ListUsers(ctx context.Context) ([]service.UserRecord, error) {
+	users, err := a.st.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	records := make([]service.UserRecord, 0, len(users))
+	for _, u := range users {
+		records = append(records, service.UserRecord{
+			ID:        u.ID,
+			CreatedAt: u.CreatedAt,
+			Active:    u.Active,
+		})
+	}
+	return records, nil
+}
+
+func (a *metricsAdapter) FetchSubscriptionStates(ctx context.Context, userIDs []string) (map[string]service.SubscriptionState, error) {
+	states := make(map[string]service.SubscriptionState)
+	for _, userID := range userIDs {
+		subs, err := a.st.ListSubscriptionsByUser(ctx, userID)
+		if err != nil {
+			continue
+		}
+		active := false
+		var expiresAt *time.Time
+		for _, sub := range subs {
+			if strings.ToLower(sub.Status) == "active" {
+				active = true
+				if t, ok := sub.Meta["expiresAt"].(time.Time); ok {
+					if expiresAt == nil || t.After(*expiresAt) {
+						expiresAt = &t
+					}
+				}
+			}
+		}
+		states[userID] = service.SubscriptionState{
+			Active:    active,
+			ExpiresAt: expiresAt,
+		}
+	}
+	return states, nil
+}
+
 func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -260,17 +307,24 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 	options := []api.Option{
 		api.WithStore(st),
 		api.WithSessionTTL(cfg.Session.TTL),
+		api.WithEmailSender(emailSender),
+		api.WithEmailVerification(emailVerificationEnabled),
+		api.WithTokenService(tokenService),
+		api.WithOAuthFrontendURL(cfg.Auth.OAuth.FrontendURL),
+		api.WithServerPublicURL(cfg.Server.PublicURL),
 	}
-	if emailSender != nil {
-		options = append(options, api.WithEmailSender(emailSender))
-	}
-	options = append(options, api.WithEmailVerification(emailVerificationEnabled))
-	if tokenService != nil {
-		options = append(options, api.WithTokenService(tokenService))
-	}
+
 	if agentRegistry != nil {
 		options = append(options, api.WithAgentStatusReader(agentRegistry))
 	}
+
+	// Initialize User Metrics Service
+	metricsSvc := &service.UserMetricsService{
+		Users:         &metricsAdapter{st: st},
+		Subscriptions: &metricsAdapter{st: st},
+	}
+	options = append(options, api.WithUserMetricsProvider(metricsSvc))
+
 	// Initialize OAuth providers
 	oauthProviders := make(map[string]auth.OAuthProvider)
 	if cfg.Auth.Enable {
@@ -297,18 +351,9 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 			)
 		}
 	}
+	options = append(options, api.WithOAuthProviders(oauthProviders))
 
-	api.RegisterRoutes(r,
-		api.WithStore(st),
-		api.WithEmailSender(emailSender),
-		api.WithEmailVerification(cfg.Auth.Enable),
-		api.WithTokenService(tokenService),
-		api.WithOAuthProviders(oauthProviders),
-		api.WithTokenService(tokenService),
-		api.WithOAuthProviders(oauthProviders),
-		api.WithOAuthFrontendURL(cfg.Auth.OAuth.FrontendURL),
-		api.WithServerPublicURL(cfg.Server.PublicURL),
-	)
+	api.RegisterRoutes(r, options...)
 
 	if agentRegistry != nil {
 		registerAgentAPIRoutes(r, agentRegistry, gormSource, logger)
