@@ -60,6 +60,10 @@ func (h *handler) requireAdminOrOperator(c *gin.Context) (*store.User, bool) {
 		respondError(c, http.StatusForbidden, "forbidden", "insufficient permissions")
 		return nil, false
 	}
+	if h.isReadOnlyAccount(user) && c.Request.Method != http.MethodGet {
+		respondError(c, http.StatusForbidden, "read_only_account", "demo account is read-only")
+		return nil, false
+	}
 
 	return user, true
 }
