@@ -22,9 +22,9 @@ func main() {
 	var (
 		driver          = flag.String("driver", "postgres", "database driver (postgres, memory)")
 		dsn             = flag.String("dsn", "", "database connection string")
-		username        = flag.String("username", "", "super administrator username")
-		password        = flag.String("password", "", "super administrator password")
-		email           = flag.String("email", "", "super administrator email (optional)")
+		username        = flag.String("username", "", "root username")
+		password        = flag.String("password", "", "root password")
+		email           = flag.String("email", store.RootAdminEmail, "root email (must be admin@svc.plus)")
 		groups          = flag.String("groups", "", "comma separated list of groups to assign (optional)")
 		permissions     = flag.String("permissions", "", "comma separated list of permissions to assign (optional)")
 		currentPassword = flag.String("current-password", "", "current super administrator password (required when updating)")
@@ -51,6 +51,9 @@ func run(driver, dsn, username, password, email, groups, permissions, currentPas
 	if username == "" {
 		return errors.New("username is required")
 	}
+	if !strings.EqualFold(email, store.RootAdminEmail) {
+		return fmt.Errorf("root email must be %q", store.RootAdminEmail)
+	}
 	if dsn == "" && !strings.EqualFold(driver, "memory") {
 		return errors.New("dsn is required")
 	}
@@ -75,9 +78,13 @@ func run(driver, dsn, username, password, email, groups, permissions, currentPas
 	configuredGroups := parseCSV(groups)
 	configuredPermissions := parseCSV(permissions)
 
-	user, err := s.GetUserByName(ctx, username)
-	if err != nil {
-		if !errors.Is(err, store.ErrUserNotFound) {
+	user, err := s.GetUserByEmail(ctx, store.RootAdminEmail)
+	if err != nil && !errors.Is(err, store.ErrUserNotFound) {
+		return err
+	}
+	if errors.Is(err, store.ErrUserNotFound) {
+		user, err = s.GetUserByName(ctx, username)
+		if err != nil && !errors.Is(err, store.ErrUserNotFound) {
 			return err
 		}
 	}
@@ -89,7 +96,7 @@ func run(driver, dsn, username, password, email, groups, permissions, currentPas
 
 	if user == nil {
 		if superAdminCount > 0 {
-			return errors.New("super administrator already exists")
+			return errors.New("root administrator already exists")
 		}
 		if password == "" {
 			return errors.New("password is required")
@@ -105,7 +112,7 @@ func run(driver, dsn, username, password, email, groups, permissions, currentPas
 			Email:         email,
 			PasswordHash:  string(hashed),
 			Level:         store.LevelAdmin,
-			Role:          store.RoleAdmin,
+			Role:          store.RoleRoot,
 			Groups:        ensureSuperAdminGroups(configuredGroups, nil),
 			Permissions:   ensureSuperAdminPermissions(configuredPermissions, nil),
 			EmailVerified: true,
@@ -126,7 +133,7 @@ func run(driver, dsn, username, password, email, groups, permissions, currentPas
 	}
 
 	if superAdminCount > 1 {
-		return errors.New("multiple super administrators detected; resolve manually before continuing")
+		return errors.New("multiple root administrators detected; resolve manually before continuing")
 	}
 
 	if user.PasswordHash != "" {
@@ -157,9 +164,7 @@ func run(driver, dsn, username, password, email, groups, permissions, currentPas
 	}
 
 	updated := *user
-	if email != "" {
-		updated.Email = email
-	}
+	updated.Email = store.RootAdminEmail
 	if password != "" {
 		hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
@@ -171,7 +176,7 @@ func run(driver, dsn, username, password, email, groups, permissions, currentPas
 	updated.Groups = ensureSuperAdminGroups(configuredGroups, user.Groups)
 	updated.Permissions = ensureSuperAdminPermissions(configuredPermissions, user.Permissions)
 	updated.EmailVerified = updated.Email != ""
-	updated.Role = store.RoleAdmin
+	updated.Role = store.RoleRoot
 	updated.Level = store.LevelAdmin
 	updated.UpdatedAt = time.Now().UTC()
 

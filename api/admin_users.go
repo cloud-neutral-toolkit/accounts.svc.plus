@@ -9,7 +9,7 @@ import (
 )
 
 func (h *handler) pauseUser(c *gin.Context) {
-	if _, ok := h.requireAdminOrOperator(c); !ok {
+	if _, ok := h.requireAdminPermission(c, permissionAdminUsersPause); !ok {
 		return
 	}
 
@@ -17,6 +17,10 @@ func (h *handler) pauseUser(c *gin.Context) {
 	user, err := h.store.GetUserByID(c.Request.Context(), userID)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "user_lookup_failed", "failed to find user")
+		return
+	}
+	if h.isRootAccount(user) {
+		respondError(c, http.StatusForbidden, "root_protected", "root account cannot be paused")
 		return
 	}
 
@@ -30,7 +34,7 @@ func (h *handler) pauseUser(c *gin.Context) {
 }
 
 func (h *handler) resumeUser(c *gin.Context) {
-	if _, ok := h.requireAdminOrOperator(c); !ok {
+	if _, ok := h.requireAdminPermission(c, permissionAdminUsersResume); !ok {
 		return
 	}
 
@@ -38,6 +42,10 @@ func (h *handler) resumeUser(c *gin.Context) {
 	user, err := h.store.GetUserByID(c.Request.Context(), userID)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "user_lookup_failed", "failed to find user")
+		return
+	}
+	if h.isRootAccount(user) {
+		respondError(c, http.StatusForbidden, "root_protected", "root account is always active")
 		return
 	}
 
@@ -51,11 +59,20 @@ func (h *handler) resumeUser(c *gin.Context) {
 }
 
 func (h *handler) deleteUser(c *gin.Context) {
-	if _, ok := h.requireAdminOrOperator(c); !ok {
+	if _, ok := h.requireAdminPermission(c, permissionAdminUsersDelete); !ok {
 		return
 	}
 
 	userID := c.Param("userId")
+	user, err := h.store.GetUserByID(c.Request.Context(), userID)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "user_lookup_failed", "failed to find user")
+		return
+	}
+	if h.isRootAccount(user) {
+		respondError(c, http.StatusForbidden, "root_protected", "root account cannot be deleted")
+		return
+	}
 	if err := h.store.DeleteUser(c.Request.Context(), userID); err != nil {
 		respondError(c, http.StatusInternalServerError, "delete_failed", "failed to delete user")
 		return
@@ -65,7 +82,7 @@ func (h *handler) deleteUser(c *gin.Context) {
 }
 
 func (h *handler) renewProxyUUID(c *gin.Context) {
-	if _, ok := h.requireAdminOrOperator(c); !ok {
+	if _, ok := h.requireAdminPermission(c, permissionAdminUsersRenewUUID); !ok {
 		return
 	}
 
@@ -82,6 +99,10 @@ func (h *handler) renewProxyUUID(c *gin.Context) {
 	user, err := h.store.GetUserByID(c.Request.Context(), userID)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "user_lookup_failed", "failed to find user")
+		return
+	}
+	if h.isRootAccount(user) {
+		respondError(c, http.StatusForbidden, "root_protected", "root account UUID cannot be renewed")
 		return
 	}
 
@@ -126,7 +147,7 @@ func (h *handler) renewProxyUUID(c *gin.Context) {
 }
 
 func (h *handler) listBlacklist(c *gin.Context) {
-	if _, ok := h.requireAdminOrOperator(c); !ok {
+	if _, ok := h.requireAdminPermission(c, permissionAdminBlacklistRead); !ok {
 		return
 	}
 
@@ -140,7 +161,7 @@ func (h *handler) listBlacklist(c *gin.Context) {
 }
 
 func (h *handler) addToBlacklist(c *gin.Context) {
-	if _, ok := h.requireAdminOrOperator(c); !ok {
+	if _, ok := h.requireAdminPermission(c, permissionAdminBlacklistWrite); !ok {
 		return
 	}
 
@@ -161,7 +182,7 @@ func (h *handler) addToBlacklist(c *gin.Context) {
 }
 
 func (h *handler) removeFromBlacklist(c *gin.Context) {
-	if _, ok := h.requireAdminOrOperator(c); !ok {
+	if _, ok := h.requireAdminPermission(c, permissionAdminBlacklistWrite); !ok {
 		return
 	}
 

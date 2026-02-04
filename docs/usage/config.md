@@ -85,6 +85,20 @@ auth:
 
 说明：启用后会为 `/api/auth/*` 的保护路由添加 JWT 中间件。
 
+### Root / RBAC 约束
+
+- 系统仅允许一个 root 账号，固定邮箱：`admin@svc.plus`。
+- 服务启动会自动执行 root 自检：
+  - 若缺失 root 且未设置 `ROOT_BOOTSTRAP_PASSWORD`，服务启动失败；
+  - 若存在旧版 `admin` 角色账号，会自动降级为 `operator`。
+- 首次引导 root 账号时可设置环境变量：
+
+```bash
+ROOT_BOOTSTRAP_PASSWORD='YOUR_PASSWORD-now'
+```
+
+- `Demo` 体验账号固定为只读分组 `ReadOnly Role`，并使用 `readonly` 角色。
+
 ## smtp
 
 ```yaml

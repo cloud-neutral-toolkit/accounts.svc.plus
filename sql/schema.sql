@@ -14,6 +14,9 @@ DROP TABLE IF EXISTS public.identities CASCADE;
 DROP TABLE IF EXISTS public.users CASCADE;
 DROP TABLE IF EXISTS public.admin_settings CASCADE;
 DROP TABLE IF EXISTS public.subscriptions CASCADE;
+DROP TABLE IF EXISTS public.rbac_role_permissions CASCADE;
+DROP TABLE IF EXISTS public.rbac_permissions CASCADE;
+DROP TABLE IF EXISTS public.rbac_roles CASCADE;
 
 -- =========================================
 -- Extensions
@@ -79,7 +82,8 @@ CREATE TABLE public.users (
   email_verified BOOLEAN GENERATED ALWAYS AS ((email_verified_at IS NOT NULL)) STORED,
   active BOOLEAN NOT NULL DEFAULT TRUE,
   proxy_uuid UUID NOT NULL DEFAULT gen_random_uuid(),
-  proxy_uuid_expires_at TIMESTAMPTZ
+  proxy_uuid_expires_at TIMESTAMPTZ,
+  CONSTRAINT users_root_email_ck CHECK (lower(role) <> 'root' OR lower(email) = 'admin@svc.plus')
 );
 
 CREATE TABLE public.email_blacklist (
@@ -123,6 +127,30 @@ CREATE TABLE public.admin_settings (
   CONSTRAINT admin_settings_module_role_uk UNIQUE (module_key, role)
 );
 
+CREATE TABLE public.rbac_roles (
+  role_key TEXT PRIMARY KEY,
+  description TEXT NOT NULL DEFAULT '',
+  priority INTEGER NOT NULL DEFAULT 100,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE public.rbac_permissions (
+  permission_key TEXT PRIMARY KEY,
+  description TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE public.rbac_role_permissions (
+  role_key TEXT NOT NULL REFERENCES public.rbac_roles(role_key) ON DELETE CASCADE,
+  permission_key TEXT NOT NULL REFERENCES public.rbac_permissions(permission_key) ON DELETE CASCADE,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (role_key, permission_key)
+);
+
 CREATE TABLE public.subscriptions (
   uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_uuid UUID NOT NULL REFERENCES public.users(uuid) ON DELETE CASCADE,
@@ -160,6 +188,7 @@ CREATE TABLE public.nodes (
 -- =========================================
 CREATE UNIQUE INDEX users_username_lower_uk ON public.users (lower(username));
 CREATE UNIQUE INDEX users_email_lower_uk ON public.users (lower(email)) WHERE email IS NOT NULL;
+CREATE UNIQUE INDEX users_single_root_role_uk ON public.users ((lower(role))) WHERE lower(role) = 'root';
 CREATE INDEX idx_identities_user_uuid ON public.identities (user_uuid);
 CREATE INDEX idx_sessions_user_uuid ON public.sessions (user_uuid);
 CREATE INDEX idx_admin_settings_version ON public.admin_settings (version);
@@ -211,6 +240,21 @@ CREATE TRIGGER trg_admin_settings_bump_version
   BEFORE UPDATE ON public.admin_settings
   FOR EACH ROW EXECUTE FUNCTION public.bump_version();
 
+-- rbac_roles
+CREATE TRIGGER trg_rbac_roles_set_updated_at
+  BEFORE UPDATE ON public.rbac_roles
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- rbac_permissions
+CREATE TRIGGER trg_rbac_permissions_set_updated_at
+  BEFORE UPDATE ON public.rbac_permissions
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- rbac_role_permissions
+CREATE TRIGGER trg_rbac_role_permissions_set_updated_at
+  BEFORE UPDATE ON public.rbac_role_permissions
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
 -- subscriptions
 CREATE TRIGGER trg_subscriptions_set_updated_at
   BEFORE UPDATE ON public.subscriptions
@@ -224,3 +268,33 @@ CREATE TRIGGER trg_nodes_set_updated_at
 CREATE TRIGGER trg_nodes_bump_version
   BEFORE UPDATE ON public.nodes
   FOR EACH ROW EXECUTE FUNCTION public.bump_version();
+
+-- =========================================
+-- Seed RBAC
+-- =========================================
+INSERT INTO public.rbac_roles (role_key, description, priority) VALUES
+  ('root', 'single root account', 0),
+  ('operator', 'operation role with configurable permissions', 10),
+  ('user', 'standard subscription user', 20),
+  ('readonly', 'read-only experience account', 30)
+ON CONFLICT (role_key) DO NOTHING;
+
+INSERT INTO public.rbac_permissions (permission_key, description) VALUES
+  ('admin.settings.read', 'read admin matrix settings'),
+  ('admin.settings.write', 'update admin matrix settings'),
+  ('admin.users.metrics.read', 'read user metrics'),
+  ('admin.users.list.read', 'read user list'),
+  ('admin.agents.status.read', 'read agent status'),
+  ('admin.users.pause.write', 'pause users'),
+  ('admin.users.resume.write', 'resume users'),
+  ('admin.users.delete.write', 'delete users'),
+  ('admin.users.renew_uuid.write', 'renew user proxy uuid'),
+  ('admin.users.role.write', 'update/reset user role'),
+  ('admin.blacklist.read', 'read blacklist'),
+  ('admin.blacklist.write', 'update blacklist')
+ON CONFLICT (permission_key) DO NOTHING;
+
+INSERT INTO public.rbac_role_permissions (role_key, permission_key, enabled)
+SELECT 'operator', permission_key, true
+FROM public.rbac_permissions
+ON CONFLICT (role_key, permission_key) DO NOTHING;
