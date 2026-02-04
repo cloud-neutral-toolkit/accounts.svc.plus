@@ -790,14 +790,22 @@ func (h *handler) confirmPasswordReset(c *gin.Context) {
 	})
 }
 
-var allowedAdminRoles = map[string]struct{}{
-	"admin":    {},
-	"operator": {},
-	"user":     {},
+var allowedPermissionMatrixRoles = map[string]struct{}{
+	store.RoleRoot:     {},
+	store.RoleOperator: {},
+	store.RoleUser:     {},
+	store.RoleReadOnly: {},
+	store.RoleAdmin:    {},
+}
+
+var assignableUserRoles = map[string]struct{}{
+	store.RoleOperator: {},
+	store.RoleUser:     {},
+	store.RoleReadOnly: {},
 }
 
 func (h *handler) getAdminSettings(c *gin.Context) {
-	if _, ok := h.requireAdminOrOperator(c); !ok {
+	if _, ok := h.requireAdminPermission(c, permissionAdminSettingsRead); !ok {
 		return
 	}
 	settings, err := service.GetAdminSettings(c.Request.Context())
@@ -816,7 +824,7 @@ func (h *handler) getAdminSettings(c *gin.Context) {
 }
 
 func (h *handler) updateAdminSettings(c *gin.Context) {
-	adminUser, ok := h.requireAdminOrOperator(c)
+	adminUser, ok := h.requireAdminPermission(c, permissionAdminSettingsWrite)
 	if !ok {
 		return
 	}
@@ -886,7 +894,7 @@ func normalizeAdminMatrix(in map[string]map[string]bool) (map[string]map[string]
 			if key == "" {
 				return nil, errors.New("role cannot be empty")
 			}
-			if _, ok := allowedAdminRoles[key]; !ok {
+			if _, ok := allowedPermissionMatrixRoles[key]; !ok {
 				return nil, fmt.Errorf("unsupported role: %s", role)
 			}
 			normalizedRoles[key] = enabled
@@ -2469,7 +2477,7 @@ func (h *handler) oauthCallback(c *gin.Context) {
 }
 
 func (h *handler) listUsers(c *gin.Context) {
-	if _, ok := h.requireAdminOrOperator(c); !ok {
+	if _, ok := h.requireAdminPermission(c, permissionAdminUsersListRead); !ok {
 		return
 	}
 
@@ -2488,7 +2496,7 @@ func (h *handler) listUsers(c *gin.Context) {
 }
 
 func (h *handler) updateUserRole(c *gin.Context) {
-	if _, ok := h.requireAdminOrOperator(c); !ok {
+	if _, ok := h.requireAdminPermission(c, permissionAdminUsersRoleWrite); !ok {
 		return
 	}
 
@@ -2507,7 +2515,7 @@ func (h *handler) updateUserRole(c *gin.Context) {
 	}
 
 	role := strings.ToLower(strings.TrimSpace(req.Role))
-	if _, ok := allowedAdminRoles[role]; !ok {
+	if _, ok := assignableUserRoles[role]; !ok {
 		respondError(c, http.StatusBadRequest, "invalid_role", "specified role is not allowed")
 		return
 	}
@@ -2519,6 +2527,10 @@ func (h *handler) updateUserRole(c *gin.Context) {
 			return
 		}
 		respondError(c, http.StatusInternalServerError, "update_failed", "failed to fetch user")
+		return
+	}
+	if h.isRootAccount(user) {
+		respondError(c, http.StatusForbidden, "root_protected", "root account role cannot be modified")
 		return
 	}
 
@@ -2534,7 +2546,7 @@ func (h *handler) updateUserRole(c *gin.Context) {
 }
 
 func (h *handler) resetUserRole(c *gin.Context) {
-	if _, ok := h.requireAdminOrOperator(c); !ok {
+	if _, ok := h.requireAdminPermission(c, permissionAdminUsersRoleWrite); !ok {
 		return
 	}
 
@@ -2551,6 +2563,10 @@ func (h *handler) resetUserRole(c *gin.Context) {
 			return
 		}
 		respondError(c, http.StatusInternalServerError, "update_failed", "failed to fetch user")
+		return
+	}
+	if h.isRootAccount(user) {
+		respondError(c, http.StatusForbidden, "root_protected", "root account role cannot be modified")
 		return
 	}
 
@@ -2573,6 +2589,9 @@ func (h *handler) isReadOnlyAccount(user *store.User) bool {
 	if user == nil {
 		return false
 	}
+	if strings.EqualFold(strings.TrimSpace(user.Role), store.RoleReadOnly) {
+		return true
+	}
 	name := strings.TrimSpace(user.Name)
 	email := strings.TrimSpace(user.Email)
 	if strings.EqualFold(name, "demo") || strings.EqualFold(email, "demo@svc.plus") {
@@ -2584,6 +2603,13 @@ func (h *handler) isReadOnlyAccount(user *store.User) bool {
 		}
 	}
 	return false
+}
+
+func (h *handler) isRootAccount(user *store.User) bool {
+	if user == nil {
+		return false
+	}
+	return store.IsRootRole(user.Role) && strings.EqualFold(strings.TrimSpace(user.Email), store.RootAdminEmail)
 }
 
 func respondError(c *gin.Context, status int, code, message string) {

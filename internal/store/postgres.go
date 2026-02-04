@@ -559,7 +559,7 @@ func (s *postgresStore) CountSuperAdmins(ctx context.Context) (int, error) {
 
 	roleClauses := make([]string, 0, 2)
 	if caps.hasRole {
-		roleClauses = append(roleClauses, "lower(role) = 'admin'")
+		roleClauses = append(roleClauses, "lower(role) IN ('root','admin')")
 	}
 	if caps.hasLevel {
 		roleClauses = append(roleClauses, fmt.Sprintf("level = %d", LevelAdmin))

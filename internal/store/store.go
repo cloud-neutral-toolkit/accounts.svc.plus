@@ -442,6 +442,11 @@ func (s *memoryStore) CountSuperAdmins(ctx context.Context) (int, error) {
 }
 
 const (
+	// RootAdminEmail is the canonical email for the single root account.
+	RootAdminEmail = "admin@svc.plus"
+)
+
+const (
 	// LevelAdmin is the numeric level for administrator accounts.
 	LevelAdmin = 0
 	// LevelOperator is the numeric level for operator accounts.
@@ -451,26 +456,49 @@ const (
 )
 
 const (
-	// RoleAdmin identifies administrator accounts.
+	// RoleRoot identifies the single root administrator account.
+	RoleRoot = "root"
+	// RoleAdmin identifies legacy administrator accounts from earlier versions.
 	RoleAdmin = "admin"
 	// RoleOperator identifies operator accounts.
 	RoleOperator = "operator"
 	// RoleUser identifies standard user accounts.
 	RoleUser = "user"
+	// RoleReadOnly identifies read-only accounts.
+	RoleReadOnly = "readonly"
 )
 
 var (
 	roleToLevel = map[string]int{
+		RoleRoot:     LevelAdmin,
 		RoleAdmin:    LevelAdmin,
 		RoleOperator: LevelOperator,
 		RoleUser:     LevelUser,
+		RoleReadOnly: LevelUser,
 	}
 	levelToRole = map[int]string{
-		LevelAdmin:    RoleAdmin,
+		LevelAdmin:    RoleRoot,
 		LevelOperator: RoleOperator,
 		LevelUser:     RoleUser,
 	}
 )
+
+// IsRootRole reports whether a role should be treated as root-equivalent.
+func IsRootRole(role string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(role))
+	return normalized == RoleRoot
+}
+
+// IsAdminRole reports whether a role is admin-like (root or legacy admin).
+func IsAdminRole(role string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(role))
+	return normalized == RoleRoot || normalized == RoleAdmin
+}
+
+// IsOperatorRole reports whether a role is operator.
+func IsOperatorRole(role string) bool {
+	return strings.ToLower(strings.TrimSpace(role)) == RoleOperator
+}
 
 func normalizeUserRoleFields(user *User) {
 	if user == nil {
@@ -579,7 +607,7 @@ func isSuperAdmin(user *User) bool {
 	if user == nil {
 		return false
 	}
-	if strings.ToLower(strings.TrimSpace(user.Role)) != RoleAdmin && user.Level != LevelAdmin {
+	if !IsAdminRole(user.Role) && user.Level != LevelAdmin {
 		return false
 	}
 
