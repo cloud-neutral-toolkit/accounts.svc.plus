@@ -81,7 +81,8 @@ func (h *handler) listAgentNodes(c *gin.Context) {
 		return
 	}
 
-	hosts := parseProxyNodeHosts(h.publicURL)
+	registeredHosts, registeredNames := registeredNodeMetadata(h.agentStatusReader)
+	hosts := parseProxyNodeHosts(h.publicURL, registeredHosts)
 	if len(hosts) == 0 {
 		c.JSON(http.StatusOK, []vlessNode{})
 		return
@@ -98,7 +99,7 @@ func (h *handler) listAgentNodes(c *gin.Context) {
 	users := []string{proxyUUID}
 	nodes := make([]vlessNode, 0, len(hosts))
 	for _, host := range hosts {
-		nodeName := nodeNameForHost(host)
+		nodeName := resolveNodeName(host, registeredNames)
 		nodes = append(nodes, vlessNode{
 			Name:       nodeName,
 			Address:    host,
@@ -137,7 +138,7 @@ func (h *handler) listAgentNodes(c *gin.Context) {
 	c.JSON(http.StatusOK, nodes)
 }
 
-func parseProxyNodeHosts(publicURL string) []string {
+func parseProxyNodeHosts(publicURL string, extraHosts []string) []string {
 	seen := make(map[string]struct{})
 	hosts := make([]string, 0)
 
@@ -160,6 +161,10 @@ func parseProxyNodeHosts(publicURL string) []string {
 		for _, field := range fields {
 			appendHost(field)
 		}
+	}
+
+	for _, host := range extraHosts {
+		appendHost(host)
 	}
 
 	if len(hosts) == 0 {
@@ -196,6 +201,37 @@ func normalizeHost(raw string) string {
 	}
 
 	return strings.TrimSpace(value)
+}
+
+func registeredNodeMetadata(reader agentStatusReader) ([]string, map[string]string) {
+	if reader == nil {
+		return nil, nil
+	}
+
+	snapshots := reader.Statuses()
+	hosts := make([]string, 0, len(snapshots))
+	names := make(map[string]string, len(snapshots))
+	for _, snapshot := range snapshots {
+		host := normalizeHost(snapshot.Agent.ID)
+		if host == "" {
+			continue
+		}
+		hosts = append(hosts, host)
+		if displayName := strings.TrimSpace(snapshot.Agent.Name); displayName != "" {
+			names[host] = displayName
+		}
+	}
+
+	return hosts, names
+}
+
+func resolveNodeName(host string, names map[string]string) string {
+	if len(names) > 0 {
+		if name := strings.TrimSpace(names[host]); name != "" {
+			return name
+		}
+	}
+	return nodeNameForHost(host)
 }
 
 func envOrDefault(key, fallback string) string {
