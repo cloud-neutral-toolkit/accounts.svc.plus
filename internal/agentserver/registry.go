@@ -117,6 +117,30 @@ func (r *Registry) ReportStatus(agent Identity, report agentproto.StatusReport) 
 	}
 }
 
+// RegisterAgent dynamically registers an agent with the given ID if it doesn't already exist.
+// This allows agents to self-report their IDs when using a shared authentication token.
+// The agent will inherit the groups from the credential used for authentication.
+// Returns the identity for the agent (either existing or newly created).
+func (r *Registry) RegisterAgent(agentID string, groups []string) Identity {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Check if agent already registered
+	if identity, exists := r.byID[agentID]; exists {
+		return identity
+	}
+
+	// Create new identity for this agent
+	identity := Identity{
+		ID:     agentID,
+		Name:   agentID, // Use ID as name by default
+		Groups: groups,
+	}
+
+	r.byID[agentID] = identity
+	return identity
+}
+
 // Statuses returns the latest status snapshot for all agents sorted by ID.
 func (r *Registry) Statuses() []StatusSnapshot {
 	r.mu.RLock()

@@ -18,6 +18,7 @@ type ClientListResponse struct {
 // StatusReport captures the runtime state of an agent and the managed Xray
 // instance.
 type StatusReport struct {
+	AgentID      string     `json:"agentId"` // Self-reported agent ID (e.g., "hk-xhttp.svc.plus")
 	Healthy      bool       `json:"healthy"`
 	Message      string     `json:"message,omitempty"`
 	Users        int        `json:"users"`
