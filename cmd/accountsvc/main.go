@@ -658,10 +658,15 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		}
 	} else if token := os.Getenv("INTERNAL_SERVICE_TOKEN"); token != "" {
 		// Fallback: if no credentials configured but we have an internal token,
-		// register a default internal agent.
+		// accept any agent that presents this token (ID will be taken from agent's self-reported ID)
+		// This allows the agent to use its configured ID (e.g., "hk-xhttp.svc.plus")
+		agentID := strings.TrimSpace(os.Getenv("AGENT_ID"))
+		if agentID == "" {
+			agentID = "internal-agent" // fallback ID if not specified
+		}
 		agentRegistry, err = agentserver.NewRegistry(agentserver.Config{
 			Credentials: []agentserver.Credential{{
-				ID:     "internal-agent",
+				ID:     agentID,
 				Name:   "Internal Agent",
 				Token:  token,
 				Groups: []string{"internal"},
