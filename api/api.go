@@ -968,6 +968,20 @@ func (h *handler) login(c *gin.Context) {
 		return
 	}
 
+	// Demo/read-only account explicitly disables MFA to keep the roaming
+	// experience simple while write operations remain blocked by policy.
+	if h.isReadOnlyAccount(user) {
+		if user.MFAEnabled || strings.TrimSpace(user.MFATOTPSecret) != "" || !user.MFASecretIssuedAt.IsZero() || !user.MFAConfirmedAt.IsZero() {
+			user.MFATOTPSecret = ""
+			user.MFAEnabled = false
+			user.MFASecretIssuedAt = time.Time{}
+			user.MFAConfirmedAt = time.Time{}
+			if err := h.store.UpdateUser(c.Request.Context(), user); err != nil {
+				slog.Warn("failed to reset mfa state for read-only account", "err", err, "userID", user.ID)
+			}
+		}
+	}
+
 	if user.MFAEnabled {
 		if totpCode == "" {
 			respondError(c, http.StatusBadRequest, "mfa_code_required", "totp code is required")
@@ -1021,10 +1035,12 @@ func (h *handler) login(c *gin.Context) {
 		"user":      sanitizeUser(user, nil),
 	}
 
-	if challengeToken, err := h.createMFAChallenge(user.ID); err != nil {
-		slog.Error("failed to create mfa challenge during login", "err", err, "userID", user.ID)
-	} else {
-		response["mfaToken"] = challengeToken
+	if !h.isReadOnlyAccount(user) {
+		if challengeToken, err := h.createMFAChallenge(user.ID); err != nil {
+			slog.Error("failed to create mfa challenge during login", "err", err, "userID", user.ID)
+		} else {
+			response["mfaToken"] = challengeToken
+		}
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -2203,6 +2219,10 @@ func (h *handler) cancelSubscription(c *gin.Context) {
 
 func sanitizeUser(user *store.User, challenge *mfaChallenge) gin.H {
 	identifier := strings.TrimSpace(user.ID)
+	proxyUUID := strings.TrimSpace(user.ProxyUUID)
+	if proxyUUID == "" {
+		proxyUUID = identifier
+	}
 	groups := user.Groups
 	if len(groups) == 0 {
 		groups = []string{}
@@ -2220,17 +2240,19 @@ func sanitizeUser(user *store.User, challenge *mfaChallenge) gin.H {
 		permissions = cloned
 	}
 	return gin.H{
-		"id":            identifier,
-		"uuid":          identifier,
-		"name":          user.Name,
-		"username":      user.Name,
-		"email":         user.Email,
-		"emailVerified": user.EmailVerified,
-		"mfaEnabled":    user.MFAEnabled,
-		"mfa":           buildMFAState(user, challenge),
-		"role":          user.Role,
-		"groups":        groups,
-		"permissions":   permissions,
+		"id":                 identifier,
+		"uuid":               identifier,
+		"name":               user.Name,
+		"username":           user.Name,
+		"email":              user.Email,
+		"emailVerified":      user.EmailVerified,
+		"mfaEnabled":         user.MFAEnabled,
+		"mfa":                buildMFAState(user, challenge),
+		"role":               user.Role,
+		"groups":             groups,
+		"permissions":        permissions,
+		"proxyUuid":          proxyUUID,
+		"proxyUuidExpiresAt": user.ProxyUUIDExpiresAt,
 	}
 }
 

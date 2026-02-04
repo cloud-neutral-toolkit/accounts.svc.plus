@@ -135,6 +135,10 @@ func ensureDemoUser(ctx context.Context, st store.Store, logger *slog.Logger) er
 			Email:              demoEmail,
 			EmailVerified:      true,
 			PasswordHash:       string(hashed),
+			MFATOTPSecret:      "",
+			MFAEnabled:         false,
+			MFASecretIssuedAt:  time.Time{},
+			MFAConfirmedAt:     time.Time{},
 			Level:              store.LevelUser,
 			Role:               store.RoleReadOnly,
 			Groups:             []string{demoGroup},
@@ -156,6 +160,10 @@ func ensureDemoUser(ctx context.Context, st store.Store, logger *slog.Logger) er
 	demoUser.Email = demoEmail
 	demoUser.EmailVerified = true
 	demoUser.PasswordHash = string(hashed)
+	demoUser.MFATOTPSecret = ""
+	demoUser.MFAEnabled = false
+	demoUser.MFASecretIssuedAt = time.Time{}
+	demoUser.MFAConfirmedAt = time.Time{}
 	demoUser.Level = store.LevelUser
 	demoUser.Role = store.RoleReadOnly
 	demoUser.Groups = []string{demoGroup}
