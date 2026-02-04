@@ -32,5 +32,14 @@ func (h *handler) syncConfig(c *gin.Context) {
 		return
 	}
 
+	user, ok := h.requireAuthenticatedUser(c)
+	if !ok {
+		return
+	}
+	if h.isReadOnlyAccount(user) {
+		respondError(c, http.StatusForbidden, "read_only_account", "demo account is read-only")
+		return
+	}
+
 	respondError(c, http.StatusNotImplemented, "desktop_sync_unavailable", "desktop configuration sync is not yet available")
 }
