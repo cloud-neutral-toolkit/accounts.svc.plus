@@ -278,6 +278,11 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.POST("/admin/users/:userId/role", h.updateUserRole)
 	authProtected.DELETE("/admin/users/:userId/role", h.resetUserRole)
 
+	// Internal routes for service-to-service reads.
+	internalGroup := r.Group("/api/internal")
+	internalGroup.Use(auth.InternalAuthMiddleware())
+	internalGroup.GET("/public-overview", h.internalPublicOverview)
+
 	// Public /api routes for admin/management (expected by frontend at /api/admin/...)
 	apiGroup := r.Group("/api")
 	if h.tokenService != nil {
