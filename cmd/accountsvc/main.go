@@ -17,7 +17,9 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -38,6 +40,14 @@ import (
 var (
 	configPath string
 	logLevel   string
+)
+
+const (
+	demoUsername = "Demo"
+	demoPassword = "Demo"
+	demoEmail    = "demo@svc.plus"
+	demoGroup    = "ReadOnly Role"
+	demoUUIDTTL  = time.Hour
 )
 
 type mailerAdapter struct {
@@ -104,6 +114,124 @@ func (a *metricsAdapter) FetchSubscriptionStates(ctx context.Context, userIDs []
 	return states, nil
 }
 
+func ensureDemoUser(ctx context.Context, st store.Store, logger *slog.Logger) error {
+	demoUser, err := findDemoUser(ctx, st)
+	if err != nil {
+		return err
+	}
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte(demoPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash demo password: %w", err)
+	}
+
+	expiresAt := time.Now().UTC().Add(demoUUIDTTL)
+	if demoUser == nil {
+		user := &store.User{
+			Name:               demoUsername,
+			Email:              demoEmail,
+			EmailVerified:      true,
+			PasswordHash:       string(hashed),
+			Level:              store.LevelUser,
+			Role:               store.RoleUser,
+			Groups:             []string{demoGroup},
+			Permissions:        []string{},
+			Active:             true,
+			ProxyUUID:          uuid.NewString(),
+			ProxyUUIDExpiresAt: &expiresAt,
+		}
+		if err := st.CreateUser(ctx, user); err != nil {
+			return fmt.Errorf("create demo user: %w", err)
+		}
+		if logger != nil {
+			logger.Info("demo read-only user created", "username", demoUsername, "email", demoEmail)
+		}
+		return nil
+	}
+
+	demoUser.Name = demoUsername
+	demoUser.Email = demoEmail
+	demoUser.EmailVerified = true
+	demoUser.PasswordHash = string(hashed)
+	demoUser.Level = store.LevelUser
+	demoUser.Role = store.RoleUser
+	demoUser.Groups = []string{demoGroup}
+	demoUser.Permissions = []string{}
+	demoUser.Active = true
+	demoUser.ProxyUUID = uuid.NewString()
+	demoUser.ProxyUUIDExpiresAt = &expiresAt
+	if err := st.UpdateUser(ctx, demoUser); err != nil {
+		return fmt.Errorf("update demo user: %w", err)
+	}
+	if logger != nil {
+		logger.Info("demo read-only user ensured", "username", demoUsername, "email", demoEmail)
+	}
+	return nil
+}
+
+func findDemoUser(ctx context.Context, st store.Store) (*store.User, error) {
+	userByName, errByName := st.GetUserByName(ctx, demoUsername)
+	if errByName != nil && !errors.Is(errByName, store.ErrUserNotFound) {
+		return nil, fmt.Errorf("get demo by name: %w", errByName)
+	}
+	userByEmail, errByEmail := st.GetUserByEmail(ctx, demoEmail)
+	if errByEmail != nil && !errors.Is(errByEmail, store.ErrUserNotFound) {
+		return nil, fmt.Errorf("get demo by email: %w", errByEmail)
+	}
+
+	if userByName != nil && userByEmail != nil && userByName.ID != userByEmail.ID {
+		return nil, fmt.Errorf("demo account conflict: username %q and email %q belong to different users", demoUsername, demoEmail)
+	}
+	if userByName != nil {
+		return userByName, nil
+	}
+	if userByEmail != nil {
+		return userByEmail, nil
+	}
+	return nil, nil
+}
+
+func startDemoUUIDRotator(ctx context.Context, st store.Store, logger *slog.Logger) {
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				user, err := findDemoUser(context.Background(), st)
+				if err != nil {
+					if logger != nil {
+						logger.Warn("demo uuid rotation skipped: lookup failed", "err", err)
+					}
+					continue
+				}
+				if user == nil {
+					if err := ensureDemoUser(context.Background(), st, logger); err != nil && logger != nil {
+						logger.Warn("demo uuid rotation failed to recreate user", "err", err)
+					}
+					continue
+				}
+
+				expiresAt := time.Now().UTC().Add(demoUUIDTTL)
+				user.ProxyUUID = uuid.NewString()
+				user.ProxyUUIDExpiresAt = &expiresAt
+				if err := st.UpdateUser(context.Background(), user); err != nil {
+					if logger != nil {
+						logger.Warn("demo uuid rotation failed", "err", err)
+					}
+					continue
+				}
+				if logger != nil {
+					logger.Info("demo uuid rotated", "userID", user.ID, "expiresAt", expiresAt)
+				}
+			}
+		}
+	}()
+}
+
 func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -149,6 +277,11 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 			logger.Error("failed to close store", "err", err)
 		}
 	}()
+
+	if err := ensureDemoUser(ctx, st, logger); err != nil {
+		return err
+	}
+	startDemoUUIDRotator(ctx, st, logger)
 
 	var emailSender api.EmailSender
 	emailVerificationEnabled := true

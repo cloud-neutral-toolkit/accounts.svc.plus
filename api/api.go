@@ -695,6 +695,10 @@ func (h *handler) requestPasswordReset(c *gin.Context) {
 		c.JSON(http.StatusAccepted, gin.H{"message": "if the account exists a reset email will be sent"})
 		return
 	}
+	if h.isReadOnlyAccount(user) {
+		respondError(c, http.StatusForbidden, "read_only_account", "demo account cannot change password")
+		return
+	}
 
 	if err := h.enqueuePasswordReset(c.Request.Context(), user); err != nil {
 		slog.Error("failed to send password reset email", "err", err, "email", user.Email)
@@ -746,6 +750,11 @@ func (h *handler) confirmPasswordReset(c *gin.Context) {
 	if !strings.EqualFold(strings.TrimSpace(user.Email), reset.email) {
 		h.removePasswordReset(token)
 		respondError(c, http.StatusBadRequest, "invalid_token", "reset token is invalid or expired")
+		return
+	}
+	if h.isReadOnlyAccount(user) {
+		h.removePasswordReset(token)
+		respondError(c, http.StatusForbidden, "read_only_account", "demo account cannot change password")
 		return
 	}
 
@@ -807,7 +816,12 @@ func (h *handler) getAdminSettings(c *gin.Context) {
 }
 
 func (h *handler) updateAdminSettings(c *gin.Context) {
-	if _, ok := h.requireAdminOrOperator(c); !ok {
+	adminUser, ok := h.requireAdminOrOperator(c)
+	if !ok {
+		return
+	}
+	if h.isReadOnlyAccount(adminUser) {
+		respondError(c, http.StatusForbidden, "read_only_account", "demo account is read-only")
 		return
 	}
 
@@ -1705,6 +1719,10 @@ func (h *handler) provisionTOTP(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, "mfa_already_enabled", "mfa already enabled for this account")
 		return
 	}
+	if h.isReadOnlyAccount(user) {
+		respondError(c, http.StatusForbidden, "read_only_account", "demo account is read-only")
+		return
+	}
 
 	issuer := strings.TrimSpace(req.Issuer)
 	if issuer == "" {
@@ -1850,6 +1868,10 @@ func (h *handler) verifyTOTP(c *gin.Context) {
 	user, err := h.store.GetUserByID(ctx, challenge.userID)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "mfa_user_lookup_failed", "failed to load user for verification")
+		return
+	}
+	if h.isReadOnlyAccount(user) {
+		respondError(c, http.StatusForbidden, "read_only_account", "demo account is read-only")
 		return
 	}
 
@@ -2076,6 +2098,10 @@ func (h *handler) upsertSubscription(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if h.isReadOnlyAccount(user) {
+		respondError(c, http.StatusForbidden, "read_only_account", "demo account is read-only")
+		return
+	}
 
 	var req subscriptionUpsertRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -2130,6 +2156,10 @@ func (h *handler) upsertSubscription(c *gin.Context) {
 func (h *handler) cancelSubscription(c *gin.Context) {
 	user, ok := h.requireAuthenticatedUser(c)
 	if !ok {
+		return
+	}
+	if h.isReadOnlyAccount(user) {
+		respondError(c, http.StatusForbidden, "read_only_account", "demo account is read-only")
 		return
 	}
 
@@ -2272,6 +2302,10 @@ func (h *handler) disableMFA(c *gin.Context) {
 	user, err := h.store.GetUserByID(ctx, sess.userID)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "mfa_disable_failed", "failed to load user for mfa disable")
+		return
+	}
+	if h.isReadOnlyAccount(user) {
+		respondError(c, http.StatusForbidden, "read_only_account", "demo account is read-only")
 		return
 	}
 
@@ -2533,6 +2567,23 @@ func (h *handler) generateState() string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+func (h *handler) isReadOnlyAccount(user *store.User) bool {
+	if user == nil {
+		return false
+	}
+	name := strings.TrimSpace(user.Name)
+	email := strings.TrimSpace(user.Email)
+	if strings.EqualFold(name, "demo") || strings.EqualFold(email, "demo@svc.plus") {
+		return true
+	}
+	for _, group := range user.Groups {
+		if strings.EqualFold(strings.TrimSpace(group), "ReadOnly Role") {
+			return true
+		}
+	}
+	return false
 }
 
 func respondError(c *gin.Context, status int, code, message string) {
