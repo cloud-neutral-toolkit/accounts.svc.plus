@@ -37,7 +37,7 @@ func (h *handler) adminAgentStatus(c *gin.Context) {
 		return
 	}
 
-	if _, ok := h.requireAdminOrOperator(c); !ok {
+	if _, ok := h.requireAdminPermission(c, permissionAdminAgentsStatus); !ok {
 		return
 	}
 

@@ -48,6 +48,9 @@ const (
 	demoEmail    = "demo@svc.plus"
 	demoGroup    = "ReadOnly Role"
 	demoUUIDTTL  = time.Hour
+
+	rootUsername             = "admin"
+	rootBootstrapPasswordEnv = "ROOT_BOOTSTRAP_PASSWORD"
 )
 
 type mailerAdapter struct {
@@ -133,7 +136,7 @@ func ensureDemoUser(ctx context.Context, st store.Store, logger *slog.Logger) er
 			EmailVerified:      true,
 			PasswordHash:       string(hashed),
 			Level:              store.LevelUser,
-			Role:               store.RoleUser,
+			Role:               store.RoleReadOnly,
 			Groups:             []string{demoGroup},
 			Permissions:        []string{},
 			Active:             true,
@@ -154,7 +157,7 @@ func ensureDemoUser(ctx context.Context, st store.Store, logger *slog.Logger) er
 	demoUser.EmailVerified = true
 	demoUser.PasswordHash = string(hashed)
 	demoUser.Level = store.LevelUser
-	demoUser.Role = store.RoleUser
+	demoUser.Role = store.RoleReadOnly
 	demoUser.Groups = []string{demoGroup}
 	demoUser.Permissions = []string{}
 	demoUser.Active = true
@@ -232,6 +235,272 @@ func startDemoUUIDRotator(ctx context.Context, st store.Store, logger *slog.Logg
 	}()
 }
 
+func ensureRootUser(ctx context.Context, st store.Store, logger *slog.Logger) error {
+	users, err := st.ListUsers(ctx)
+	if err != nil {
+		return fmt.Errorf("list users for root check: %w", err)
+	}
+
+	var rootUser *store.User
+	for i := range users {
+		user := users[i]
+		if strings.EqualFold(strings.TrimSpace(user.Email), store.RootAdminEmail) {
+			candidate := user
+			rootUser = &candidate
+			break
+		}
+	}
+
+	if rootUser == nil {
+		bootstrapPassword := strings.TrimSpace(os.Getenv(rootBootstrapPasswordEnv))
+		if bootstrapPassword == "" {
+			return fmt.Errorf("root account %q missing: set %s to bootstrap it", store.RootAdminEmail, rootBootstrapPasswordEnv)
+		}
+
+		hashed, err := bcrypt.GenerateFromPassword([]byte(bootstrapPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("hash root bootstrap password: %w", err)
+		}
+
+		root := &store.User{
+			Name:          rootUsername,
+			Email:         store.RootAdminEmail,
+			PasswordHash:  string(hashed),
+			EmailVerified: true,
+			Role:          store.RoleRoot,
+			Level:         store.LevelAdmin,
+			Groups:        []string{"Admin"},
+			Permissions:   []string{"*"},
+			Active:        true,
+		}
+		if err := st.CreateUser(ctx, root); err != nil {
+			return fmt.Errorf("create root user: %w", err)
+		}
+		rootUser = root
+		if logger != nil {
+			logger.Warn("root account bootstrapped from environment variable", "email", store.RootAdminEmail)
+		}
+	}
+
+	if rootUser != nil {
+		updatedRoot := *rootUser
+		if enforceRootProfile(&updatedRoot) {
+			if err := st.UpdateUser(ctx, &updatedRoot); err != nil {
+				return fmt.Errorf("enforce root profile: %w", err)
+			}
+			rootUser = &updatedRoot
+			if logger != nil {
+				logger.Info("root profile normalized", "email", store.RootAdminEmail, "userID", rootUser.ID)
+			}
+		}
+	}
+
+	for i := range users {
+		user := users[i]
+		if rootUser != nil && user.ID == rootUser.ID {
+			continue
+		}
+		if !store.IsAdminRole(user.Role) {
+			continue
+		}
+
+		updated := user
+		updated.Role = store.RoleOperator
+		updated.Level = store.LevelOperator
+		updated.Permissions = dropPermission(updated.Permissions, "*")
+		updated.Groups = dropGroup(updated.Groups, "Admin")
+		if len(updated.Groups) == 0 {
+			updated.Groups = []string{"Operator"}
+		}
+
+		if err := st.UpdateUser(ctx, &updated); err != nil {
+			return fmt.Errorf("demote legacy root/admin user %q: %w", user.Email, err)
+		}
+		if logger != nil {
+			logger.Warn("demoted legacy root/admin account to operator", "userID", updated.ID, "email", updated.Email)
+		}
+	}
+
+	return nil
+}
+
+func enforceRootProfile(user *store.User) bool {
+	if user == nil {
+		return false
+	}
+
+	changed := false
+	if !strings.EqualFold(strings.TrimSpace(user.Email), store.RootAdminEmail) {
+		user.Email = store.RootAdminEmail
+		changed = true
+	}
+	if strings.ToLower(strings.TrimSpace(user.Role)) != store.RoleRoot {
+		user.Role = store.RoleRoot
+		changed = true
+	}
+	if user.Level != store.LevelAdmin {
+		user.Level = store.LevelAdmin
+		changed = true
+	}
+	if !user.Active {
+		user.Active = true
+		changed = true
+	}
+	if !user.EmailVerified {
+		user.EmailVerified = true
+		changed = true
+	}
+	if !containsCaseInsensitive(user.Groups, "Admin") {
+		user.Groups = append(user.Groups, "Admin")
+		changed = true
+	}
+	if !containsExactValue(user.Permissions, "*") {
+		user.Permissions = append(user.Permissions, "*")
+		changed = true
+	}
+	return changed
+}
+
+func dropPermission(values []string, permission string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) == permission {
+			continue
+		}
+		result = append(result, value)
+	}
+	return result
+}
+
+func dropGroup(values []string, group string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), group) {
+			continue
+		}
+		result = append(result, value)
+	}
+	return result
+}
+
+func containsCaseInsensitive(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsExactValue(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func applyRBACSchema(ctx context.Context, db *gorm.DB, driver string) error {
+	if db == nil {
+		return errors.New("database is nil")
+	}
+
+	normalized := strings.ToLower(strings.TrimSpace(driver))
+	if normalized != "postgres" && normalized != "postgresql" && normalized != "pgx" {
+		return nil
+	}
+
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS public.rbac_roles (
+  role_key TEXT PRIMARY KEY,
+  description TEXT NOT NULL DEFAULT '',
+  priority INTEGER NOT NULL DEFAULT 100,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`,
+		`CREATE TABLE IF NOT EXISTS public.rbac_permissions (
+  permission_key TEXT PRIMARY KEY,
+  description TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`,
+		`CREATE TABLE IF NOT EXISTS public.rbac_role_permissions (
+  role_key TEXT NOT NULL REFERENCES public.rbac_roles(role_key) ON DELETE CASCADE,
+  permission_key TEXT NOT NULL REFERENCES public.rbac_permissions(permission_key) ON DELETE CASCADE,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (role_key, permission_key)
+)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS users_single_root_role_uk ON public.users ((lower(role))) WHERE lower(role) = 'root'`,
+		`DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'users_root_email_ck'
+  ) THEN
+    ALTER TABLE public.users
+      ADD CONSTRAINT users_root_email_ck
+      CHECK (lower(role) <> 'root' OR lower(email) = 'admin@svc.plus');
+  END IF;
+END
+$$`,
+	}
+
+	for _, stmt := range statements {
+		if err := db.WithContext(ctx).Exec(stmt).Error; err != nil {
+			return err
+		}
+	}
+
+	seedStatements := []string{
+		`INSERT INTO public.rbac_roles (role_key, description, priority)
+VALUES
+  ('root', 'single root account', 0),
+  ('operator', 'operation role with configurable permissions', 10),
+  ('user', 'standard subscription user', 20),
+  ('readonly', 'read-only experience account', 30)
+ON CONFLICT (role_key) DO NOTHING`,
+		`INSERT INTO public.rbac_permissions (permission_key, description)
+VALUES
+  ('admin.settings.read', 'read admin matrix settings'),
+  ('admin.settings.write', 'update admin matrix settings'),
+  ('admin.users.metrics.read', 'read user metrics'),
+  ('admin.users.list.read', 'read user list'),
+  ('admin.agents.status.read', 'read agent status'),
+  ('admin.users.pause.write', 'pause users'),
+  ('admin.users.resume.write', 'resume users'),
+  ('admin.users.delete.write', 'delete users'),
+  ('admin.users.renew_uuid.write', 'renew user proxy uuid'),
+  ('admin.users.role.write', 'update/reset user role'),
+  ('admin.blacklist.read', 'read blacklist'),
+  ('admin.blacklist.write', 'update blacklist')
+ON CONFLICT (permission_key) DO NOTHING`,
+		`INSERT INTO public.rbac_role_permissions (role_key, permission_key, enabled)
+SELECT 'operator', permission_key, true
+FROM public.rbac_permissions
+ON CONFLICT (role_key, permission_key) DO NOTHING`,
+	}
+
+	for _, stmt := range seedStatements {
+		if err := db.WithContext(ctx).Exec(stmt).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -277,6 +546,10 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 			logger.Error("failed to close store", "err", err)
 		}
 	}()
+
+	if err := ensureRootUser(ctx, st, logger); err != nil {
+		return err
+	}
 
 	if err := ensureDemoUser(ctx, st, logger); err != nil {
 		return err
@@ -350,6 +623,10 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		}
 	}()
 	service.SetDB(gormDB)
+
+	if err := applyRBACSchema(ctx, gormDB, cfg.Store.Driver); err != nil {
+		return fmt.Errorf("apply rbac schema: %w", err)
+	}
 
 	gormSource, err := xrayconfig.NewGormClientSource(gormDB)
 	if err != nil {

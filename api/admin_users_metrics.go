@@ -11,13 +11,43 @@ import (
 	"account/internal/store"
 )
 
+const (
+	permissionAdminSettingsRead   = "admin.settings.read"
+	permissionAdminSettingsWrite  = "admin.settings.write"
+	permissionAdminUsersMetrics   = "admin.users.metrics.read"
+	permissionAdminUsersListRead  = "admin.users.list.read"
+	permissionAdminAgentsStatus   = "admin.agents.status.read"
+	permissionAdminUsersPause     = "admin.users.pause.write"
+	permissionAdminUsersResume    = "admin.users.resume.write"
+	permissionAdminUsersDelete    = "admin.users.delete.write"
+	permissionAdminUsersRenewUUID = "admin.users.renew_uuid.write"
+	permissionAdminUsersRoleWrite = "admin.users.role.write"
+	permissionAdminBlacklistRead  = "admin.blacklist.read"
+	permissionAdminBlacklistWrite = "admin.blacklist.write"
+)
+
+var defaultOperatorPermissions = map[string]bool{
+	permissionAdminSettingsRead:   true,
+	permissionAdminSettingsWrite:  false,
+	permissionAdminUsersMetrics:   true,
+	permissionAdminUsersListRead:  true,
+	permissionAdminAgentsStatus:   true,
+	permissionAdminUsersPause:     true,
+	permissionAdminUsersResume:    true,
+	permissionAdminUsersDelete:    false,
+	permissionAdminUsersRenewUUID: true,
+	permissionAdminUsersRoleWrite: false,
+	permissionAdminBlacklistRead:  true,
+	permissionAdminBlacklistWrite: true,
+}
+
 func (h *handler) adminUsersMetrics(c *gin.Context) {
 	if h.metricsProvider == nil {
 		respondError(c, http.StatusServiceUnavailable, "metrics_unavailable", "user metrics provider is not configured")
 		return
 	}
 
-	if _, ok := h.requireAdminOrOperator(c); !ok {
+	if _, ok := h.requireAdminPermission(c, permissionAdminUsersMetrics); !ok {
 		return
 	}
 
@@ -36,7 +66,7 @@ func (h *handler) adminUsersMetrics(c *gin.Context) {
 	c.JSON(http.StatusOK, metrics)
 }
 
-func (h *handler) requireAdminOrOperator(c *gin.Context) (*store.User, bool) {
+func (h *handler) requireAdminPermission(c *gin.Context, permission string) (*store.User, bool) {
 	token := h.resolveSessionToken(c)
 	if token == "" {
 		respondError(c, http.StatusUnauthorized, "session_token_required", "session token is required")
@@ -54,18 +84,61 @@ func (h *handler) requireAdminOrOperator(c *gin.Context) (*store.User, bool) {
 		respondError(c, http.StatusInternalServerError, "session_user_lookup_failed", "failed to load session user")
 		return nil, false
 	}
-
-	role := strings.ToLower(strings.TrimSpace(user.Role))
-	if role != store.RoleAdmin && role != store.RoleOperator {
-		respondError(c, http.StatusForbidden, "forbidden", "insufficient permissions")
+	if !user.Active {
+		respondError(c, http.StatusForbidden, "account_suspended", "your account has been suspended")
 		return nil, false
 	}
+
 	if h.isReadOnlyAccount(user) && c.Request.Method != http.MethodGet {
 		respondError(c, http.StatusForbidden, "read_only_account", "demo account is read-only")
 		return nil, false
 	}
 
+	if store.IsRootRole(user.Role) {
+		if !strings.EqualFold(strings.TrimSpace(user.Email), store.RootAdminEmail) {
+			respondError(c, http.StatusForbidden, "root_email_enforced", "root role is restricted to admin@svc.plus")
+			return nil, false
+		}
+		return user, true
+	}
+	if strings.EqualFold(strings.TrimSpace(user.Role), store.RoleAdmin) {
+		return user, true
+	}
+
+	if !store.IsOperatorRole(user.Role) {
+		respondError(c, http.StatusForbidden, "forbidden", "insufficient permissions")
+		return nil, false
+	}
+
+	if permission != "" && !h.operatorPermissionAllowed(c, permission) {
+		respondError(c, http.StatusForbidden, "forbidden", "operator permission denied")
+		return nil, false
+	}
+
 	return user, true
+}
+
+func (h *handler) requireAdminOrOperator(c *gin.Context) (*store.User, bool) {
+	return h.requireAdminPermission(c, "")
+}
+
+func (h *handler) operatorPermissionAllowed(c *gin.Context, permission string) bool {
+	defaultAllowed := defaultOperatorPermissions[permission]
+	settings, err := service.GetAdminSettings(c.Request.Context())
+	if err != nil {
+		return defaultAllowed
+	}
+
+	module, ok := settings.Matrix[permission]
+	if !ok {
+		return defaultAllowed
+	}
+
+	allowed, ok := module[store.RoleOperator]
+	if !ok {
+		return defaultAllowed
+	}
+	return allowed
 }
 
 func (h *handler) resolveSessionToken(c *gin.Context) string {

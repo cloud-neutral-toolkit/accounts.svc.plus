@@ -1,5 +1,19 @@
 # Account 数据库结构与双向同步指南
 
+## RBAC / Root 迁移
+
+- 新增迁移脚本：`sql/20260204_rbac_root_constraints.sql`
+- 目的：
+  - 创建 RBAC 元数据表（`rbac_roles` / `rbac_permissions` / `rbac_role_permissions`）
+  - 增加 root 唯一约束（仅允许一个 `role=root`）
+  - 增加 root 邮箱约束（`role=root` 必须是 `admin@svc.plus`）
+
+执行示例：
+
+```bash
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f sql/20260204_rbac_root_constraints.sql
+```
+
 ## 方案概览
 
 | 目标 | 推荐方案 | 说明 |
