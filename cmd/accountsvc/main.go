@@ -717,6 +717,7 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 
 	if agentRegistry != nil {
 		agentRegistry.SetStore(st)
+		agentRegistry.SetLogger(logger.With("component", "agent-registry"))
 		if err := agentRegistry.Load(ctx); err != nil {
 			logger.Warn("failed to load agents from store", "err", err)
 		} else {

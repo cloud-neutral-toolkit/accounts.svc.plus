@@ -1,12 +1,152 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
+
+	"account/internal/store"
 )
+
+type createCustomUserRequest struct {
+	Email  string   `json:"email"`
+	UUID   string   `json:"uuid"`
+	Groups []string `json:"groups"`
+}
+
+func normalizeGroups(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(values))
+	groups := make([]string, 0, len(values))
+	for _, value := range values {
+		normalized := strings.TrimSpace(value)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		groups = append(groups, normalized)
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+	return groups
+}
+
+func generatePasswordHash() (string, error) {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(hex.EncodeToString(b)), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
+}
+
+func (h *handler) createCustomUser(c *gin.Context) {
+	requestUser, ok := h.requireAdminPermission(c, permissionAdminUsersRoleWrite)
+	if !ok {
+		return
+	}
+
+	if !h.isRootAccount(requestUser) {
+		respondError(c, http.StatusForbidden, "root_only", "only root account can create custom uuid users")
+		return
+	}
+
+	var req createCustomUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
+		return
+	}
+
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	if email == "" || !strings.Contains(email, "@") {
+		respondError(c, http.StatusBadRequest, "invalid_email", "email must be a valid address")
+		return
+	}
+
+	proxyUUID := strings.TrimSpace(req.UUID)
+	if _, err := uuid.Parse(proxyUUID); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_uuid", "uuid must be a valid UUID")
+		return
+	}
+
+	groups := normalizeGroups(req.Groups)
+	if len(groups) == 0 {
+		respondError(c, http.StatusBadRequest, "invalid_groups", "at least one group is required")
+		return
+	}
+
+	blacklisted, err := h.store.IsBlacklisted(c.Request.Context(), email)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "blacklist_check_failed", "failed to verify email status")
+		return
+	}
+	if blacklisted {
+		respondError(c, http.StatusForbidden, "email_blacklisted", "this email address is blocked")
+		return
+	}
+
+	passwordHash, err := generatePasswordHash()
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "password_generation_failed", "failed to prepare account credentials")
+		return
+	}
+
+	user := &store.User{
+		Name:          email,
+		Email:         email,
+		PasswordHash:  passwordHash,
+		EmailVerified: true,
+		Level:         store.LevelUser,
+		Role:          store.RoleUser,
+		Groups:        groups,
+		Active:        true,
+		ProxyUUID:     proxyUUID,
+	}
+
+	if err := h.store.CreateUser(c.Request.Context(), user); err != nil {
+		switch {
+		case errors.Is(err, store.ErrEmailExists):
+			respondError(c, http.StatusConflict, "email_exists", "user with this email already exists")
+			return
+		case errors.Is(err, store.ErrNameExists):
+			respondError(c, http.StatusConflict, "name_exists", "user with this name already exists")
+			return
+		case errors.Is(err, store.ErrInvalidName):
+			respondError(c, http.StatusBadRequest, "invalid_name", "name is invalid")
+			return
+		default:
+			respondError(c, http.StatusInternalServerError, "user_creation_failed", "failed to create user")
+			return
+		}
+	}
+
+	createdUser, err := h.store.GetUserByID(c.Request.Context(), user.ID)
+	if err != nil {
+		createdUser = user
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "user_created",
+		"user":    sanitizeUser(createdUser, nil),
+	})
+}
 
 func (h *handler) pauseUser(c *gin.Context) {
 	if _, ok := h.requireAdminPermission(c, permissionAdminUsersPause); !ok {
@@ -106,15 +246,6 @@ func (h *handler) renewProxyUUID(c *gin.Context) {
 		return
 	}
 
-	// Generate new UUID
-	// We use crypto/rand usually, but for simplicity here we assume a helper or just a placeholder
-	// Since I don't have a helper, I'll use a simple random string or assume store handles it if empty
-	// Actually, ProxyUUID is a string in the Store.
-	user.ProxyUUID = "" // Let the store or a helper generate it if we had one.
-	// Since I can't easily import a uuid generator here without checking if it's available,
-	// I'll just use a placeholder for now or assume the user wants a new one.
-	// Wait, schema says it has a default gen_random_uuid().
-
 	if req.ExpiresAt != "" {
 		t, err := time.Parse("2006-01-02", req.ExpiresAt)
 		if err != nil {
@@ -130,8 +261,6 @@ func (h *handler) renewProxyUUID(c *gin.Context) {
 		user.ProxyUUIDExpiresAt = nil
 	}
 
-	// For now, let's just use a simple random hex string if we want to "reset" it manually
-	// in the logic before UpdateUser.
 	user.ProxyUUID = generateRandomUUID()
 
 	if err := h.store.UpdateUser(c.Request.Context(), user); err != nil {

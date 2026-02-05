@@ -273,9 +273,20 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.GET("/admin/settings", h.getAdminSettings)
 	authProtected.POST("/admin/settings", h.updateAdminSettings)
 
-	authProtected.GET("/users", h.listUsers)
+	// Backward-compatible auth-scoped admin routes consumed by the dashboard BFF.
+	authProtected.GET("/admin/users/metrics", h.adminUsersMetrics)
+	authProtected.POST("/admin/users", h.createCustomUser)
 	authProtected.POST("/admin/users/:userId/role", h.updateUserRole)
 	authProtected.DELETE("/admin/users/:userId/role", h.resetUserRole)
+	authProtected.POST("/admin/users/:userId/pause", h.pauseUser)
+	authProtected.POST("/admin/users/:userId/resume", h.resumeUser)
+	authProtected.DELETE("/admin/users/:userId", h.deleteUser)
+	authProtected.POST("/admin/users/:userId/renew-uuid", h.renewProxyUUID)
+	authProtected.GET("/admin/blacklist", h.listBlacklist)
+	authProtected.POST("/admin/blacklist", h.addToBlacklist)
+	authProtected.DELETE("/admin/blacklist/:email", h.removeFromBlacklist)
+
+	authProtected.GET("/users", h.listUsers)
 
 	// Internal routes for service-to-service reads.
 	internalGroup := r.Group("/api/internal")

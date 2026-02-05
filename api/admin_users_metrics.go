@@ -165,6 +165,7 @@ func registerAdminRoutes(group *gin.RouterGroup, h *handler) {
 	admin.GET("/agents/status", h.adminAgentStatus)
 
 	// User management
+	admin.POST("/users", h.createCustomUser)
 	admin.POST("/users/:userId/pause", h.pauseUser)
 	admin.POST("/users/:userId/resume", h.resumeUser)
 	admin.DELETE("/users/:userId", h.deleteUser)

@@ -11,6 +11,7 @@ import (
 
 	"account/internal/agentproto"
 	"account/internal/store"
+	"log/slog"
 )
 
 // Credential defines the authentication material assigned to a managed agent.
@@ -47,6 +48,7 @@ type Registry struct {
 	byID        map[string]Identity
 	statuses    map[string]StatusSnapshot
 	store       store.Store
+	logger      *slog.Logger
 }
 
 // NewRegistry constructs a registry from configuration, validating credentials
@@ -56,6 +58,7 @@ func NewRegistry(cfg Config) (*Registry, error) {
 		credentials: make(map[[32]byte]Identity),
 		byID:        make(map[string]Identity),
 		statuses:    make(map[string]StatusSnapshot),
+		logger:      slog.Default().With("component", "agent-registry"),
 	}
 
 	for _, cred := range cfg.Credentials {
@@ -93,6 +96,15 @@ func (r *Registry) SetStore(st store.Store) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.store = st
+}
+
+// SetLogger overrides the default logger.
+func (r *Registry) SetLogger(logger *slog.Logger) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if logger != nil {
+		r.logger = logger
+	}
 }
 
 // Authenticate validates the provided token and returns the associated agent
@@ -143,7 +155,7 @@ func (r *Registry) ReportStatus(agent Identity, report agentproto.StatusReport) 
 				SyncRevision:  rep.SyncRevision,
 			}
 			if err := r.store.UpsertAgent(ctx, dbAgent); err != nil {
-				// We can't do much here since it's a goroutine, but it's okay for transient failures
+				r.logger.Error("failed to persist agent status heartbeat", "agent", a.ID, "err", err)
 			}
 		}(agent, report)
 	}
@@ -182,7 +194,9 @@ func (r *Registry) RegisterAgent(agentID string, groups []string) Identity {
 				Name:   id,
 				Groups: g,
 			}
-			_ = r.store.UpsertAgent(ctx, dbAgent)
+			if err := r.store.UpsertAgent(ctx, dbAgent); err != nil {
+				r.logger.Error("failed to persist dynamically registered agent", "agent", id, "err", err)
+			}
 		}(agentID, groups)
 	}
 
