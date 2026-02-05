@@ -1324,13 +1324,13 @@ func (s *postgresStore) DeleteStaleAgents(ctx context.Context, staleThreshold ti
 }
 
 func (s *postgresStore) CreateSession(ctx context.Context, token, userID string, expiresAt time.Time) error {
-	const query = "INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (token) DO UPDATE SET user_id = EXCLUDED.user_id, expires_at = EXCLUDED.expires_at"
+	const query = "INSERT INTO sessions (token, user_uuid, expires_at) VALUES ($1, $2, $3) ON CONFLICT (token) DO UPDATE SET user_uuid = EXCLUDED.user_uuid, expires_at = EXCLUDED.expires_at"
 	_, err := s.db.ExecContext(ctx, query, token, userID, expiresAt.UTC())
 	return err
 }
 
 func (s *postgresStore) GetSession(ctx context.Context, token string) (string, time.Time, error) {
-	const query = "SELECT user_id, expires_at FROM sessions WHERE token = $1"
+	const query = "SELECT user_uuid, expires_at FROM sessions WHERE token = $1"
 	var userID string
 	var expiresAt time.Time
 	err := s.db.QueryRowContext(ctx, query, token).Scan(&userID, &expiresAt)

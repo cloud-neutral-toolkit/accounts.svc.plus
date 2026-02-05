@@ -191,6 +191,7 @@ CREATE UNIQUE INDEX users_email_lower_uk ON public.users (lower(email)) WHERE em
 CREATE UNIQUE INDEX users_single_root_role_uk ON public.users ((lower(role))) WHERE lower(role) = 'root';
 CREATE INDEX idx_identities_user_uuid ON public.identities (user_uuid);
 CREATE INDEX idx_sessions_user_uuid ON public.sessions (user_uuid);
+CREATE UNIQUE INDEX sessions_token_uk ON public.sessions (token);
 CREATE INDEX idx_admin_settings_version ON public.admin_settings (version);
 CREATE INDEX idx_subscriptions_user_uuid ON public.subscriptions (user_uuid);
 CREATE INDEX idx_subscriptions_status ON public.subscriptions (status);
