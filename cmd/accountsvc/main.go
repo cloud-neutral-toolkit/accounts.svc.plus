@@ -719,6 +719,12 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		agentRegistry.SetStore(st)
 		if err := agentRegistry.Load(ctx); err != nil {
 			logger.Warn("failed to load agents from store", "err", err)
+		} else {
+			agents := agentRegistry.Agents()
+			logger.Info("loaded agents from store", "count", len(agents))
+			for _, agent := range agents {
+				logger.Info("loaded agent", "id", agent.ID, "name", agent.Name, "groups", agent.Groups)
+			}
 		}
 		// Start background cleanup task for stale agents (e.g., those that haven't heartbeated for 10 minutes)
 		go runAgentCleanup(ctx, st, logger)
