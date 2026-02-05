@@ -115,6 +115,18 @@ CREATE TABLE public.sessions (
   origin_node TEXT NOT NULL DEFAULT 'local'
 );
 
+CREATE TABLE public.agents (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  groups JSONB NOT NULL DEFAULT '[]'::jsonb,
+  healthy BOOLEAN NOT NULL DEFAULT FALSE,
+  last_heartbeat TIMESTAMPTZ,
+  clients_count INTEGER NOT NULL DEFAULT 0,
+  sync_revision TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE public.admin_settings (
   uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   module_key TEXT NOT NULL,
@@ -231,6 +243,11 @@ CREATE TRIGGER trg_sessions_set_updated_at
 CREATE TRIGGER trg_sessions_bump_version
   BEFORE UPDATE ON public.sessions
   FOR EACH ROW EXECUTE FUNCTION public.bump_version();
+
+-- agents
+CREATE TRIGGER trg_agents_set_updated_at
+  BEFORE UPDATE ON public.agents
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 -- admin_settings
 CREATE TRIGGER trg_admin_settings_set_updated_at
