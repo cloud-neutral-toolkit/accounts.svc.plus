@@ -34,9 +34,11 @@
 
 > 说明：`/api/auth/admin/*` 需要管理员或运维角色。
 
-## Agent API（/api/agent/v1）
+## Agent API（/api/agent-server/v1）
 
-- `GET /api/agent/v1/users`：获取 Xray 客户端列表
-- `POST /api/agent/v1/status`：上报 Agent 状态
+- `GET /api/agent-server/v1/nodes`：获取已注册节点列表（用户会话鉴权）
+- `GET /api/agent-server/v1/users`：获取 Xray 客户端列表
+- `POST /api/agent-server/v1/status`：上报 Agent 状态
 
-Agent 认证通过 `Authorization: Bearer <agent-token>`。
+- `GET /nodes` 使用用户会话（`xc_session` / Bearer session token）
+- `GET /users` 与 `POST /status` 使用 Agent Token：`Authorization: Bearer <agent-token>`
