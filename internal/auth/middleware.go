@@ -54,24 +54,25 @@ const (
 // AuthMiddleware is a middleware that validates JWT access tokens
 func (s *TokenService) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		var token string
 		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
+
+		if authHeader != "" && strings.HasPrefix(authHeader, bearerPrefix) {
+			token = strings.TrimPrefix(authHeader, bearerPrefix)
+		} else {
+			// Fallback to session cookie
+			if cookie, err := c.Cookie("xc_session"); err == nil {
+				token = cookie
+			}
+		}
+
+		if token == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "missing authorization header",
 			})
 			c.Abort()
 			return
 		}
-
-		if !strings.HasPrefix(authHeader, bearerPrefix) {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "invalid authorization header format",
-			})
-			c.Abort()
-			return
-		}
-
-		token := strings.TrimPrefix(authHeader, bearerPrefix)
 
 		claims, err := s.ValidateAccessToken(token)
 		if err != nil {

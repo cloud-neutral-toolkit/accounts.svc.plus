@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -81,8 +82,17 @@ func (h *handler) listAgentNodes(c *gin.Context) {
 		return
 	}
 
+	// Add panic recovery for this handler
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("PANIC in listAgentNodes: %v\n", r)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "message": fmt.Sprintf("%v", r)})
+		}
+	}()
+
 	registeredHosts, registeredNames := registeredNodeMetadata(h.agentStatusReader)
 	hosts := parseProxyNodeHosts(h.publicURL, registeredHosts)
+
 	if len(hosts) == 0 {
 		c.JSON(http.StatusOK, []vlessNode{})
 		return

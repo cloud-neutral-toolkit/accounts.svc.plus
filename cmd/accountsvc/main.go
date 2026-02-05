@@ -722,10 +722,26 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		} else {
 			agents := agentRegistry.Agents()
 			logger.Info("loaded agents from store", "count", len(agents))
-			for _, agent := range agents {
-				logger.Info("loaded agent", "id", agent.ID, "name", agent.Name, "groups", agent.Groups)
-			}
 		}
+
+		// Start background sync task to keep in-memory registry updated from DB
+		go func() {
+			ticker := time.NewTicker(1 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := agentRegistry.Load(ctx); err != nil {
+						logger.Warn("failed to reload agents from store", "err", err)
+					} else {
+						// logger.Debug("reloaded agents from store", "count", len(agentRegistry.Agents()))
+					}
+				}
+			}
+		}()
+
 		// Start background cleanup task for stale agents (e.g., those that haven't heartbeated for 10 minutes)
 		go runAgentCleanup(ctx, st, logger)
 	}
