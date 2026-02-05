@@ -76,6 +76,3 @@ agent:
   syncInterval: 5m
   tls:
     insecureSkipVerify: false
-
-agents:
-  credentials: []
