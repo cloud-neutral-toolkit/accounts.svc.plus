@@ -848,9 +848,7 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 
 	api.RegisterRoutes(r, options...)
 
-	if agentRegistry != nil {
-		registerAgentAPIRoutes(r, agentRegistry, gormSource, logger)
-	}
+	registerAgentAPIRoutes(r, agentRegistry, gormSource, logger)
 
 	addr := strings.TrimSpace(cfg.Server.Addr)
 	if addr == "" {
@@ -1059,9 +1057,8 @@ func runAgent(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 const agentIdentityContextKey = "xcontrol-account-agent-identity"
 
 func registerAgentAPIRoutes(r *gin.Engine, registry *agentserver.Registry, source xrayconfig.ClientSource, logger *slog.Logger) {
-	if registry == nil {
-		return
-	}
+	// Canonical agent controller path. Keep this route registered even when registry is nil
+	// so callers receive explicit auth/config errors instead of 404.
 	// Use /api/agent-server/v1 to avoid conflict with /api/agent prefix used by admin/user API
 	group := r.Group("/api/agent-server/v1")
 	group.Use(agentAuthMiddleware(registry))

@@ -9,7 +9,7 @@ Client
   └─ HTTP API (Gin)
        ├─ Session / MFA / Email verification
        ├─ Subscription & Admin Settings
-       ├─ Agent Controller (/api/agent/v1)
+       ├─ Agent Controller (/api/agent-server/v1)
        └─ Token Service (optional)
            │
            ├─ Store (memory / postgres)

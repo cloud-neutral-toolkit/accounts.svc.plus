@@ -9,7 +9,7 @@
 
 - 健康检查：`GET /healthz`
 - 用户 API：`/api/auth/*`
-- Agent API：`/api/agent/v1/*`
+- Agent API：`/api/agent-server/v1/*`
 
 ## 认证方式
 

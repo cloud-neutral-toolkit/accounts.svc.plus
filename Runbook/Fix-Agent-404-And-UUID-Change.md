@@ -435,7 +435,10 @@ export GCP_REGION=asia-northeast1
 # 4. 构建镜像（如果使用 Makefile）
 make cloudrun-build
 
-# 5. 部署服务
+# 5. 更新 service.yaml 以使用 Secret Manager
+# 确保 service.yaml 中 INTERNAL_SERVICE_TOKEN 使用 valueFrom: secretKeyRef 配置
+
+# 6. 部署服务
 make cloudrun-deploy
 
 # 或者使用 gcloud 命令

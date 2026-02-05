@@ -41,7 +41,7 @@
 
 ## Agent / Xray 同步
 
-- Controller（账号服务）暴露 `/api/agent/v1` 接口
+- Controller（账号服务）暴露 `/api/agent-server/v1` 接口
 - Agent 定时拉取用户列表生成 Xray 配置
 - Agent 上报健康状态供管理员查看
 

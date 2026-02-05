@@ -49,6 +49,11 @@ spec:
           value: postgres
         - name: DB_NAME
           value: account
+        - name: INTERNAL_SERVICE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: internal-service-token
+              key: latest
         # --- SMTP Configuration ---
         - name: SMTP_HOST
           value: "smtp.qq.com"

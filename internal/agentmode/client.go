@@ -84,7 +84,7 @@ func NewClient(baseURL, token string, opts ClientOptions) (*Client, error) {
 
 // ListClients fetches the current set of Xray clients from the controller.
 func (c *Client) ListClients(ctx context.Context) (agentproto.ClientListResponse, error) {
-	endpoint, err := url.JoinPath(c.baseURL.String(), "/api/agent/v1/users")
+	endpoint, err := url.JoinPath(c.baseURL.String(), "/api/agent-server/v1/users")
 	if err != nil {
 		return agentproto.ClientListResponse{}, err
 	}
@@ -115,7 +115,7 @@ func (c *Client) ListClients(ctx context.Context) (agentproto.ClientListResponse
 
 // ReportStatus submits the agent status report to the controller.
 func (c *Client) ReportStatus(ctx context.Context, report agentproto.StatusReport) error {
-	endpoint, err := url.JoinPath(c.baseURL.String(), "/api/agent/v1/status")
+	endpoint, err := url.JoinPath(c.baseURL.String(), "/api/agent-server/v1/status")
 	if err != nil {
 		return err
 	}
