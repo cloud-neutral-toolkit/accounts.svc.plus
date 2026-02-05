@@ -465,7 +465,7 @@ func applyRBACSchema(ctx context.Context, db *gorm.DB, driver string) error {
 )`,
 		`CREATE TABLE IF NOT EXISTS public.sessions (
   token TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
+  user_uuid UUID NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )`,
