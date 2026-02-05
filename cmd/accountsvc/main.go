@@ -674,6 +674,15 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		}
 	}
 
+	if agentRegistry != nil {
+		agentRegistry.SetStore(st)
+		if err := agentRegistry.Load(ctx); err != nil {
+			logger.Warn("failed to load agents from store", "err", err)
+		}
+		// Start background cleanup task for stale agents (e.g., those that haven't heartbeated for 10 minutes)
+		go runAgentCleanup(ctx, st, logger)
+	}
+
 	var stopXraySync func(context.Context) error
 	if cfg.Xray.Sync.Enabled {
 		syncInterval := cfg.Xray.Sync.Interval
@@ -1084,6 +1093,32 @@ func extractBearerToken(header string) string {
 		header = header[len(prefix):]
 	}
 	return strings.TrimSpace(header)
+}
+
+func runAgentCleanup(ctx context.Context, st store.Store, logger *slog.Logger) {
+	// Cleanup every 5 minutes
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	// Threshold for considering an agent stale: 10 minutes
+	staleThreshold := 10 * time.Minute
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			count, err := st.DeleteStaleAgents(cleanupCtx, staleThreshold)
+			cancel()
+
+			if err != nil {
+				logger.Warn("failed to cleanup stale agents", "err", err)
+			} else if count > 0 {
+				logger.Info("cleaned up stale agents", "count", count)
+			}
+		}
+	}
 }
 
 var rootCmd = &cobra.Command{

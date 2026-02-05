@@ -1,6 +1,7 @@
 package agentserver
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"account/internal/agentproto"
+	"account/internal/store"
 )
 
 // Credential defines the authentication material assigned to a managed agent.
@@ -44,6 +46,7 @@ type Registry struct {
 	credentials map[[32]byte]Identity
 	byID        map[string]Identity
 	statuses    map[string]StatusSnapshot
+	store       store.Store
 }
 
 // NewRegistry constructs a registry from configuration, validating credentials
@@ -85,6 +88,13 @@ func NewRegistry(cfg Config) (*Registry, error) {
 	return r, nil
 }
 
+// SetStore configures a persistence store for the registry.
+func (r *Registry) SetStore(st store.Store) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.store = st
+}
+
 // Authenticate validates the provided token and returns the associated agent
 // identity when successful.
 func (r *Registry) Authenticate(token string) (*Identity, bool) {
@@ -115,6 +125,28 @@ func (r *Registry) ReportStatus(agent Identity, report agentproto.StatusReport) 
 		Report:    report,
 		UpdatedAt: time.Now().UTC(),
 	}
+
+	// Persist to store if configured
+	if r.store != nil {
+		go func(a Identity, rep agentproto.StatusReport) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			now := time.Now().UTC()
+			dbAgent := &store.Agent{
+				ID:            a.ID,
+				Name:          a.Name,
+				Groups:        a.Groups,
+				Healthy:       rep.Healthy,
+				LastHeartbeat: &now,
+				ClientsCount:  rep.Xray.Clients,
+				SyncRevision:  rep.SyncRevision,
+			}
+			if err := r.store.UpsertAgent(ctx, dbAgent); err != nil {
+				// We can't do much here since it's a goroutine, but it's okay for transient failures
+			}
+		}(agent, report)
+	}
 }
 
 // RegisterAgent dynamically registers an agent with the given ID if it doesn't already exist.
@@ -138,7 +170,62 @@ func (r *Registry) RegisterAgent(agentID string, groups []string) Identity {
 	}
 
 	r.byID[agentID] = identity
+
+	// Persist to store if configured
+	if r.store != nil {
+		go func(id string, g []string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			dbAgent := &store.Agent{
+				ID:     id,
+				Name:   id,
+				Groups: g,
+			}
+			_ = r.store.UpsertAgent(ctx, dbAgent)
+		}(agentID, groups)
+	}
+
 	return identity
+}
+
+// Load populates the registry from the persistence store.
+func (r *Registry) Load(ctx context.Context) error {
+	if r.store == nil {
+		return nil
+	}
+	agents, err := r.store.ListAgents(ctx)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, a := range agents {
+		if _, exists := r.byID[a.ID]; !exists {
+			identity := Identity{
+				ID:     a.ID,
+				Name:   a.Name,
+				Groups: a.Groups,
+			}
+			r.byID[a.ID] = identity
+			if a.LastHeartbeat != nil {
+				r.statuses[a.ID] = StatusSnapshot{
+					Agent: identity,
+					Report: agentproto.StatusReport{
+						AgentID:      a.ID,
+						Healthy:      a.Healthy,
+						Users:        a.ClientsCount,
+						SyncRevision: a.SyncRevision,
+						Xray: agentproto.XrayStatus{
+							Clients: a.ClientsCount,
+						},
+					},
+					UpdatedAt: *a.LastHeartbeat,
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // Statuses returns the latest status snapshot for all agents sorted by ID.

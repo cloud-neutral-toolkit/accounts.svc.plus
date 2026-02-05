@@ -60,6 +60,19 @@ type Identity struct {
 	UpdatedAt  time.Time
 }
 
+// Agent represents a registered agent instance with health tracking.
+type Agent struct {
+	ID            string     `json:"id"`
+	Name          string     `json:"name"`
+	Groups        []string   `json:"groups"`
+	Healthy       bool       `json:"healthy"`
+	LastHeartbeat *time.Time `json:"lastHeartbeat,omitempty"`
+	ClientsCount  int        `json:"clientsCount"`
+	SyncRevision  string     `json:"syncRevision,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+}
+
 // Store provides persistence operations for users.
 type Store interface {
 	CreateUser(ctx context.Context, user *User) error
@@ -80,6 +93,13 @@ type Store interface {
 	RemoveFromBlacklist(ctx context.Context, email string) error
 	IsBlacklisted(ctx context.Context, email string) (bool, error)
 	ListBlacklist(ctx context.Context) ([]string, error)
+
+	// Agent management
+	UpsertAgent(ctx context.Context, agent *Agent) error
+	GetAgent(ctx context.Context, id string) (*Agent, error)
+	ListAgents(ctx context.Context) ([]*Agent, error)
+	DeleteAgent(ctx context.Context, id string) error
+	DeleteStaleAgents(ctx context.Context, staleThreshold time.Duration) (int, error)
 }
 
 // Domain level errors returned by the store implementation.
@@ -104,6 +124,7 @@ type memoryStore struct {
 	byName                  map[string]*User
 	subscriptions           map[string]map[string]*Subscription
 	identities              map[string]*Identity
+	agents                  map[string]*Agent
 }
 
 // NewMemoryStore creates a new in-memory store implementation with super
@@ -129,6 +150,7 @@ func newMemoryStore(allowSuperAdminCounting bool) Store {
 		byName:                  make(map[string]*User),
 		subscriptions:           make(map[string]map[string]*Subscription),
 		identities:              make(map[string]*Identity),
+		agents:                  make(map[string]*Agent),
 	}
 }
 
@@ -704,4 +726,82 @@ func (s *memoryStore) IsBlacklisted(ctx context.Context, email string) (bool, er
 
 func (s *memoryStore) ListBlacklist(ctx context.Context) ([]string, error) {
 	return []string{}, nil
+}
+
+func (s *memoryStore) UpsertAgent(ctx context.Context, agent *Agent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	existing, exists := s.agents[agent.ID]
+	if !exists {
+		existing = &Agent{
+			ID:        agent.ID,
+			CreatedAt: now,
+		}
+		s.agents[agent.ID] = existing
+	}
+
+	existing.Name = agent.Name
+	existing.Groups = cloneStringSlice(agent.Groups)
+	existing.Healthy = agent.Healthy
+	existing.LastHeartbeat = agent.LastHeartbeat
+	existing.ClientsCount = agent.ClientsCount
+	existing.SyncRevision = agent.SyncRevision
+	existing.UpdatedAt = now
+
+	*agent = *existing
+	return nil
+}
+
+func (s *memoryStore) GetAgent(ctx context.Context, id string) (*Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	agent, ok := s.agents[id]
+	if !ok {
+		return nil, errors.New("agent not found")
+	}
+	clone := *agent
+	clone.Groups = cloneStringSlice(agent.Groups)
+	return &clone, nil
+}
+
+func (s *memoryStore) ListAgents(ctx context.Context) ([]*Agent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]*Agent, 0, len(s.agents))
+	for _, agent := range s.agents {
+		clone := *agent
+		clone.Groups = cloneStringSlice(agent.Groups)
+		result = append(result, &clone)
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ID < result[j].ID
+	})
+	return result, nil
+}
+
+func (s *memoryStore) DeleteAgent(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.agents, id)
+	return nil
+}
+
+func (s *memoryStore) DeleteStaleAgents(ctx context.Context, staleThreshold time.Duration) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cutoff := time.Now().Add(-staleThreshold)
+	count := 0
+	for id, agent := range s.agents {
+		if agent.LastHeartbeat == nil || agent.LastHeartbeat.Before(cutoff) {
+			delete(s.agents, id)
+			count++
+		}
+	}
+	return count, nil
 }

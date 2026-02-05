@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS public.agents (
     id TEXT PRIMARY KEY,                      -- Agent ID (e.g., "hk-xhttp.svc.plus")
     name TEXT NOT NULL DEFAULT '',            -- Display name
-    groups TEXT[] NOT NULL DEFAULT '{}',      -- Agent groups (e.g., {"internal"})
+    groups JSONB NOT NULL DEFAULT '[]'::jsonb,      -- Agent groups (e.g., ["internal"])
     healthy BOOLEAN NOT NULL DEFAULT false,   -- Last reported health status
     last_heartbeat TIMESTAMPTZ,               -- Last successful heartbeat time
     clients_count INTEGER NOT NULL DEFAULT 0, -- Number of Xray clients

@@ -1235,3 +1235,90 @@ func (s *postgresStore) ListBlacklist(ctx context.Context) ([]string, error) {
 	}
 	return emails, nil
 }
+
+func (s *postgresStore) UpsertAgent(ctx context.Context, agent *Agent) error {
+	groups, err := encodeStringSlice(agent.Groups)
+	if err != nil {
+		return err
+	}
+
+	const query = `
+		INSERT INTO agents (id, name, groups, healthy, last_heartbeat, clients_count, sync_revision, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+		ON CONFLICT (id) DO UPDATE SET
+			name = EXCLUDED.name,
+			groups = EXCLUDED.groups,
+			healthy = EXCLUDED.healthy,
+			last_heartbeat = EXCLUDED.last_heartbeat,
+			clients_count = EXCLUDED.clients_count,
+			sync_revision = EXCLUDED.sync_revision,
+			updated_at = now()
+		RETURNING created_at, updated_at`
+
+	return s.db.QueryRowContext(ctx, query,
+		agent.ID,
+		agent.Name,
+		groups,
+		agent.Healthy,
+		agent.LastHeartbeat,
+		agent.ClientsCount,
+		agent.SyncRevision,
+	).Scan(&agent.CreatedAt, &agent.UpdatedAt)
+}
+
+func (s *postgresStore) GetAgent(ctx context.Context, id string) (*Agent, error) {
+	const query = `SELECT id, name, groups, healthy, last_heartbeat, clients_count, sync_revision, created_at, updated_at FROM agents WHERE id = $1`
+	var a Agent
+	var groups []byte
+	err := s.db.QueryRowContext(ctx, query, id).Scan(
+		&a.ID, &a.Name, &groups, &a.Healthy, &a.LastHeartbeat, &a.ClientsCount, &a.SyncRevision, &a.CreatedAt, &a.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errors.New("agent not found")
+		}
+		return nil, err
+	}
+	a.Groups = decodeStringSlice(groups)
+	return &a, nil
+}
+
+func (s *postgresStore) ListAgents(ctx context.Context) ([]*Agent, error) {
+	const query = `SELECT id, name, groups, healthy, last_heartbeat, clients_count, sync_revision, created_at, updated_at FROM agents ORDER BY id ASC`
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []*Agent
+	for rows.Next() {
+		var a Agent
+		var groups []byte
+		if err := rows.Scan(
+			&a.ID, &a.Name, &groups, &a.Healthy, &a.LastHeartbeat, &a.ClientsCount, &a.SyncRevision, &a.CreatedAt, &a.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		a.Groups = decodeStringSlice(groups)
+		results = append(results, &a)
+	}
+	return results, rows.Err()
+}
+
+func (s *postgresStore) DeleteAgent(ctx context.Context, id string) error {
+	const query = `DELETE FROM agents WHERE id = $1`
+	_, err := s.db.ExecContext(ctx, query, id)
+	return err
+}
+
+func (s *postgresStore) DeleteStaleAgents(ctx context.Context, staleThreshold time.Duration) (int, error) {
+	cutoff := time.Now().Add(-staleThreshold)
+	const query = `DELETE FROM agents WHERE last_heartbeat < $1 OR last_heartbeat IS NULL`
+	result, err := s.db.ExecContext(ctx, query, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	count, _ := result.RowsAffected()
+	return int(count), nil
+}
