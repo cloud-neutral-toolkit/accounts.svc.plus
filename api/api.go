@@ -44,7 +44,6 @@ type session struct {
 
 type handler struct {
 	store                     store.Store
-	sessions                  map[string]session
 	mu                        sync.RWMutex
 	sessionTTL                time.Duration
 	mfaChallenges             map[string]mfaChallenge
@@ -207,7 +206,6 @@ func WithOAuthFrontendURL(url string) Option {
 func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	h := &handler{
 		store:                     store.NewMemoryStore(),
-		sessions:                  make(map[string]session),
 		sessionTTL:                defaultSessionTTL,
 		mfaChallenges:             make(map[string]mfaChallenge),
 		mfaChallengeTTL:           defaultMFAChallengeTTL,
@@ -247,6 +245,8 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	// Token refresh endpoint - generates new access token using refresh token
 	authGroup.POST("/token/refresh", h.refreshToken)
 
+	authGroup.GET("/mfa/status", h.mfaStatus)
+
 	// Protected routes requiring authentication
 	authProtected := authGroup.Group("")
 	if h.tokenService != nil {
@@ -260,7 +260,6 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.POST("/mfa/totp/provision", h.provisionTOTP)
 	authProtected.POST("/mfa/totp/verify", h.verifyTOTP)
 	authProtected.POST("/mfa/disable", h.disableMFA)
-	authProtected.GET("/mfa/status", h.mfaStatus)
 
 	authProtected.POST("/password/reset", h.requestPasswordReset)
 	authProtected.POST("/password/reset/confirm", h.confirmPasswordReset)
@@ -1246,9 +1245,9 @@ func (h *handler) createSession(userID string) (string, time.Time, error) {
 	}
 	expiresAt := time.Now().Add(ttl)
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.sessions[token] = session{userID: userID, expiresAt: expiresAt}
+	if err := h.store.CreateSession(context.Background(), token, userID, expiresAt); err != nil {
+		return "", time.Time{}, err
+	}
 	return token, expiresAt, nil
 }
 
@@ -1263,23 +1262,15 @@ func (h *handler) setSessionCookie(c *gin.Context, token string, expiresAt time.
 }
 
 func (h *handler) lookupSession(token string) (session, bool) {
-	h.mu.RLock()
-	sess, ok := h.sessions[token]
-	h.mu.RUnlock()
-	if !ok {
+	userID, expiresAt, err := h.store.GetSession(context.Background(), token)
+	if err != nil {
 		return session{}, false
 	}
-	if time.Now().After(sess.expiresAt) {
-		h.removeSession(token)
-		return session{}, false
-	}
-	return sess, true
+	return session{userID: userID, expiresAt: expiresAt}, true
 }
 
 func (h *handler) removeSession(token string) {
-	h.mu.Lock()
-	delete(h.sessions, token)
-	h.mu.Unlock()
+	h.store.DeleteSession(context.Background(), token)
 }
 
 func (h *handler) newRandomToken() (string, error) {

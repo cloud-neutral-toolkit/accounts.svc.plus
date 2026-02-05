@@ -428,6 +428,47 @@ func applyRBACSchema(ctx context.Context, db *gorm.DB, driver string) error {
 	}
 
 	statements := []string{
+		`CREATE TABLE IF NOT EXISTS public.users (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  username TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL UNIQUE,
+  email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+  password TEXT NOT NULL,
+  mfa_totp_secret TEXT,
+  mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  mfa_secret_issued_at TIMESTAMPTZ,
+  mfa_confirmed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  level INTEGER NOT NULL DEFAULT 20,
+  role TEXT NOT NULL DEFAULT 'user',
+  groups JSONB NOT NULL DEFAULT '[]'::jsonb,
+  permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  proxy_uuid UUID NOT NULL DEFAULT gen_random_uuid(),
+  proxy_uuid_expires_at TIMESTAMPTZ
+)`,
+		`CREATE TABLE IF NOT EXISTS public.email_blacklist (
+  email TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`,
+		`CREATE TABLE IF NOT EXISTS public.agents (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  groups JSONB NOT NULL DEFAULT '[]'::jsonb,
+  healthy BOOLEAN NOT NULL DEFAULT FALSE,
+  last_heartbeat TIMESTAMPTZ,
+  clients_count INTEGER NOT NULL DEFAULT 0,
+  sync_revision TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`,
+		`CREATE TABLE IF NOT EXISTS public.sessions (
+  token TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`,
 		`CREATE TABLE IF NOT EXISTS public.rbac_roles (
   role_key TEXT PRIMARY KEY,
   description TEXT NOT NULL DEFAULT '',

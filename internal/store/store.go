@@ -94,6 +94,11 @@ type Store interface {
 	IsBlacklisted(ctx context.Context, email string) (bool, error)
 	ListBlacklist(ctx context.Context) ([]string, error)
 
+	// Session management
+	CreateSession(ctx context.Context, token, userID string, expiresAt time.Time) error
+	GetSession(ctx context.Context, token string) (string, time.Time, error)
+	DeleteSession(ctx context.Context, token string) error
+
 	// Agent management
 	UpsertAgent(ctx context.Context, agent *Agent) error
 	GetAgent(ctx context.Context, id string) (*Agent, error)
@@ -125,7 +130,15 @@ type memoryStore struct {
 	subscriptions           map[string]map[string]*Subscription
 	identities              map[string]*Identity
 	agents                  map[string]*Agent
+	sessions                map[string]*sessionRecord
 }
+
+type sessionRecord struct {
+	UserID    string
+	ExpiresAt time.Time
+}
+
+var ErrSessionNotFound = errors.New("session not found")
 
 // NewMemoryStore creates a new in-memory store implementation with super
 // administrator counting disabled by default to avoid accidental exposure of
@@ -151,6 +164,7 @@ func newMemoryStore(allowSuperAdminCounting bool) Store {
 		subscriptions:           make(map[string]map[string]*Subscription),
 		identities:              make(map[string]*Identity),
 		agents:                  make(map[string]*Agent),
+		sessions:                make(map[string]*sessionRecord),
 	}
 }
 
@@ -804,4 +818,34 @@ func (s *memoryStore) DeleteStaleAgents(ctx context.Context, staleThreshold time
 		}
 	}
 	return count, nil
+}
+
+func (s *memoryStore) CreateSession(ctx context.Context, token, userID string, expiresAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[token] = &sessionRecord{
+		UserID:    userID,
+		ExpiresAt: expiresAt,
+	}
+	return nil
+}
+
+func (s *memoryStore) GetSession(ctx context.Context, token string) (string, time.Time, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sess, ok := s.sessions[token]
+	if !ok {
+		return "", time.Time{}, ErrSessionNotFound
+	}
+	if time.Now().After(sess.ExpiresAt) {
+		return "", time.Time{}, ErrSessionNotFound
+	}
+	return sess.UserID, sess.ExpiresAt, nil
+}
+
+func (s *memoryStore) DeleteSession(ctx context.Context, token string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, token)
+	return nil
 }
