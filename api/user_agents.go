@@ -44,20 +44,8 @@ type vlessNode struct {
 }
 
 func (h *handler) listAgentNodes(c *gin.Context) {
-	// Get current user ID to use as VLESS UUID
-	userID := auth.GetUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
-
-	user, err := h.store.GetUserByID(c.Request.Context(), userID)
-	if err != nil {
-		if errors.Is(err, store.ErrUserNotFound) {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "user_not_found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch user"})
+	user, ok := h.resolveAgentNodeUser(c)
+	if !ok {
 		return
 	}
 
@@ -146,6 +134,53 @@ func (h *handler) listAgentNodes(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, nodes)
+}
+
+func (h *handler) resolveAgentNodeUser(c *gin.Context) (*store.User, bool) {
+	if userID := strings.TrimSpace(auth.GetUserID(c)); userID != "" && userID != "system" {
+		user, err := h.store.GetUserByID(c.Request.Context(), userID)
+		if err != nil {
+			if errors.Is(err, store.ErrUserNotFound) {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "user_not_found"})
+				return nil, false
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_fetch_user"})
+			return nil, false
+		}
+		return user, true
+	}
+
+	token := extractToken(c.GetHeader("Authorization"))
+	if token == "" {
+		token = strings.TrimSpace(c.Query("token"))
+	}
+	if token == "" {
+		if cookie, err := c.Cookie(sessionCookieName); err == nil {
+			token = strings.TrimSpace(cookie)
+		}
+	}
+	if token == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "session_token_required", "message": "session token is required"})
+		return nil, false
+	}
+
+	sess, ok := h.lookupSession(token)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_session", "message": "session token is invalid or expired"})
+		return nil, false
+	}
+
+	user, err := h.store.GetUserByID(c.Request.Context(), sess.userID)
+	if err != nil {
+		if errors.Is(err, store.ErrUserNotFound) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user_not_found"})
+			return nil, false
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_fetch_user"})
+		return nil, false
+	}
+
+	return user, true
 }
 
 func parseProxyNodeHosts(publicURL string, extraHosts []string) []string {

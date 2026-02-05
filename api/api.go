@@ -301,14 +301,14 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	}
 	registerAdminRoutes(apiGroup, h)
 
-	// Canonical user-facing agent routes under /api/agent-server/v1.
-	// Keep this in the authenticated user API group so dashboard requests can
-	// read registered nodes directly without console-side custom route logic.
-	agentServerGroup := apiGroup.Group("/agent-server/v1")
+	// Canonical user-facing agent routes.
+	// These endpoints use session-based auth in handler logic and intentionally
+	// stay outside token middleware to support dashboard session tokens.
+	agentServerGroup := r.Group("/api/agent-server/v1")
 	agentServerGroup.GET("/nodes", h.listAgentNodes)
 
-	// User agent routes - /api/agent/nodes
-	agentGroup := apiGroup.Group("/agent")
+	// Legacy alias kept for backward compatibility.
+	agentGroup := r.Group("/api/agent")
 	agentGroup.GET("/nodes", h.listAgentNodes)
 }
 
