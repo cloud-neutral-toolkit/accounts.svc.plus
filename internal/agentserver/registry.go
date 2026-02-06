@@ -298,6 +298,13 @@ func (r *Registry) SetSandboxAgent(agentID string, enabled bool) {
 	}
 }
 
+// ClearSandboxAgents clears all sandbox agent bindings.
+func (r *Registry) ClearSandboxAgents() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sandboxAgents = make(map[string]bool)
+}
+
 // normalizeStrings trims whitespace and removes duplicates from the provided
 // slice while preserving the original order for unique entries.
 func normalizeStrings(values []string) []string {
