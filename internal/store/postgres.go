@@ -190,10 +190,10 @@ func (s *postgresStore) CreateUser(ctx context.Context, user *User) error {
 		args = append(args, user.Active)
 		idx++
 	}
-	if caps.hasProxyUUID {
+	if caps.hasProxyUUID && user.ProxyUUID != "" {
 		columns = append(columns, "proxy_uuid")
 		placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
-		args = append(args, nullForEmpty(user.ProxyUUID))
+		args = append(args, user.ProxyUUID)
 		idx++
 	}
 	if caps.hasProxyUUIDExpiresAt {

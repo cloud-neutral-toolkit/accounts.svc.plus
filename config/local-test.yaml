@@ -1,0 +1,35 @@
+mode: "server-agent"
+
+log:
+  level: debug
+
+auth:
+  enable: true
+  token:
+    publicToken: "test-public-token"
+    refreshSecret: "test-refresh-secret"
+    accessSecret: "test-access-secret"
+    accessExpiry: "1h"
+    refreshExpiry: "168h"
+
+server:
+  addr: "127.0.0.1:8080"
+  publicUrl: "http://localhost:8080"
+  allowedOrigins:
+    - "http://localhost:3000"
+    - "http://127.0.0.1:3000"
+
+store:
+  driver: "memory"
+  dsn: ""
+
+session:
+  ttl: 24h
+
+agents:
+  credentials:
+    - id: "test-agent"
+      name: "Test Agent"
+      token: "test-agent-token"
+      groups:
+        - "default"

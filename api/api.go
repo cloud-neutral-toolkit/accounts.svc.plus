@@ -2148,7 +2148,9 @@ func (h *handler) mfaStatus(c *gin.Context) {
 		user, err = h.findUserByIdentifier(ctx, identifier)
 		if err != nil {
 			if errors.Is(err, store.ErrUserNotFound) {
-				respondError(c, http.StatusNotFound, "user_not_found", "user not found")
+				c.JSON(http.StatusOK, gin.H{
+					"mfa_enabled": false,
+				})
 				return
 			}
 			respondError(c, http.StatusInternalServerError, "mfa_status_failed", "failed to load user for status")
@@ -2709,6 +2711,10 @@ func (h *handler) isRootAccount(user *store.User) bool {
 }
 
 func respondError(c *gin.Context, status int, code, message string) {
+	if status >= 500 {
+		slog.Error("api_error", "status", status, "code", code, "message", message, "path", c.Request.URL.Path, "method", c.Request.Method)
+	}
+
 	c.JSON(status, gin.H{
 		"error":   code,
 		"message": message,
