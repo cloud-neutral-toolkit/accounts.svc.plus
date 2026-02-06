@@ -9,7 +9,6 @@ import (
 
 	"account/internal/agentproto"
 	"account/internal/agentserver"
-	"account/internal/store"
 	"account/internal/xrayconfig"
 )
 
@@ -48,62 +47,7 @@ func (h *handler) listAgentUsers(c *gin.Context) {
 	}
 
 	now := time.Now().UTC()
-	clients := make([]xrayconfig.Client, 0, 1)
-
-	if h.agentRegistry.IsSandboxAgent(identity.ID) {
-		sandboxUser, err := h.store.GetUserByEmail(c.Request.Context(), sandboxUserEmail)
-		if err != nil {
-			if err == store.ErrUserNotFound {
-				c.JSON(http.StatusNotFound, gin.H{"error": "sandbox_missing"})
-				return
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "sandbox_lookup_failed"})
-			return
-		}
-		if err := h.ensureSandboxProxyUUID(c.Request.Context(), sandboxUser); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "sandbox_uuid_rotation_failed"})
-			return
-		}
-
-		uuid := strings.TrimSpace(sandboxUser.ProxyUUID)
-		if uuid == "" {
-			uuid = strings.TrimSpace(sandboxUser.ID)
-		}
-		if uuid != "" {
-			clients = append(clients, xrayconfig.Client{
-				ID:    uuid,
-				Email: sandboxUserEmail,
-				Flow:  xrayconfig.DefaultFlow,
-			})
-		}
-
-		c.JSON(http.StatusOK, agentproto.ClientListResponse{
-			Clients:     clients,
-			Total:       len(clients),
-			GeneratedAt: now,
-		})
-		return
-	}
-
-	// Default demo behaviour: the special sandbox user is available on all nodes/regions.
-	// This keeps the Guest/Demo experience consistent even when the user switches regions.
-	// It is safe because sandbox@svc.plus is a read-only demo identity with a rotating proxy UUID.
-	if h.store != nil {
-		if sandboxUser, err := h.store.GetUserByEmail(c.Request.Context(), sandboxUserEmail); err == nil && sandboxUser != nil {
-			_ = h.ensureSandboxProxyUUID(c.Request.Context(), sandboxUser)
-			uuid := strings.TrimSpace(sandboxUser.ProxyUUID)
-			if uuid == "" {
-				uuid = strings.TrimSpace(sandboxUser.ID)
-			}
-			if uuid != "" {
-				clients = append(clients, xrayconfig.Client{
-					ID:    uuid,
-					Email: sandboxUserEmail,
-					Flow:  xrayconfig.DefaultFlow,
-				})
-			}
-		}
-	}
+	clients := make([]xrayconfig.Client, 0, 16)
 
 	users, err := h.store.ListUsers(c.Request.Context())
 	if err != nil {
@@ -112,13 +56,33 @@ func (h *handler) listAgentUsers(c *gin.Context) {
 	}
 
 	for _, u := range users {
-		email := strings.ToLower(strings.TrimSpace(u.Email))
-		if email == sandboxUserEmail || email == "demo@svc.plus" {
-			continue
-		}
 		if !u.Active {
 			continue
 		}
+		email := strings.ToLower(strings.TrimSpace(u.Email))
+
+		// Sandbox is a special demo identity with a rotating proxy UUID.
+		// Always include it (and rotate on read if needed), so every node/region
+		// can sync a consistent sandbox client for the Guest experience.
+		if email == sandboxUserEmail {
+			sandboxUser := u
+			_ = h.ensureSandboxProxyUUID(c.Request.Context(), &sandboxUser)
+
+			id := strings.TrimSpace(sandboxUser.ProxyUUID)
+			if id == "" {
+				id = strings.TrimSpace(sandboxUser.ID)
+			}
+			if id != "" {
+				clients = append(clients, xrayconfig.Client{
+					ID:    id,
+					Email: strings.TrimSpace(sandboxUser.Email),
+					Flow:  xrayconfig.DefaultFlow,
+				})
+			}
+			continue
+		}
+
+		// Default behavior: only sync eligible (active, verified, non-expired) users.
 		if !u.EmailVerified {
 			continue
 		}
