@@ -1,4 +1,5 @@
 .env
+accountsvc.log
 account.log
 models/
 pg_jieba/
