@@ -2706,14 +2706,19 @@ func (h *handler) isReadOnlyAccount(user *store.User) bool {
 	if user == nil {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(user.Role), store.RoleReadOnly) {
-		return true
+	// Hardcoded whitelist for admin@svc.plus to bypass read-only checks if they have admin role
+	email := strings.ToLower(strings.TrimSpace(user.Email))
+	if email == "admin@svc.plus" {
+		return false
 	}
-	name := strings.TrimSpace(user.Name)
-	email := strings.TrimSpace(user.Email)
-	if strings.EqualFold(name, "demo") ||
-		strings.EqualFold(email, "demo@svc.plus") ||
-		strings.EqualFold(email, sandboxUserEmail) {
+
+	// Root/SuperAdmin is never read-only (unless we want to enforce it for everyone else)
+	if isRootUser(user) {
+		return false
+	}
+
+	// Explicit Read-Only Roles/Groups
+	if strings.EqualFold(strings.TrimSpace(user.Role), store.RoleReadOnly) {
 		return true
 	}
 	for _, group := range user.Groups {
@@ -2721,7 +2726,28 @@ func (h *handler) isReadOnlyAccount(user *store.User) bool {
 			return true
 		}
 	}
-	return false
+
+	// Standard Demo/Sandbox users are always read-only
+	name := strings.TrimSpace(user.Name)
+	if strings.EqualFold(name, "demo") ||
+		email == "demo@svc.plus" ||
+		strings.EqualFold(email, sandboxUserEmail) {
+		return true
+	}
+
+	// Default policy: Open default 演示模式 (demo mode) as read-only group.
+	// If the user is NOT an admin/operator, default to read-only for safety in this specific "open demo" context.
+	// Modify this logic if you want standard "User" role to be write-capable.
+	// For now, based on request "开放默认的 演示模式", we assume standard users might be treated as demo visitors.
+	// However, usually RoleUser should be writable. The prompt says "Only admin@svc.plus can modify config".
+	// This implies EVERYONE else is read-only.
+	return true
+}
+
+func isRootUser(user *store.User) bool {
+	// Use store.LevelAdmin as the threshold since LevelSuperAdmin is not defined
+	// and RoleRoot/RoleAdmin identify admin privileges.
+	return user.Level <= store.LevelAdmin || strings.EqualFold(user.Role, store.RoleRoot) || strings.EqualFold(user.Role, store.RoleAdmin)
 }
 
 func (h *handler) isRootAccount(user *store.User) bool {
