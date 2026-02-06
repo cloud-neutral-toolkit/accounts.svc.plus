@@ -27,7 +27,6 @@ import (
 	"account/api"
 	"account/config"
 	"account/internal/agentmode"
-	"account/internal/agentproto"
 	"account/internal/agentserver"
 	"account/internal/auth"
 	"account/internal/mailer"
@@ -934,8 +933,6 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 
 	api.RegisterRoutes(r, options...)
 
-	registerAgentAPIRoutes(r, agentRegistry, gormSource, logger)
-
 	addr := strings.TrimSpace(cfg.Server.Addr)
 	if addr == "" {
 		addr = ":8080"
@@ -1138,127 +1135,6 @@ func runAgent(ctx context.Context, cfg *config.Config, logger *slog.Logger) erro
 		Xray:   cfg.Xray,
 	}
 	return agentmode.Run(ctx, options)
-}
-
-const agentIdentityContextKey = "xcontrol-account-agent-identity"
-
-func registerAgentAPIRoutes(r *gin.Engine, registry *agentserver.Registry, source xrayconfig.ClientSource, logger *slog.Logger) {
-	// Canonical agent controller path. Keep this route registered even when registry is nil
-	// so callers receive explicit auth/config errors instead of 404.
-	// Use /api/agent-server/v1 to avoid conflict with /api/agent prefix used by admin/user API
-	group := r.Group("/api/agent-server/v1")
-	group.Use(agentAuthMiddleware(registry))
-	group.GET("/users", agentListUsersHandler(registry, source, logger))
-	group.POST("/status", agentReportStatusHandler(registry, logger))
-}
-
-func agentAuthMiddleware(registry *agentserver.Registry) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if registry == nil {
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "agent_registry_unavailable", "message": "agent registry not configured"})
-			return
-		}
-		token := extractBearerToken(c.GetHeader("Authorization"))
-		if token == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "agent_token_required", "message": "agent token is required"})
-			return
-		}
-		identity, ok := registry.Authenticate(token)
-		if !ok || identity == nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid_agent_token", "message": "invalid agent token"})
-			return
-		}
-		c.Set(agentIdentityContextKey, *identity)
-		c.Next()
-	}
-}
-
-func agentListUsersHandler(registry *agentserver.Registry, source xrayconfig.ClientSource, logger *slog.Logger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if source == nil {
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "client_source_unavailable", "message": "client source not configured"})
-			return
-		}
-
-		// Agent identity is already verified by middleware
-		val, _ := c.Get(agentIdentityContextKey)
-		identity, _ := val.(agentserver.Identity)
-
-		// Determine if this agent is in sandbox mode
-		isSandbox := false
-		if registry != nil {
-			isSandbox = registry.IsSandboxAgent(identity.ID)
-		}
-
-		// Use accounts server logic to decide if sandbox user should be included
-		// Requirement: default sandbox email is Sandbox@svc.plus
-		clients, err := source.ListClients(c.Request.Context())
-		if err != nil {
-			if logger != nil {
-				logger.Error("failed to list clients from source", "err", err, "agent", identity.ID)
-			}
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-				"error":   "list_clients_failed",
-				"message": fmt.Sprintf("failed to list clients: %v", err),
-			})
-			return
-		}
-
-		if isSandbox {
-			// In sandbox mode, only return the Sandbox user
-			sandboxClients := make([]xrayconfig.Client, 0)
-			for _, client := range clients {
-				if strings.EqualFold(client.Email, SandboxEmail) {
-					sandboxClients = append(sandboxClients, client)
-				}
-			}
-			clients = sandboxClients
-		}
-
-		response := agentproto.ClientListResponse{
-			Clients:     clients,
-			Total:       len(clients),
-			GeneratedAt: time.Now().UTC(),
-		}
-		c.JSON(http.StatusOK, response)
-	}
-}
-
-func agentReportStatusHandler(registry *agentserver.Registry, logger *slog.Logger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		value, exists := c.Get(agentIdentityContextKey)
-		if !exists {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "agent_identity_missing", "message": "agent identity missing"})
-			return
-		}
-		authenticatedIdentity, ok := value.(agentserver.Identity)
-		if !ok {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "agent_identity_invalid", "message": "agent identity malformed"})
-			return
-		}
-		var report agentproto.StatusReport
-		if err := c.ShouldBindJSON(&report); err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid_status_payload", "message": "invalid status payload"})
-			return
-		}
-
-		// Extract agent ID from report (self-reported by agent)
-		agentID := strings.TrimSpace(report.AgentID)
-		if agentID == "" {
-			// Fallback to authenticated identity ID if agent doesn't report its ID
-			agentID = authenticatedIdentity.ID
-		}
-
-		// Dynamically register agent with self-reported ID
-		// This allows multiple agents to use the same shared token
-		agentIdentity := registry.RegisterAgent(agentID, authenticatedIdentity.Groups)
-
-		registry.ReportStatus(agentIdentity, report)
-		if logger != nil {
-			logger.Info("agent status updated", "agent", agentIdentity.ID, "healthy", report.Healthy, "clients", report.Xray.Clients)
-		}
-		c.Status(http.StatusNoContent)
-	}
 }
 
 func extractBearerToken(header string) string {
