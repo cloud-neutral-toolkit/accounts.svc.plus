@@ -43,7 +43,7 @@ var (
 
 const (
 	// SandboxEmail is the canonical email for the sandbox account.
-	SandboxEmail = "Sandbox@svc.plus"
+	SandboxEmail = "sandbox@svc.plus"
 )
 
 const (
