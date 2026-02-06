@@ -14,8 +14,14 @@ import (
 // It is intentionally readable by any authenticated user so demo/sandbox users
 // do not depend on localStorage browser state.
 func (h *handler) getSandboxBindingPublic(c *gin.Context) {
-	if _, ok := h.requireAuthenticatedUser(c); !ok {
-		return
+	// This endpoint is used by the Console Guest/Demo flow.
+	// Allow it when either:
+	// - the caller is an authenticated user (normal case), or
+	// - the caller is the trusted Console BFF (internal service token).
+	if !isInternalServiceRequest(c) {
+		if _, ok := h.requireAuthenticatedUser(c); !ok {
+			return
+		}
 	}
 
 	if h.db == nil {

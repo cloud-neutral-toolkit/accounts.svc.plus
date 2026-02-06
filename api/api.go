@@ -280,6 +280,11 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 
 	authGroup.GET("/mfa/status", h.mfaStatus)
 
+	// Sandbox binding read endpoint.
+	// Used by the Console Guest/Demo experience. Must be readable either via a
+	// normal user session or via the internal service token.
+	authGroup.GET("/sandbox/binding", h.getSandboxBindingPublic)
+
 	// Protected routes requiring authentication
 	authProtected := authGroup.Group("")
 	if h.tokenService != nil {
@@ -323,9 +328,6 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.GET("/admin/sandbox/binding", h.getSandboxBinding)
 	authProtected.POST("/admin/sandbox/bind", h.bindSandboxNode)
 
-	// Public read of sandbox binding for demo/sandbox user experience.
-	authProtected.GET("/sandbox/binding", h.getSandboxBindingPublic)
-
 	// Root-only identity switch to sandbox@svc.plus (hard-coded allowlist).
 	authProtected.POST("/admin/assume", h.adminAssume)
 	authProtected.POST("/admin/assume/revert", h.adminAssumeRevert)
@@ -337,6 +339,7 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	internalGroup := r.Group("/api/internal")
 	internalGroup.Use(auth.InternalAuthMiddleware())
 	internalGroup.GET("/public-overview", h.internalPublicOverview)
+	// 	internalGroup.GET("/sandbox/guest", h.internalSandboxGuest)
 
 	// Public /api routes for admin/management (expected by frontend at /api/admin/...)
 	apiGroup := r.Group("/api")
@@ -2735,13 +2738,9 @@ func (h *handler) isReadOnlyAccount(user *store.User) bool {
 		return true
 	}
 
-	// Default policy: Open default 演示模式 (demo mode) as read-only group.
-	// If the user is NOT an admin/operator, default to read-only for safety in this specific "open demo" context.
-	// Modify this logic if you want standard "User" role to be write-capable.
-	// For now, based on request "开放默认的 演示模式", we assume standard users might be treated as demo visitors.
-	// However, usually RoleUser should be writable. The prompt says "Only admin@svc.plus can modify config".
-	// This implies EVERYONE else is read-only.
-	return true
+	// Default policy: Allow modification for regular users.
+	// We only restrict explicitly flagged "demo" or "sandbox" identities or users assigned to a specific "ReadOnly Role".
+	return false
 }
 
 func isRootUser(user *store.User) bool {
