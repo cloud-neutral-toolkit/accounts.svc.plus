@@ -220,6 +220,25 @@ func (h *handler) resolveAgentNodeUser(c *gin.Context) (*store.User, bool) {
 		}
 	}
 	if token == "" {
+		// Console Guest/Demo path: allow the trusted Console BFF to resolve the
+		// sandbox user without requiring an end-user session.
+		if isInternalServiceRequest(c) {
+			sandboxUser, err := h.store.GetUserByEmail(c.Request.Context(), sandboxUserEmail)
+			if err != nil {
+				if errors.Is(err, store.ErrUserNotFound) {
+					c.JSON(http.StatusNotFound, gin.H{"error": "sandbox_missing"})
+					return nil, false
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "sandbox_lookup_failed"})
+				return nil, false
+			}
+			if err := h.ensureSandboxProxyUUID(c.Request.Context(), sandboxUser); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "sandbox_uuid_rotation_failed"})
+				return nil, false
+			}
+			return sandboxUser, true
+		}
+
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "session_token_required", "message": "session token is required"})
 		return nil, false
 	}
