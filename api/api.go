@@ -339,7 +339,7 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	internalGroup := r.Group("/api/internal")
 	internalGroup.Use(auth.InternalAuthMiddleware())
 	internalGroup.GET("/public-overview", h.internalPublicOverview)
-	// 	internalGroup.GET("/sandbox/guest", h.internalSandboxGuest)
+	internalGroup.GET("/sandbox/guest", h.internalSandboxGuest)
 
 	// Public /api routes for admin/management (expected by frontend at /api/admin/...)
 	apiGroup := r.Group("/api")
