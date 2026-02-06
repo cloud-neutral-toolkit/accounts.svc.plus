@@ -43,22 +43,24 @@ type StatusSnapshot struct {
 
 // Registry manages agent credentials and status reports in-memory.
 type Registry struct {
-	mu          sync.RWMutex
-	credentials map[[32]byte]Identity
-	byID        map[string]Identity
-	statuses    map[string]StatusSnapshot
-	store       store.Store
-	logger      *slog.Logger
+	mu            sync.RWMutex
+	credentials   map[[32]byte]Identity
+	byID          map[string]Identity
+	statuses      map[string]StatusSnapshot
+	sandboxAgents map[string]bool
+	store         store.Store
+	logger        *slog.Logger
 }
 
 // NewRegistry constructs a registry from configuration, validating credentials
 // and normalising their representation.
 func NewRegistry(cfg Config) (*Registry, error) {
 	r := &Registry{
-		credentials: make(map[[32]byte]Identity),
-		byID:        make(map[string]Identity),
-		statuses:    make(map[string]StatusSnapshot),
-		logger:      slog.Default().With("component", "agent-registry"),
+		credentials:   make(map[[32]byte]Identity),
+		byID:          make(map[string]Identity),
+		statuses:      make(map[string]StatusSnapshot),
+		sandboxAgents: make(map[string]bool),
+		logger:        slog.Default().With("component", "agent-registry"),
 	}
 
 	for _, cred := range cfg.Credentials {
@@ -276,6 +278,24 @@ func (r *Registry) Agents() []Identity {
 		return agents[i].ID < agents[j].ID
 	})
 	return agents
+}
+
+// IsSandboxAgent reports whether the provided agent ID is bound to sandbox mode.
+func (r *Registry) IsSandboxAgent(agentID string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.sandboxAgents[agentID]
+}
+
+// SetSandboxAgent marks an agent as a sandbox agent.
+func (r *Registry) SetSandboxAgent(agentID string, enabled bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if enabled {
+		r.sandboxAgents[agentID] = true
+	} else {
+		delete(r.sandboxAgents, agentID)
+	}
 }
 
 // normalizeStrings trims whitespace and removes duplicates from the provided

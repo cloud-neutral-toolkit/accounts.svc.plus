@@ -43,6 +43,11 @@ var (
 )
 
 const (
+	// SandboxEmail is the canonical email for the sandbox account.
+	SandboxEmail = "Sandbox@svc.plus"
+)
+
+const (
 	demoUsername = "Demo"
 	demoPassword = "Demo"
 	demoEmail    = "demo@svc.plus"
@@ -200,6 +205,56 @@ func findDemoUser(ctx context.Context, st store.Store) (*store.User, error) {
 		return userByEmail, nil
 	}
 	return nil, nil
+}
+
+func ensureSandboxUser(ctx context.Context, st store.Store, logger *slog.Logger) error {
+	sandboxUser, err := st.GetUserByEmail(ctx, SandboxEmail)
+	if err != nil && !errors.Is(err, store.ErrUserNotFound) {
+		return fmt.Errorf("lookup sandbox user: %w", err)
+	}
+
+	if sandboxUser == nil {
+		hashed, err := bcrypt.GenerateFromPassword([]byte(uuid.NewString()), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("hash sandbox password: %w", err)
+		}
+
+		user := &store.User{
+			Name:          "Sandbox",
+			Email:         SandboxEmail,
+			EmailVerified: true,
+			PasswordHash:  string(hashed),
+			Level:         store.LevelUser,
+			Role:          store.RoleUser,
+			Groups:        []string{"User", "Sandbox"},
+			Permissions:   []string{},
+			Active:        true,
+			ProxyUUID:     uuid.NewString(),
+		}
+		if err := st.CreateUser(ctx, user); err != nil {
+			return fmt.Errorf("create sandbox user: %w", err)
+		}
+		if logger != nil {
+			logger.Info("sandbox experience user created", "email", SandboxEmail)
+		}
+	} else {
+		// Ensure sandbox user is active and has a proxy uuid
+		changed := false
+		if !sandboxUser.Active {
+			sandboxUser.Active = true
+			changed = true
+		}
+		if sandboxUser.ProxyUUID == "" {
+			sandboxUser.ProxyUUID = uuid.NewString()
+			changed = true
+		}
+		if changed {
+			if err := st.UpdateUser(ctx, sandboxUser); err != nil {
+				return fmt.Errorf("update sandbox user: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 func startDemoUUIDRotator(ctx context.Context, st store.Store, logger *slog.Logger) {
@@ -603,6 +658,9 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 	if err := ensureDemoUser(ctx, st, logger); err != nil {
 		return err
 	}
+	if err := ensureSandboxUser(ctx, st, logger); err != nil {
+		logger.Warn("failed to ensure sandbox user", "err", err)
+	}
 	startDemoUUIDRotator(ctx, st, logger)
 
 	var emailSender api.EmailSender
@@ -845,6 +903,16 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		}
 	}
 	options = append(options, api.WithOAuthProviders(oauthProviders))
+	options = append(options, api.WithAgentRegistry(agentRegistry))
+	options = append(options, api.WithGormDB(gormDB))
+
+	// Pre-load sandbox bindings from database into the registry
+	var sandboxBindings []model.SandboxBinding
+	if err := gormDB.Find(&sandboxBindings).Error; err == nil {
+		for _, b := range sandboxBindings {
+			agentRegistry.SetSandboxAgent(b.AgentID, true)
+		}
+	}
 
 	api.RegisterRoutes(r, options...)
 
@@ -1062,8 +1130,28 @@ func registerAgentAPIRoutes(r *gin.Engine, registry *agentserver.Registry, sourc
 	// Use /api/agent-server/v1 to avoid conflict with /api/agent prefix used by admin/user API
 	group := r.Group("/api/agent-server/v1")
 	group.Use(agentAuthMiddleware(registry))
-	group.GET("/users", agentListUsersHandler(source))
+	group.GET("/users", agentListUsersHandler(registry, source, logger))
 	group.POST("/status", agentReportStatusHandler(registry, logger))
+	group.GET("/nodes", agentListNodesHandler(registry))
+}
+
+func agentListNodesHandler(registry *agentserver.Registry) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if registry == nil {
+			c.JSON(http.StatusOK, []interface{}{})
+			return
+		}
+
+		agents := registry.Agents()
+		nodes := make([]api.VlessNode, 0, len(agents))
+		for _, agent := range agents {
+			nodes = append(nodes, api.VlessNode{
+				Name:    agent.Name,
+				Address: agent.ID,
+			})
+		}
+		c.JSON(http.StatusOK, nodes)
+	}
 }
 
 func agentAuthMiddleware(registry *agentserver.Registry) gin.HandlerFunc {
@@ -1087,17 +1175,45 @@ func agentAuthMiddleware(registry *agentserver.Registry) gin.HandlerFunc {
 	}
 }
 
-func agentListUsersHandler(source xrayconfig.ClientSource) gin.HandlerFunc {
+func agentListUsersHandler(registry *agentserver.Registry, source xrayconfig.ClientSource, logger *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if source == nil {
 			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "client_source_unavailable", "message": "client source not configured"})
 			return
 		}
+
+		// Agent identity is already verified by middleware
+		val, _ := c.Get(agentIdentityContextKey)
+		identity, _ := val.(agentserver.Identity)
+
+		// Determine if this agent is in sandbox mode
+		isSandbox := false
+		if registry != nil {
+			isSandbox = registry.IsSandboxAgent(identity.ID)
+		}
+
+		// Use accounts server logic to decide if sandbox user should be included
+		// Requirement: default sandbox email is Sandbox@svc.plus
 		clients, err := source.ListClients(c.Request.Context())
 		if err != nil {
+			if logger != nil {
+				logger.Error("failed to list clients from source", "err", err, "agent", identity.ID)
+			}
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "list_clients_failed", "message": "failed to list clients"})
 			return
 		}
+
+		if isSandbox {
+			// In sandbox mode, only return the Sandbox user
+			sandboxClients := make([]xrayconfig.Client, 0)
+			for _, client := range clients {
+				if strings.EqualFold(client.Email, SandboxEmail) {
+					sandboxClients = append(sandboxClients, client)
+				}
+			}
+			clients = sandboxClients
+		}
+
 		response := agentproto.ClientListResponse{
 			Clients:     clients,
 			Total:       len(clients),
@@ -1247,7 +1363,7 @@ func openAdminSettingsDB(cfg config.Store) (*gorm.DB, func(context.Context) erro
 		return nil, nil, err
 	}
 
-	if err := db.AutoMigrate(&model.AdminSetting{}); err != nil {
+	if err := db.AutoMigrate(&model.AdminSetting{}, &model.SandboxBinding{}); err != nil {
 		return nil, nil, err
 	}
 

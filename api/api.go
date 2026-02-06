@@ -21,6 +21,7 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 
 	"account/internal/auth"
 	"account/internal/service"
@@ -66,6 +67,13 @@ type handler struct {
 	oauthProviders            map[string]auth.OAuthProvider
 	oauthFrontendURL          string
 	publicURL                 string
+	agentRegistry             agentRegistry
+	db                        *gorm.DB
+}
+
+type agentRegistry interface {
+	IsSandboxAgent(agentID string) bool
+	SetSandboxAgent(agentID string, enabled bool)
 }
 
 type mfaChallenge struct {
@@ -202,6 +210,20 @@ func WithOAuthFrontendURL(url string) Option {
 	}
 }
 
+// WithAgentRegistry configures the handler with the provided agent registry.
+func WithAgentRegistry(registry agentRegistry) Option {
+	return func(h *handler) {
+		h.agentRegistry = registry
+	}
+}
+
+// WithGormDB configures the handler with the provided GORM database for admin settings.
+func WithGormDB(db *gorm.DB) Option {
+	return func(h *handler) {
+		h.db = db
+	}
+}
+
 // RegisterRoutes attaches account service endpoints to the router.
 func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	h := &handler{
@@ -285,6 +307,9 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.GET("/admin/blacklist", h.listBlacklist)
 	authProtected.POST("/admin/blacklist", h.addToBlacklist)
 	authProtected.DELETE("/admin/blacklist/:email", h.removeFromBlacklist)
+
+	authProtected.GET("/admin/sandbox/binding", h.getSandboxBinding)
+	authProtected.POST("/admin/sandbox/bind", h.bindSandboxNode)
 
 	authProtected.GET("/users", h.listUsers)
 

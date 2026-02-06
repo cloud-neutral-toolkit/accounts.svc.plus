@@ -3,6 +3,7 @@ package xrayconfig
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"gorm.io/gorm"
@@ -10,7 +11,8 @@ import (
 
 // GormClientSource reads Xray client credentials from the users table using GORM.
 type GormClientSource struct {
-	DB *gorm.DB
+	DB     *gorm.DB
+	Logger *slog.Logger
 }
 
 // NewGormClientSource constructs a ClientSource backed by the provided GORM instance.
@@ -18,7 +20,10 @@ func NewGormClientSource(db *gorm.DB) (*GormClientSource, error) {
 	if db == nil {
 		return nil, errors.New("gorm db is required")
 	}
-	return &GormClientSource{DB: db}, nil
+	return &GormClientSource{
+		DB:     db,
+		Logger: slog.Default().With("component", "xray-gorm-source"),
+	}, nil
 }
 
 // ListClients returns all users ordered by creation time.
@@ -38,6 +43,9 @@ func (s *GormClientSource) ListClients(ctx context.Context) ([]Client, error) {
 		Select("proxy_uuid, email").
 		Order("created_at ASC, proxy_uuid ASC").
 		Find(&rows).Error; err != nil {
+		if s.Logger != nil {
+			s.Logger.Error("failed to list clients from users table", "err", err)
+		}
 		return nil, err
 	}
 

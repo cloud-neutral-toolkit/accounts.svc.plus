@@ -26,7 +26,7 @@ const (
 	defaultTCPFlow   = "xtls-rprx-vision"
 )
 
-type vlessNode struct {
+type VlessNode struct {
 	Name           string   `json:"name"`
 	Address        string   `json:"address"`
 	Port           int      `json:"port,omitempty"`
@@ -82,7 +82,7 @@ func (h *handler) listAgentNodes(c *gin.Context) {
 	hosts := parseProxyNodeHosts(h.publicURL, registeredHosts)
 
 	if len(hosts) == 0 {
-		c.JSON(http.StatusOK, []vlessNode{})
+		c.JSON(http.StatusOK, []VlessNode{})
 		return
 	}
 
@@ -95,10 +95,10 @@ func (h *handler) listAgentNodes(c *gin.Context) {
 	tcpScheme := xrayconfig.VLESSTCPScheme()
 
 	users := []string{proxyUUID}
-	nodes := make([]vlessNode, 0, len(hosts))
+	nodes := make([]VlessNode, 0, len(hosts))
 	for _, host := range hosts {
 		nodeName := resolveNodeName(host, registeredNames)
-		nodes = append(nodes, vlessNode{
+		nodes = append(nodes, VlessNode{
 			Name:       nodeName,
 			Address:    host,
 			Port:       xhttpPort,
