@@ -1334,7 +1334,28 @@ func (h *handler) setSessionCookie(c *gin.Context, token string, expiresAt time.
 	}
 	secure := c.Request.TLS != nil
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(sessionCookieName, token, maxAge, "/", "", secure, true)
+
+	domain := h.getCookieDomain()
+	c.SetCookie(sessionCookieName, token, maxAge, "/", domain, secure, true)
+}
+
+func (h *handler) getCookieDomain() string {
+	if h.publicURL == "" {
+		return ""
+	}
+	u, err := url.Parse(h.publicURL)
+	if err != nil {
+		return ""
+	}
+	host := strings.Split(u.Hostname(), ":")[0]
+	if host == "localhost" || host == "127.0.0.1" {
+		return ""
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) >= 2 {
+		return "." + strings.Join(parts[len(parts)-2:], ".")
+	}
+	return ""
 }
 
 func (h *handler) lookupSession(token string) (session, bool) {
