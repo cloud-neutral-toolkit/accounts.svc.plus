@@ -18,6 +18,7 @@ import (
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 
+	"account/internal/agentserver"
 	"account/internal/service"
 	"account/internal/store"
 )
@@ -119,6 +120,101 @@ func decodeResponse(t *testing.T, rr *httptest.ResponseRecorder) apiResponse {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 	return resp
+}
+
+func TestAgentServerUsers_DefaultSyncIncludesSandboxAndRegularUsers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+
+	// sandbox user (special rotating proxy uuid)
+	if err := st.CreateUser(ctx, &store.User{
+		Name:          "Sandbox",
+		Email:         "sandbox@svc.plus",
+		EmailVerified: true,
+		Role:          store.RoleUser,
+		Level:         store.LevelUser,
+		Active:        true,
+	}); err != nil {
+		t.Fatalf("create sandbox user: %v", err)
+	}
+
+	// normal user
+	if err := st.CreateUser(ctx, &store.User{
+		Name:          "User",
+		Email:         "user@example.com",
+		EmailVerified: true,
+		Role:          store.RoleUser,
+		Level:         store.LevelUser,
+		Active:        true,
+	}); err != nil {
+		t.Fatalf("create normal user: %v", err)
+	}
+
+	// Ensure normal user has a non-expired proxy UUID.
+	normal, err := st.GetUserByEmail(ctx, "user@example.com")
+	if err != nil {
+		t.Fatalf("get normal user: %v", err)
+	}
+	exp := time.Now().UTC().Add(24 * time.Hour)
+	normal.ProxyUUIDExpiresAt = &exp
+	if err := st.UpdateUser(ctx, normal); err != nil {
+		t.Fatalf("update normal user: %v", err)
+	}
+
+	registry, err := agentserver.NewRegistry(agentserver.Config{
+		Credentials: []agentserver.Credential{{
+			ID:     "*",
+			Name:   "test-agent",
+			Token:  "agent-token",
+			Groups: []string{"internal"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("new agent registry: %v", err)
+	}
+
+	router := gin.New()
+	RegisterRoutes(router, WithStore(st), WithAgentRegistry(registry), WithEmailVerification(false))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/agent-server/v1/users", nil)
+	req.Header.Set("Authorization", "Bearer agent-token")
+	req.Header.Set("X-Agent-ID", "hk-xhttp.svc.plus")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var payload struct {
+		Clients []struct {
+			ID    string `json:"id"`
+			Email string `json:"email"`
+		} `json:"clients"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+
+	seenSandbox := false
+	seenNormal := false
+	for _, c := range payload.Clients {
+		if c.Email == "sandbox@svc.plus" && strings.TrimSpace(c.ID) != "" {
+			seenSandbox = true
+		}
+		if c.Email == "user@example.com" && strings.TrimSpace(c.ID) != "" {
+			seenNormal = true
+		}
+	}
+
+	if !seenSandbox {
+		t.Fatalf("expected sandbox client in response, got=%v", payload.Clients)
+	}
+	if !seenNormal {
+		t.Fatalf("expected normal client in response, got=%v", payload.Clients)
+	}
 }
 
 func waitForStableTOTPWindow(t *testing.T) {
