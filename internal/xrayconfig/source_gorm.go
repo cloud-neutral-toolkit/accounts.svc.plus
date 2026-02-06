@@ -28,22 +28,22 @@ func (s *GormClientSource) ListClients(ctx context.Context) ([]Client, error) {
 	}
 
 	type row struct {
-		UUID  string  `gorm:"column:uuid"`
-		Email *string `gorm:"column:email"`
+		ProxyUUID string  `gorm:"column:proxy_uuid"`
+		Email     *string `gorm:"column:email"`
 	}
 
 	var rows []row
 	if err := s.DB.WithContext(ctx).
 		Table("users").
-		Select("uuid, email").
-		Order("created_at ASC, uuid ASC").
+		Select("proxy_uuid, email").
+		Order("created_at ASC, proxy_uuid ASC").
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
 
 	clients := make([]Client, 0, len(rows))
 	for _, r := range rows {
-		id := strings.TrimSpace(r.UUID)
+		id := strings.TrimSpace(r.ProxyUUID)
 		if id == "" {
 			continue
 		}

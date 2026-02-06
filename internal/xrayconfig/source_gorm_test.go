@@ -14,16 +14,16 @@ func TestGormClientSourceListClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.Exec(`CREATE TABLE users (uuid TEXT PRIMARY KEY, email TEXT, created_at TIMESTAMP)`).Error; err != nil {
+	if err := db.Exec(`CREATE TABLE users (uuid TEXT PRIMARY KEY, proxy_uuid TEXT, email TEXT, created_at TIMESTAMP)`).Error; err != nil {
 		t.Fatalf("create table: %v", err)
 	}
 
 	older := time.Now().Add(-time.Hour)
 	newer := time.Now()
-	if err := db.Exec(`INSERT INTO users (uuid, email, created_at) VALUES (?, ?, ?)`, "uuid-b", "b@example.com", older).Error; err != nil {
+	if err := db.Exec(`INSERT INTO users (uuid, proxy_uuid, email, created_at) VALUES (?, ?, ?, ?)`, "uuid-b", "proxy-b", "b@example.com", older).Error; err != nil {
 		t.Fatalf("insert older: %v", err)
 	}
-	if err := db.Exec(`INSERT INTO users (uuid, email, created_at) VALUES (?, ?, ?)`, "uuid-a", nil, newer).Error; err != nil {
+	if err := db.Exec(`INSERT INTO users (uuid, proxy_uuid, email, created_at) VALUES (?, ?, ?, ?)`, "uuid-a", "proxy-a", nil, newer).Error; err != nil {
 		t.Fatalf("insert newer: %v", err)
 	}
 
@@ -38,10 +38,10 @@ func TestGormClientSourceListClients(t *testing.T) {
 	if len(clients) != 2 {
 		t.Fatalf("expected 2 clients, got %d", len(clients))
 	}
-	if clients[0].ID != "uuid-b" || clients[0].Email != "b@example.com" {
+	if clients[0].ID != "proxy-b" || clients[0].Email != "b@example.com" {
 		t.Fatalf("unexpected first client: %+v", clients[0])
 	}
-	if clients[1].ID != "uuid-a" || clients[1].Email != "" {
+	if clients[1].ID != "proxy-a" || clients[1].Email != "" {
 		t.Fatalf("unexpected second client: %+v", clients[1])
 	}
 }
