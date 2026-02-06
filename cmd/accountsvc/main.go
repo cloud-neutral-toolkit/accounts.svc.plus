@@ -1206,7 +1206,10 @@ func agentListUsersHandler(registry *agentserver.Registry, source xrayconfig.Cli
 			if logger != nil {
 				logger.Error("failed to list clients from source", "err", err, "agent", identity.ID)
 			}
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "list_clients_failed", "message": "failed to list clients"})
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+				"error":   "list_clients_failed",
+				"message": fmt.Sprintf("failed to list clients: %v", err),
+			})
 			return
 		}
 
@@ -1272,10 +1275,7 @@ func extractBearerToken(header string) string {
 	if header == "" {
 		return ""
 	}
-	const prefix = "Bearer "
-	if strings.HasPrefix(header, prefix) {
-		header = header[len(prefix):]
-	}
+	header = strings.TrimPrefix(header, "Bearer ")
 	return strings.TrimSpace(header)
 }
 
