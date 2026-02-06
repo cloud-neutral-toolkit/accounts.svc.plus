@@ -503,6 +503,10 @@ func applyRBACSchema(ctx context.Context, db *gorm.DB, driver string) error {
   proxy_uuid UUID NOT NULL DEFAULT gen_random_uuid(),
   proxy_uuid_expires_at TIMESTAMPTZ
 )`,
+		`ALTER TABLE public.users ADD COLUMN IF NOT EXISTS proxy_uuid UUID NOT NULL DEFAULT gen_random_uuid()`,
+		`ALTER TABLE public.users ADD COLUMN IF NOT EXISTS proxy_uuid_expires_at TIMESTAMPTZ`,
+		`ALTER TABLE public.users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+		`ALTER TABLE public.users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
 		`CREATE TABLE IF NOT EXISTS public.email_blacklist (
   email TEXT PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
