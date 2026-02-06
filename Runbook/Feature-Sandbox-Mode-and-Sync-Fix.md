@@ -1,38 +1,36 @@
 # Implementation Report: Sandbox Mode & Agent Sync Stability
 
 ## 1. Objective
-Resolved critical agent synchronization failures and implemented a persistent "Sandbox Mode" for controlled infrastructure testing.
+Resolved critical agent synchronization failures and implemented a robust "Sandbox Mode" with Root Assume capabilities for secure infrastructure testing and user support.
 
 ## 2. Issues Addressed
-- **Agent Sync 500 Error**: Traced to missing database columns (`proxy_uuid`, `created_at`, etc.) in the `users` table, likely lost during schema migrations or security scrubbing.
-- **Node Binding Persistence**: Transitioned from local-storage only binding to server-side persistence, allowing root admins to manage sandbox nodes centrally.
-- **UI Noise**: Removed the "Internal Agents (Shared Token)" wildcard from the node selection dropdown to prevent user confusion.
+- **Backend Startup Panic**: Fixed duplicate route registration for `/api/agent-server/v1/users` that caused the container to crash on startup.
+- **BFF JSON Parsing Crashes**: Implemented JSON fail-safes in the console BFF to handle upstream 502/HTML errors gracefully.
+- **Demo/Sandbox Sync**: Transitioned from localStorage-based state to a server-side public binding endpoint (`/api/sandbox/binding`), ensuring all users see the same bound node.
+- **Root Admin Visibility**: Centralized all sandbox management tools (Assume & Binding) into the `/panel/management` page's Root-only section.
 
 ## 3. Implementation Details
 
 ### A. Backend (`accounts.svc.plus`)
-- **Automated Schema Repair**: Added explicit `ALTER TABLE` migrations in `applyRBACSchema` to guarantee the presence of required columns in PostgreSQL.
-- **Sandbox Infrastructure**:
-    - **Model**: Introduced `SandboxBinding` GORM model for persisting agent-to-sandbox mappings.
-    - **User Provisioning**: Implemented `ensureSandboxUser` to auto-create the canonical `Sandbox@svc.plus` user.
-    - **Registry Update**: Enhanced `agentserver.Registry` to support in-memory sandbox flags with database persistence.
-- **New APIs**: 
-    - `GET /api/agent-server/v1/nodes`: Filtered list of authenticated agents.
-    - `POST /api/admin/sandbox/bind`: Command to associate an agent with Sandbox mode.
-    - `GET /api/agent-server/v1/users`: Intelligent filtering logic that restricts client lists to the Sandbox user for bound agents.
+- **Integrated Route Registry**: Moved agent routes into the central `api` package and removed legacy registrations in `main.go`.
+- **Root Assume Logic**: 
+    - `POST /api/auth/admin/assume`: Signs a temporary token for `sandbox@svc.plus`.
+    - `POST /api/auth/admin/assume/revert`: Stateless endpoint for revert logging.
+- **Public Binding Access**: Added `GET /sandbox/binding` (readable by any authenticated user) to allow VLESS QR codes to find their bound node without admin privileges.
+- **Hourly UUID Rotation**: Enforced hourly rotation for the sandbox user's ProxyUUID with automatic UI refreshes.
 
 ### B. Frontend (`console.svc.plus`)
-- **`SandboxNodeBindingPanel`**:
-    - Rewrote `handleApply` to perform server-side sync via `fetch`.
-    - Added `useEffect` hook to pull current bindings from the server on component mount.
-    - Improved UX with success/error messaging linked to server responses.
+- **Host-Only Assume mechanism**: 
+    - The console BFF manages the `xc_session_root` cookie for identity recovery.
+    - **Header Banner**: Real-time identification of assume state with a one-click "Exit Sandbox" button.
+- **`RootAssumeSandboxPanel`**: Two-step confirmation UI for admins to switch identities.
+- **`SandboxNodeBindingPanel`**: Robust server-side binding management with immediate UI feedback and cross-browser sync.
 
 ## 4. Key Artifacts & Commits
-- **Primary Commit**: `33bd1b8b` (fix: Refine error reporting in agent sync and fix lints.)
-- **Main Entry Point**: `accounts.svc.plus/cmd/accountsvc/main.go`
-- **UI Logic**: `console.svc.plus/src/modules/extensions/builtin/user-center/management/components/SandboxNodeBindingPanel.tsx`
+- **Backend Fix (Panic)**: `97b7d64d` (fix: Remove redundant agent routes and handlers from main.go)
+- **Frontend Consolidation**: Integrated Root tools into `management.tsx` and updated `Header.tsx`.
 
 ## 5. Status
 - **Development**: Complete
-- **Build**: Passing (`go build` verified)
-- **Deployment**: Pushed to `origin main`
+- **Build**: All projects "Green" (verified via `go build` and `npm run build`)
+- **Deployment**: Verified stable on Cloud Run
