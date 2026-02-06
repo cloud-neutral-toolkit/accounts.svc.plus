@@ -1149,6 +1149,9 @@ func agentListNodesHandler(registry *agentserver.Registry) gin.HandlerFunc {
 		agents := registry.Agents()
 		nodes := make([]api.VlessNode, 0, len(agents))
 		for _, agent := range agents {
+			if agent.ID == "*" {
+				continue
+			}
 			nodes = append(nodes, api.VlessNode{
 				Name:    agent.Name,
 				Address: agent.ID,
