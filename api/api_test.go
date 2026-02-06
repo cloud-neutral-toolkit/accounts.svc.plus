@@ -1329,8 +1329,8 @@ func TestAdminUsersMetricsForbiddenForStandardUser(t *testing.T) {
 
 	RegisterRoutes(router, WithStore(st), WithEmailVerification(false), WithUserMetricsProvider(provider))
 
-	v := "s"
-	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	testPass := "scrubbed"
+	hashed, err := bcrypt.GenerateFromPassword([]byte(testPass), bcrypt.DefaultCost)
 	if err != nil {
 		t.Fatalf("failed to hash password: %v", err)
 	}
@@ -1349,7 +1349,7 @@ func TestAdminUsersMetricsForbiddenForStandardUser(t *testing.T) {
 
 	loginPayload := map[string]string{
 		"identifier": user.Email,
-		"password":   password,
+		"password":   testPass,
 	}
 	body, err := json.Marshal(loginPayload)
 	if err != nil {
@@ -1418,8 +1418,8 @@ func TestAdminUsersMetricsSuccess(t *testing.T) {
 
 	RegisterRoutes(router, WithStore(st), WithEmailVerification(false), WithUserMetricsProvider(provider))
 
-	v := "s"
-	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	testPass := "scrubbed"
+	hashed, err := bcrypt.GenerateFromPassword([]byte(testPass), bcrypt.DefaultCost)
 	if err != nil {
 		t.Fatalf("failed to hash password: %v", err)
 	}
@@ -1438,7 +1438,7 @@ func TestAdminUsersMetricsSuccess(t *testing.T) {
 
 	loginPayload := map[string]string{
 		"identifier": admin.Email,
-		"password":   password,
+		"password":   testPass,
 	}
 	body, err := json.Marshal(loginPayload)
 	if err != nil {
