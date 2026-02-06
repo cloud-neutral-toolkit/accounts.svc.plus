@@ -252,6 +252,10 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 		opt(h)
 	}
 
+	if h.tokenService != nil && h.store != nil {
+		h.tokenService.SetStore(h.store)
+	}
+
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})

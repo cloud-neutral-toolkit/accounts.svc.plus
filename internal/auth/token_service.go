@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"account/internal/store"
 )
 
 // TokenPair represents a pair of Public and Access tokens
@@ -32,6 +34,7 @@ type TokenService struct {
 	accessSecret  string
 	accessExpiry  time.Duration
 	refreshExpiry time.Duration
+	store         store.Store
 }
 
 // TokenConfig holds configuration for token service
@@ -41,6 +44,7 @@ type TokenConfig struct {
 	AccessSecret  string
 	AccessExpiry  time.Duration
 	RefreshExpiry time.Duration
+	Store         store.Store
 }
 
 // NewTokenService creates a new TokenService instance
@@ -51,7 +55,13 @@ func NewTokenService(config TokenConfig) *TokenService {
 		accessSecret:  config.AccessSecret,
 		accessExpiry:  config.AccessExpiry,
 		refreshExpiry: config.RefreshExpiry,
+		store:         config.Store,
 	}
+}
+
+// SetStore sets the store for the token service.
+func (s *TokenService) SetStore(st store.Store) {
+	s.store = st
 }
 
 // ValidatePublicToken validates the public token

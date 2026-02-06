@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -52,6 +53,7 @@ const (
 )
 
 // AuthMiddleware is a middleware that validates JWT access tokens
+// with a fallback to database-backed session tokens.
 func (s *TokenService) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var token string
@@ -74,24 +76,45 @@ func (s *TokenService) AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// 1. Try JWT validation first.
 		claims, err := s.ValidateAccessToken(token)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":  "invalid or expired token",
-				"detail": err.Error(),
-			})
-			c.Abort()
+		if err == nil {
+			// JWT is valid, populate context from claims.
+			ctx := context.WithValue(c.Request.Context(), userIDKey, claims.UserID)
+			ctx = context.WithValue(ctx, emailKey, claims.Email)
+			ctx = context.WithValue(ctx, rolesKey, claims.Roles)
+			ctx = context.WithValue(ctx, mfaKey, claims.MFA)
+			c.Request = c.Request.WithContext(ctx)
+			c.Next()
 			return
 		}
 
-		// Store claims in context
-		ctx := context.WithValue(c.Request.Context(), userIDKey, claims.UserID)
-		ctx = context.WithValue(ctx, emailKey, claims.Email)
-		ctx = context.WithValue(ctx, rolesKey, claims.Roles)
-		ctx = context.WithValue(ctx, mfaKey, claims.MFA)
-		c.Request = c.Request.WithContext(ctx)
+		// 2. Fallback to database session store if JWT fails and store is available.
+		if s.store != nil {
+			userID, expiresAt, err := s.store.GetSession(c.Request.Context(), token)
+			if err == nil && time.Now().Before(expiresAt) {
+				// Valid session found in store.
+				user, err := s.store.GetUserByID(c.Request.Context(), userID)
+				if err == nil {
+					ctx := context.WithValue(c.Request.Context(), userIDKey, user.ID)
+					ctx = context.WithValue(ctx, emailKey, user.Email)
+					ctx = context.WithValue(ctx, rolesKey, []string{user.Role})
+					// Assume MFA verified for active sessions found in DB for now,
+					// or we can refine this if session store tracks MFA state.
+					ctx = context.WithValue(ctx, mfaKey, true)
+					c.Request = c.Request.WithContext(ctx)
+					c.Next()
+					return
+				}
+			}
+		}
 
-		c.Next()
+		// Both JWT and Session lookups failed.
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":  "invalid or expired token",
+			"detail": "token could not be validated as JWT or session",
+		})
+		c.Abort()
 	}
 }
 
