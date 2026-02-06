@@ -23,4 +23,3 @@ func isInternalServiceRequest(c *gin.Context) bool {
 	}
 	return token == expected
 }
-

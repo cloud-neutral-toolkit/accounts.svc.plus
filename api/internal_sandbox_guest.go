@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -22,7 +23,7 @@ func (h *handler) internalSandboxGuest(c *gin.Context) {
 
 	user, err := h.store.GetUserByEmail(c.Request.Context(), sandboxUserEmail)
 	if err != nil {
-		if err == store.ErrUserNotFound {
+		if errors.Is(err, store.ErrUserNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "sandbox_missing"})
 			return
 		}
@@ -45,9 +46,8 @@ func (h *handler) internalSandboxGuest(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"email":             sandboxUserEmail,
-		"proxyUuid":         proxyUUID,
+		"email":              sandboxUserEmail,
+		"proxyUuid":          proxyUUID,
 		"proxyUuidExpiresAt": expiresAt,
 	})
 }
-
