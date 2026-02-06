@@ -23,6 +23,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
+	"account/internal/agentproto"
+	"account/internal/agentserver"
 	"account/internal/auth"
 	"account/internal/service"
 	"account/internal/store"
@@ -74,6 +76,11 @@ type handler struct {
 type agentRegistry interface {
 	IsSandboxAgent(agentID string) bool
 	SetSandboxAgent(agentID string, enabled bool)
+	ClearSandboxAgents()
+
+	Authenticate(token string) (*agentserver.Identity, bool)
+	RegisterAgent(agentID string, groups []string) agentserver.Identity
+	ReportStatus(agent agentserver.Identity, report agentproto.StatusReport)
 }
 
 type mfaChallenge struct {

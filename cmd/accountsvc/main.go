@@ -1150,29 +1150,6 @@ func registerAgentAPIRoutes(r *gin.Engine, registry *agentserver.Registry, sourc
 	group.Use(agentAuthMiddleware(registry))
 	group.GET("/users", agentListUsersHandler(registry, source, logger))
 	group.POST("/status", agentReportStatusHandler(registry, logger))
-	group.GET("/nodes", agentListNodesHandler(registry))
-}
-
-func agentListNodesHandler(registry *agentserver.Registry) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if registry == nil {
-			c.JSON(http.StatusOK, []interface{}{})
-			return
-		}
-
-		agents := registry.Agents()
-		nodes := make([]api.VlessNode, 0, len(agents))
-		for _, agent := range agents {
-			if agent.ID == "*" {
-				continue
-			}
-			nodes = append(nodes, api.VlessNode{
-				Name:    agent.Name,
-				Address: agent.ID,
-			})
-		}
-		c.JSON(http.StatusOK, nodes)
-	}
 }
 
 func agentAuthMiddleware(registry *agentserver.Registry) gin.HandlerFunc {
