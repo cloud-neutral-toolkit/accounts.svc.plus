@@ -145,49 +145,52 @@ func (h *handler) listAgentNodes(c *gin.Context) {
 		})
 	}
 
-	// Final safety for Sandbox: if no nodes are available, the UI will be blocked.
-	// We force the PublicURL as a fallback node if the nodes list is empty and it's a sandbox user.
-	if len(nodes) == 0 && strings.EqualFold(strings.TrimSpace(user.Email), sandboxUserEmail) {
+	// Final safety for Sandbox/Demo users: if no nodes are available, the UI will be blocked.
+	// We check for both sandbox@svc.plus and demo@svc.plus.
+	email := strings.ToLower(strings.TrimSpace(user.Email))
+	if len(nodes) == 0 && (email == sandboxUserEmail || email == "demo@svc.plus") {
 		host := normalizeHost(h.publicURL)
+		if host == "" {
+			host = normalizeHost(c.Request.Host)
+		}
 		if host == "" {
 			host = "accounts.svc.plus"
 		}
-		if host != "" {
-			nodeName := nodeNameForHost(host)
-			nodes = append(nodes, VlessNode{
-				Name:       nodeName,
-				Address:    host,
-				Port:       xhttpPort,
-				Users:      users,
-				Transport:  "xhttp",
-				Path:       xhttpPath,
-				Mode:       xhttpMode,
-				Security:   "tls",
-				Flow:       defaultTCPFlow,
-				ServerName: host,
-				XHTTPPort:  xhttpPort,
-				TCPPort:    tcpPort,
-				URISchemeXHTTP: renderVLESSURIScheme(xhttpScheme, map[string]string{
-					"UUID":   proxyUUID,
-					"DOMAIN": host,
-					"NODE":   host,
-					"PATH":   url.QueryEscape(xhttpPath),
-					"MODE":   url.QueryEscape(xhttpMode),
-					"SNI":    host,
-					"FP":     defaultTLSFP,
-					"TAG":    url.QueryEscape(nodeName),
-				}),
-				URISchemeTCP: renderVLESSURIScheme(tcpScheme, map[string]string{
-					"UUID":   proxyUUID,
-					"DOMAIN": host,
-					"NODE":   host,
-					"SNI":    host,
-					"FP":     defaultTLSFP,
-					"FLOW":   defaultTCPFlow,
-					"TAG":    url.QueryEscape(nodeName),
-				}),
-			})
-		}
+
+		nodeName := nodeNameForHost(host)
+		nodes = append(nodes, VlessNode{
+			Name:       nodeName,
+			Address:    host,
+			Port:       xhttpPort,
+			Users:      users,
+			Transport:  "xhttp",
+			Path:       xhttpPath,
+			Mode:       xhttpMode,
+			Security:   "tls",
+			Flow:       defaultTCPFlow,
+			ServerName: host,
+			XHTTPPort:  xhttpPort,
+			TCPPort:    tcpPort,
+			URISchemeXHTTP: renderVLESSURIScheme(xhttpScheme, map[string]string{
+				"UUID":   proxyUUID,
+				"DOMAIN": host,
+				"NODE":   host,
+				"PATH":   url.QueryEscape(xhttpPath),
+				"MODE":   url.QueryEscape(xhttpMode),
+				"SNI":    host,
+				"FP":     defaultTLSFP,
+				"TAG":    url.QueryEscape(nodeName),
+			}),
+			URISchemeTCP: renderVLESSURIScheme(tcpScheme, map[string]string{
+				"UUID":   proxyUUID,
+				"DOMAIN": host,
+				"NODE":   host,
+				"SNI":    host,
+				"FP":     defaultTLSFP,
+				"FLOW":   defaultTCPFlow,
+				"TAG":    url.QueryEscape(nodeName),
+			}),
+		})
 	}
 
 	c.JSON(http.StatusOK, nodes)
@@ -283,7 +286,7 @@ func parseProxyNodeHosts(publicURL string, extraHosts []string) []string {
 
 func normalizeHost(raw string) string {
 	value := strings.TrimSpace(raw)
-	if value == "" {
+	if value == "" || value == "*" {
 		return ""
 	}
 
