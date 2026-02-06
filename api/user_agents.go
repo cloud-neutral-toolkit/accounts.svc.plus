@@ -145,6 +145,51 @@ func (h *handler) listAgentNodes(c *gin.Context) {
 		})
 	}
 
+	// Final safety for Sandbox: if no nodes are available, the UI will be blocked.
+	// We force the PublicURL as a fallback node if the nodes list is empty and it's a sandbox user.
+	if len(nodes) == 0 && strings.EqualFold(strings.TrimSpace(user.Email), sandboxUserEmail) {
+		host := normalizeHost(h.publicURL)
+		if host == "" {
+			host = "accounts.svc.plus"
+		}
+		if host != "" {
+			nodeName := nodeNameForHost(host)
+			nodes = append(nodes, VlessNode{
+				Name:       nodeName,
+				Address:    host,
+				Port:       xhttpPort,
+				Users:      users,
+				Transport:  "xhttp",
+				Path:       xhttpPath,
+				Mode:       xhttpMode,
+				Security:   "tls",
+				Flow:       defaultTCPFlow,
+				ServerName: host,
+				XHTTPPort:  xhttpPort,
+				TCPPort:    tcpPort,
+				URISchemeXHTTP: renderVLESSURIScheme(xhttpScheme, map[string]string{
+					"UUID":   proxyUUID,
+					"DOMAIN": host,
+					"NODE":   host,
+					"PATH":   url.QueryEscape(xhttpPath),
+					"MODE":   url.QueryEscape(xhttpMode),
+					"SNI":    host,
+					"FP":     defaultTLSFP,
+					"TAG":    url.QueryEscape(nodeName),
+				}),
+				URISchemeTCP: renderVLESSURIScheme(tcpScheme, map[string]string{
+					"UUID":   proxyUUID,
+					"DOMAIN": host,
+					"NODE":   host,
+					"SNI":    host,
+					"FP":     defaultTLSFP,
+					"FLOW":   defaultTCPFlow,
+					"TAG":    url.QueryEscape(nodeName),
+				}),
+			})
+		}
+	}
+
 	c.JSON(http.StatusOK, nodes)
 }
 
@@ -226,6 +271,11 @@ func parseProxyNodeHosts(publicURL string, extraHosts []string) []string {
 
 	if len(hosts) == 0 {
 		appendHost(publicURL)
+	}
+
+	// Last resort fallback
+	if len(hosts) == 0 {
+		appendHost("accounts.svc.plus")
 	}
 
 	return hosts

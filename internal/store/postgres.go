@@ -491,9 +491,9 @@ func (s *postgresStore) UpdateUser(ctx context.Context, user *User) error {
 		args = append(args, user.Active)
 		idx++
 	}
-	if caps.hasProxyUUID {
+	if caps.hasProxyUUID && user.ProxyUUID != "" {
 		builder.WriteString(fmt.Sprintf(", proxy_uuid = $%d", idx))
-		args = append(args, nullForEmpty(user.ProxyUUID))
+		args = append(args, user.ProxyUUID)
 		idx++
 	}
 	if caps.hasProxyUUIDExpiresAt {
