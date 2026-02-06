@@ -175,4 +175,8 @@ func registerAdminRoutes(group *gin.RouterGroup, h *handler) {
 	admin.GET("/blacklist", h.listBlacklist)
 	admin.POST("/blacklist", h.addToBlacklist)
 	admin.DELETE("/blacklist/:email", h.removeFromBlacklist)
+
+	// Sandbox mode
+	admin.GET("/sandbox/binding", h.getSandboxBinding)
+	admin.POST("/sandbox/bind", h.bindSandboxNode)
 }

@@ -642,9 +642,23 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		MaxIdleConns: cfg.Store.MaxIdleConns,
 	}
 
-	st, cleanup, err := store.New(ctx, storeCfg)
+	// Initialize business store with retries to account for sidecar startup
+	var st store.Store
+	var cleanup func(context.Context) error
+	var err error
+	for i := 0; i < 15; i++ {
+		st, cleanup, err = store.New(ctx, storeCfg)
+		if err == nil {
+			break
+		}
+		if storeCfg.Driver == "" || storeCfg.Driver == "memory" {
+			return err
+		}
+		slog.Warn("retrying business store connection...", "attempt", i+1, "err", err)
+		time.Sleep(2 * time.Second)
+	}
 	if err != nil {
-		return err
+		return fmt.Errorf("business store connection failed after sidecar wait: %w", err)
 	}
 	defer func() {
 		if cleanup == nil {
@@ -1355,19 +1369,30 @@ func openAdminSettingsDB(cfg config.Store) (*gorm.DB, func(context.Context) erro
 		db  *gorm.DB
 		err error
 	)
-	switch driver {
-	case "", "memory":
-		db, err = gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
-	case "postgres", "postgresql", "pgx":
-		if strings.TrimSpace(cfg.DSN) == "" {
-			return nil, nil, errors.New("admin settings database requires a dsn")
+	for i := 0; i < 15; i++ {
+		switch driver {
+		case "", "memory":
+			db, err = gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+		case "postgres", "postgresql", "pgx":
+			if strings.TrimSpace(cfg.DSN) == "" {
+				return nil, nil, errors.New("admin settings database requires a dsn")
+			}
+			db, err = gorm.Open(postgres.Open(cfg.DSN), &gorm.Config{})
+		default:
+			return nil, nil, fmt.Errorf("unsupported admin settings driver %q", cfg.Driver)
 		}
-		db, err = gorm.Open(postgres.Open(cfg.DSN), &gorm.Config{})
-	default:
-		return nil, nil, fmt.Errorf("unsupported admin settings driver %q", cfg.Driver)
+
+		if err == nil {
+			break
+		}
+		if driver == "" || driver == "memory" {
+			return nil, nil, err
+		}
+		slog.Warn("retrying admin settings db connection...", "attempt", i+1, "err", err)
+		time.Sleep(2 * time.Second)
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("admin settings db connection failed after sidecar wait: %w", err)
 	}
 
 	if err := db.AutoMigrate(&model.AdminSetting{}, &model.SandboxBinding{}); err != nil {

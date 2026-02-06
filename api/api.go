@@ -308,9 +308,6 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.POST("/admin/blacklist", h.addToBlacklist)
 	authProtected.DELETE("/admin/blacklist/:email", h.removeFromBlacklist)
 
-	authProtected.GET("/admin/sandbox/binding", h.getSandboxBinding)
-	authProtected.POST("/admin/sandbox/bind", h.bindSandboxNode)
-
 	authProtected.GET("/users", h.listUsers)
 
 	// Internal routes for service-to-service reads.
