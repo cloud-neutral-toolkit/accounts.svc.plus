@@ -70,6 +70,7 @@ func Run(ctx context.Context, opts Options) error {
 		Timeout:            httpTimeout,
 		InsecureSkipVerify: opts.Agent.TLS.InsecureSkipVerify,
 		UserAgent:          buildUserAgent(opts.Agent.ID),
+		AgentID:            opts.Agent.ID,
 	})
 	if err != nil {
 		return err
@@ -146,7 +147,7 @@ func Run(ctx context.Context, opts Options) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runStatusReporter(reporterCtx, client, tracker, statusInterval, syncInterval, logger)
+		runStatusReporter(reporterCtx, client, tracker, statusInterval, syncInterval, opts.Agent.ID, logger)
 	}()
 
 	<-ctx.Done()
@@ -163,13 +164,13 @@ func buildUserAgent(id string) string {
 	return fmt.Sprintf("xcontrol-agent/%s", id)
 }
 
-func runStatusReporter(ctx context.Context, client *Client, tracker *syncTracker, interval, syncInterval time.Duration, logger *slog.Logger) {
+func runStatusReporter(ctx context.Context, client *Client, tracker *syncTracker, interval, syncInterval time.Duration, agentID string, logger *slog.Logger) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	send := func() {
 		snapshot := tracker.Snapshot()
-		report := buildStatusReport(snapshot, syncInterval)
+		report := buildStatusReport(snapshot, syncInterval, agentID)
 		if err := client.ReportStatus(ctx, report); err != nil {
 			logger.Warn("failed to report agent status", "err", err)
 		}
@@ -187,7 +188,7 @@ func runStatusReporter(ctx context.Context, client *Client, tracker *syncTracker
 	}
 }
 
-func buildStatusReport(snapshot trackerSnapshot, syncInterval time.Duration) agentproto.StatusReport {
+func buildStatusReport(snapshot trackerSnapshot, syncInterval time.Duration, agentID string) agentproto.StatusReport {
 	healthy := snapshot.LastError == "" && !snapshot.LastSuccess.IsZero()
 
 	running := false
@@ -199,6 +200,7 @@ func buildStatusReport(snapshot trackerSnapshot, syncInterval time.Duration) age
 	}
 
 	report := agentproto.StatusReport{
+		AgentID:      strings.TrimSpace(agentID),
 		Healthy:      healthy,
 		Message:      snapshot.LastError,
 		Users:        snapshot.Clients,

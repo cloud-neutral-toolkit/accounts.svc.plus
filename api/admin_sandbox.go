@@ -86,14 +86,8 @@ func (h *handler) bindSandboxNode(c *gin.Context) {
 
 	// Update the in-memory registry if available
 	if h.agentRegistry != nil {
-		// This should ideally be handled by a more robust event system,
-		// but since it's a single instance (usually), we can just clear and reset.
-		// For now, let's assume the registry will reload if we trigger it or we just set it here.
-		// Wait, Registry needs to know ALL sandbox agents.
-		// I'll update the registry's internal state.
-
-		// First reset all sandbox flags (not supported by current Registry API, let's just set the new one)
-		// TODO: Implement ClearSandboxAgents in Registry
+		// Enforce 1-to-1 binding: clear then set.
+		h.agentRegistry.ClearSandboxAgents()
 		if agentID != "" {
 			h.agentRegistry.SetSandboxAgent(agentID, true)
 		}

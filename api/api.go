@@ -315,6 +315,18 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.POST("/admin/blacklist", h.addToBlacklist)
 	authProtected.DELETE("/admin/blacklist/:email", h.removeFromBlacklist)
 
+	// Sandbox node binding (root-only via permissions guard).
+	authProtected.GET("/admin/sandbox/binding", h.getSandboxBinding)
+	authProtected.POST("/admin/sandbox/bind", h.bindSandboxNode)
+
+	// Public read of sandbox binding for demo/sandbox user experience.
+	authProtected.GET("/sandbox/binding", h.getSandboxBindingPublic)
+
+	// Root-only identity switch to sandbox@svc.plus (hard-coded allowlist).
+	authProtected.POST("/admin/assume", h.adminAssume)
+	authProtected.POST("/admin/assume/revert", h.adminAssumeRevert)
+	authProtected.GET("/admin/assume/status", h.adminAssumeStatus)
+
 	authProtected.GET("/users", h.listUsers)
 
 	// Internal routes for service-to-service reads.
@@ -335,6 +347,8 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	// stay outside token middleware to support dashboard session tokens.
 	agentServerGroup := r.Group("/api/agent-server/v1")
 	agentServerGroup.GET("/nodes", h.listAgentNodes)
+	agentServerGroup.GET("/users", h.listAgentUsers)
+	agentServerGroup.POST("/status", h.reportAgentStatus)
 
 	// Legacy alias kept for backward compatibility.
 	agentGroup := r.Group("/api/agent")
@@ -992,6 +1006,13 @@ func (h *handler) login(c *gin.Context) {
 		return
 	}
 
+	// Sandbox user is not allowed to login by password/totp.
+	// Root can only assume into sandbox via the admin assume endpoint.
+	if strings.EqualFold(strings.TrimSpace(user.Email), sandboxUserEmail) {
+		respondError(c, http.StatusForbidden, "sandbox_no_login", "sandbox login is disabled")
+		return
+	}
+
 	if password != "" {
 		if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
 			respondError(c, http.StatusUnauthorized, "invalid_credentials", "invalid credentials")
@@ -1215,6 +1236,11 @@ func (h *handler) session(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load session user"})
 		return
+	}
+
+	// Sandbox UUID rotates hourly; refresh on session reads so the UI always sees a valid UUID.
+	if err := h.ensureSandboxProxyUUID(c.Request.Context(), user); err != nil {
+		slog.Warn("failed to rotate sandbox proxy uuid", "err", err, "userID", user.ID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"user": sanitizeUser(user, nil)})
@@ -2658,7 +2684,9 @@ func (h *handler) isReadOnlyAccount(user *store.User) bool {
 	}
 	name := strings.TrimSpace(user.Name)
 	email := strings.TrimSpace(user.Email)
-	if strings.EqualFold(name, "demo") || strings.EqualFold(email, "demo@svc.plus") {
+	if strings.EqualFold(name, "demo") ||
+		strings.EqualFold(email, "demo@svc.plus") ||
+		strings.EqualFold(email, sandboxUserEmail) {
 		return true
 	}
 	for _, group := range user.Groups {

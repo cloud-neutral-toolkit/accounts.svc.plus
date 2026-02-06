@@ -63,11 +63,23 @@ func (h *handler) listAgentNodes(c *gin.Context) {
 	}
 
 	if user.ProxyUUIDExpiresAt != nil && time.Now().UTC().After(*user.ProxyUUIDExpiresAt) {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error":   "proxy_uuid_expired",
-			"message": "proxy access has expired, please renew",
-		})
-		return
+		// Sandbox rotates hourly; never block it on expiry.
+		if strings.EqualFold(strings.TrimSpace(user.Email), sandboxUserEmail) {
+			if err := h.ensureSandboxProxyUUID(c.Request.Context(), user); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "sandbox_uuid_rotation_failed"})
+				return
+			}
+			proxyUUID = strings.TrimSpace(user.ProxyUUID)
+			if proxyUUID == "" {
+				proxyUUID = user.ID
+			}
+		} else {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":   "proxy_uuid_expired",
+				"message": "proxy access has expired, please renew",
+			})
+			return
+		}
 	}
 
 	// Add panic recovery for this handler

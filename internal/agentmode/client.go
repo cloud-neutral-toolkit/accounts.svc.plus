@@ -22,6 +22,7 @@ type ClientOptions struct {
 	Timeout            time.Duration
 	InsecureSkipVerify bool
 	UserAgent          string
+	AgentID            string
 }
 
 // Client issues authenticated requests against the controller.
@@ -30,6 +31,7 @@ type Client struct {
 	token     string
 	http      *http.Client
 	userAgent string
+	agentID   string
 }
 
 // NewClient constructs a client for the provided controller URL and token.
@@ -73,12 +75,14 @@ func NewClient(baseURL, token string, opts ClientOptions) (*Client, error) {
 	if userAgent == "" {
 		userAgent = "xcontrol-agent"
 	}
+	agentID := strings.TrimSpace(opts.AgentID)
 
 	return &Client{
 		baseURL:   parsed,
 		token:     token,
 		http:      client,
 		userAgent: userAgent,
+		agentID:   agentID,
 	}, nil
 }
 
@@ -148,4 +152,7 @@ func (c *Client) ReportStatus(ctx context.Context, report agentproto.StatusRepor
 func (c *Client) applyHeaders(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("User-Agent", c.userAgent)
+	if c.agentID != "" {
+		req.Header.Set("X-Agent-ID", c.agentID)
+	}
 }
