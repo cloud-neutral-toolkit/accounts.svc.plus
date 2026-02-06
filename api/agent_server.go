@@ -85,6 +85,26 @@ func (h *handler) listAgentUsers(c *gin.Context) {
 		return
 	}
 
+	// Default demo behaviour: the special sandbox user is available on all nodes/regions.
+	// This keeps the Guest/Demo experience consistent even when the user switches regions.
+	// It is safe because sandbox@svc.plus is a read-only demo identity with a rotating proxy UUID.
+	if h.store != nil {
+		if sandboxUser, err := h.store.GetUserByEmail(c.Request.Context(), sandboxUserEmail); err == nil && sandboxUser != nil {
+			_ = h.ensureSandboxProxyUUID(c.Request.Context(), sandboxUser)
+			uuid := strings.TrimSpace(sandboxUser.ProxyUUID)
+			if uuid == "" {
+				uuid = strings.TrimSpace(sandboxUser.ID)
+			}
+			if uuid != "" {
+				clients = append(clients, xrayconfig.Client{
+					ID:    uuid,
+					Email: sandboxUserEmail,
+					Flow:  xrayconfig.DefaultFlow,
+				})
+			}
+		}
+	}
+
 	users, err := h.store.ListUsers(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "list_users_failed"})
