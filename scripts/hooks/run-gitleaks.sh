@@ -6,7 +6,8 @@
 MODE=${1:-staged}
 GITLEAKS_BIN=${GITLEAKS_BIN:-gitleaks}
 GITLEAKS_CONFIG=${GITLEAKS_CONFIG:-config/gitleaks.toml}
-GITLEAKS_REPORT_DIR=${GITLEAKS_REPORT_DIR:-.git/gitleaks}
+# Default to /tmp (some environments forbid writing under the repo or `.git/`).
+GITLEAKS_REPORT_DIR=${GITLEAKS_REPORT_DIR:-/tmp/gitleaks-accounts.svc.plus}
 REPORT_PATH="$GITLEAKS_REPORT_DIR/report.json"
 
 # Check if gitleaks is installed
