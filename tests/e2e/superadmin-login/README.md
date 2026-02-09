@@ -20,13 +20,13 @@ make integration-test
 或直接运行脚本：
 
 ```bash
-bash integration-test/superadmin-login/run-test-scripts.sh
+bash tests/e2e/superadmin-login/run-test-scripts.sh
 ```
 
 ## API 自动化测试
 
 ```bash
-bash integration-test/superadmin-login/api-test.sh
+bash tests/e2e/superadmin-login/api-test.sh
 ```
 
 可选环境变量：
@@ -38,7 +38,7 @@ bash integration-test/superadmin-login/api-test.sh
 ## UI 自动化测试（Playwright）
 
 ```bash
-bash integration-test/superadmin-login/ui-test.sh
+bash tests/e2e/superadmin-login/ui-test.sh
 ```
 
 可选环境变量：
