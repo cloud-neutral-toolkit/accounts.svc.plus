@@ -82,14 +82,6 @@ func (h *handler) listAgentUsers(c *gin.Context) {
 			continue
 		}
 
-		// Default behavior: only sync eligible (active, verified, non-expired) users.
-		if !u.EmailVerified {
-			continue
-		}
-		if u.ProxyUUIDExpiresAt != nil && now.After(*u.ProxyUUIDExpiresAt) {
-			continue
-		}
-
 		id := strings.TrimSpace(u.ProxyUUID)
 		if id == "" {
 			id = strings.TrimSpace(u.ID)

@@ -140,11 +140,11 @@ func TestAgentServerUsers_DefaultSyncIncludesSandboxAndRegularUsers(t *testing.T
 		t.Fatalf("create sandbox user: %v", err)
 	}
 
-	// normal user
+	// normal user (not verified + expired) should still be synced by default.
 	if err := st.CreateUser(ctx, &store.User{
 		Name:          "User",
 		Email:         "user@example.com",
-		EmailVerified: true,
+		EmailVerified: false,
 		Role:          store.RoleUser,
 		Level:         store.LevelUser,
 		Active:        true,
@@ -152,12 +152,12 @@ func TestAgentServerUsers_DefaultSyncIncludesSandboxAndRegularUsers(t *testing.T
 		t.Fatalf("create normal user: %v", err)
 	}
 
-	// Ensure normal user has a non-expired proxy UUID.
+	// Ensure normal user is "expired" per proxy UUID expiry metadata.
 	normal, err := st.GetUserByEmail(ctx, "user@example.com")
 	if err != nil {
 		t.Fatalf("get normal user: %v", err)
 	}
-	exp := time.Now().UTC().Add(24 * time.Hour)
+	exp := time.Now().UTC().Add(-24 * time.Hour)
 	normal.ProxyUUIDExpiresAt = &exp
 	if err := st.UpdateUser(ctx, normal); err != nil {
 		t.Fatalf("update normal user: %v", err)
