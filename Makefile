@@ -174,7 +174,7 @@ create-super-admin:
 	@bash scripts/create-super-admin.sh
 
 integration-test:
-	@bash integration-test/superadmin-login/run-test-scripts.sh
+	@bash tests/e2e/superadmin-login/run-test-scripts.sh
 
 # =========================================
 # ⚙️ 编译与运行
