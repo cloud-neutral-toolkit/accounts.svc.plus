@@ -1,5 +1,6 @@
 .env
 account.log
+accountsvc.log
 models/
 pg_jieba/
 hf_cache/
