@@ -47,12 +47,6 @@ const (
 )
 
 const (
-	demoUsername = "Demo"
-	demoPassword = "Demo"
-	demoEmail    = "demo@svc.plus"
-	demoGroup    = "ReadOnly Role"
-	demoUUIDTTL  = time.Hour
-
 	rootUsername             = "admin"
 	rootBootstrapPasswordEnv = "ROOT_BOOTSTRAP_PASSWORD"
 )
@@ -121,114 +115,31 @@ func (a *metricsAdapter) FetchSubscriptionStates(ctx context.Context, userIDs []
 	return states, nil
 }
 
-func ensureDemoUser(ctx context.Context, st store.Store, logger *slog.Logger) error {
-	demoUser, err := findDemoUser(ctx, st)
-	if err != nil {
-		return err
-	}
-
-	hashed, err := bcrypt.GenerateFromPassword([]byte(demoPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return fmt.Errorf("hash demo password: %w", err)
-	}
-
-	expiresAt := time.Now().UTC().Add(demoUUIDTTL)
-	if demoUser == nil {
-		user := &store.User{
-			Name:               demoUsername,
-			Email:              demoEmail,
-			EmailVerified:      true,
-			PasswordHash:       string(hashed),
-			MFATOTPSecret:      "",
-			MFAEnabled:         false,
-			MFASecretIssuedAt:  time.Time{},
-			MFAConfirmedAt:     time.Time{},
-			Level:              store.LevelUser,
-			Role:               store.RoleReadOnly,
-			Groups:             []string{demoGroup},
-			Permissions:        []string{},
-			Active:             true,
-			ProxyUUID:          uuid.NewString(),
-			ProxyUUIDExpiresAt: &expiresAt,
-		}
-		if err := st.CreateUser(ctx, user); err != nil {
-			return fmt.Errorf("create demo user: %w", err)
-		}
-		if logger != nil {
-			logger.Info("demo read-only user created", "username", demoUsername, "email", demoEmail)
-		}
-		return nil
-	}
-
-	demoUser.Name = demoUsername
-	demoUser.Email = demoEmail
-	demoUser.EmailVerified = true
-	demoUser.PasswordHash = string(hashed)
-	demoUser.MFATOTPSecret = ""
-	demoUser.MFAEnabled = false
-	demoUser.MFASecretIssuedAt = time.Time{}
-	demoUser.MFAConfirmedAt = time.Time{}
-	demoUser.Level = store.LevelUser
-	demoUser.Role = store.RoleReadOnly
-	demoUser.Groups = []string{demoGroup}
-	demoUser.Permissions = []string{}
-	demoUser.Active = true
-	demoUser.ProxyUUID = uuid.NewString()
-	demoUser.ProxyUUIDExpiresAt = &expiresAt
-	if err := st.UpdateUser(ctx, demoUser); err != nil {
-		return fmt.Errorf("update demo user: %w", err)
-	}
-	if logger != nil {
-		logger.Info("demo read-only user ensured", "username", demoUsername, "email", demoEmail)
-	}
-	return nil
-}
-
-func findDemoUser(ctx context.Context, st store.Store) (*store.User, error) {
-	userByName, errByName := st.GetUserByName(ctx, demoUsername)
-	if errByName != nil && !errors.Is(errByName, store.ErrUserNotFound) {
-		return nil, fmt.Errorf("get demo by name: %w", errByName)
-	}
-	userByEmail, errByEmail := st.GetUserByEmail(ctx, demoEmail)
-	if errByEmail != nil && !errors.Is(errByEmail, store.ErrUserNotFound) {
-		return nil, fmt.Errorf("get demo by email: %w", errByEmail)
-	}
-
-	if userByName != nil && userByEmail != nil && userByName.ID != userByEmail.ID {
-		return nil, fmt.Errorf("demo account conflict: username %q and email %q belong to different users", demoUsername, demoEmail)
-	}
-	if userByName != nil {
-		return userByName, nil
-	}
-	if userByEmail != nil {
-		return userByEmail, nil
-	}
-	return nil, nil
-}
-
 func ensureSandboxUser(ctx context.Context, st store.Store, logger *slog.Logger) error {
 	sandboxUser, err := st.GetUserByEmail(ctx, SandboxEmail)
 	if err != nil && !errors.Is(err, store.ErrUserNotFound) {
 		return fmt.Errorf("lookup sandbox user: %w", err)
 	}
 
-	if sandboxUser == nil {
-		hashed, err := bcrypt.GenerateFromPassword([]byte(uuid.NewString()), bcrypt.DefaultCost)
-		if err != nil {
-			return fmt.Errorf("hash sandbox password: %w", err)
-		}
+	hashed, err := bcrypt.GenerateFromPassword([]byte("Sandbox123!"), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash sandbox password: %w", err)
+	}
 
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	if sandboxUser == nil {
 		user := &store.User{
-			Name:          "Sandbox",
-			Email:         SandboxEmail,
-			EmailVerified: true,
-			PasswordHash:  string(hashed),
-			Level:         store.LevelUser,
-			Role:          store.RoleUser,
-			Groups:        []string{"User", "Sandbox"},
-			Permissions:   []string{},
-			Active:        true,
-			ProxyUUID:     uuid.NewString(),
+			Name:               "Sandbox",
+			Email:              SandboxEmail,
+			EmailVerified:      true,
+			PasswordHash:       string(hashed),
+			Level:              store.LevelUser,
+			Role:               store.RoleReadOnly,
+			Groups:             []string{"User", "Sandbox", "ReadOnly Role"},
+			Permissions:        []string{},
+			Active:             true,
+			ProxyUUID:          uuid.NewString(),
+			ProxyUUIDExpiresAt: &expiresAt,
 		}
 		if err := st.CreateUser(ctx, user); err != nil {
 			return fmt.Errorf("create sandbox user: %w", err)
@@ -237,26 +148,35 @@ func ensureSandboxUser(ctx context.Context, st store.Store, logger *slog.Logger)
 			logger.Info("sandbox experience user created", "email", SandboxEmail)
 		}
 	} else {
-		// Ensure sandbox user is active and has a proxy uuid
-		changed := false
-		if !sandboxUser.Active {
-			sandboxUser.Active = true
-			changed = true
+		// Ensure sandbox user is active and has properties aligned with experience mode
+		sandboxUser.Name = "Sandbox"
+		sandboxUser.Active = true
+		sandboxUser.Role = store.RoleReadOnly
+		if !containsCaseInsensitive(sandboxUser.Groups, "Sandbox") {
+			sandboxUser.Groups = append(sandboxUser.Groups, "Sandbox")
 		}
+		if !containsCaseInsensitive(sandboxUser.Groups, "ReadOnly Role") {
+			sandboxUser.Groups = append(sandboxUser.Groups, "ReadOnly Role")
+		}
+
 		if sandboxUser.ProxyUUID == "" {
 			sandboxUser.ProxyUUID = uuid.NewString()
-			changed = true
 		}
-		if changed {
-			if err := st.UpdateUser(ctx, sandboxUser); err != nil {
-				return fmt.Errorf("update sandbox user: %w", err)
-			}
+		if sandboxUser.ProxyUUIDExpiresAt == nil {
+			sandboxUser.ProxyUUIDExpiresAt = &expiresAt
+		}
+
+		if err := st.UpdateUser(ctx, sandboxUser); err != nil {
+			return fmt.Errorf("update sandbox user: %w", err)
+		}
+		if logger != nil {
+			logger.Info("sandbox experience user ensured", "email", SandboxEmail)
 		}
 	}
 	return nil
 }
 
-func startDemoUUIDRotator(ctx context.Context, st store.Store, logger *slog.Logger) {
+func startSandboxUUIDRotator(ctx context.Context, st store.Store, logger *slog.Logger) {
 	go func() {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
@@ -266,31 +186,31 @@ func startDemoUUIDRotator(ctx context.Context, st store.Store, logger *slog.Logg
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				user, err := findDemoUser(context.Background(), st)
+				user, err := st.GetUserByEmail(context.Background(), SandboxEmail)
 				if err != nil {
 					if logger != nil {
-						logger.Warn("demo uuid rotation skipped: lookup failed", "err", err)
+						logger.Warn("sandbox uuid rotation skipped: lookup failed", "err", err)
 					}
 					continue
 				}
 				if user == nil {
-					if err := ensureDemoUser(context.Background(), st, logger); err != nil && logger != nil {
-						logger.Warn("demo uuid rotation failed to recreate user", "err", err)
+					if err := ensureSandboxUser(context.Background(), st, logger); err != nil && logger != nil {
+						logger.Warn("sandbox uuid rotation failed to recreate user", "err", err)
 					}
 					continue
 				}
 
-				expiresAt := time.Now().UTC().Add(demoUUIDTTL)
+				expiresAt := time.Now().UTC().Add(time.Hour)
 				user.ProxyUUID = uuid.NewString()
 				user.ProxyUUIDExpiresAt = &expiresAt
 				if err := st.UpdateUser(context.Background(), user); err != nil {
 					if logger != nil {
-						logger.Warn("demo uuid rotation failed", "err", err)
+						logger.Warn("sandbox uuid rotation failed", "err", err)
 					}
 					continue
 				}
 				if logger != nil {
-					logger.Info("demo uuid rotated", "userID", user.ID, "expiresAt", expiresAt)
+					logger.Info("sandbox uuid rotated", "userID", user.ID, "expiresAt", expiresAt)
 				}
 			}
 		}
@@ -672,13 +592,10 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		return err
 	}
 
-	if err := ensureDemoUser(ctx, st, logger); err != nil {
-		return err
-	}
 	if err := ensureSandboxUser(ctx, st, logger); err != nil {
 		logger.Warn("failed to ensure sandbox user", "err", err)
 	}
-	startDemoUUIDRotator(ctx, st, logger)
+	startSandboxUUIDRotator(ctx, st, logger)
 
 	var emailSender api.EmailSender
 	emailVerificationEnabled := true

@@ -145,10 +145,9 @@ func (h *handler) listAgentNodes(c *gin.Context) {
 		})
 	}
 
-	// Final safety for Sandbox/Demo users: if no nodes are available, the UI will be blocked.
-	// We check for both sandbox@svc.plus and demo@svc.plus.
+	// Final safety for Sandbox: if no nodes are available, the UI will be blocked.
 	email := strings.ToLower(strings.TrimSpace(user.Email))
-	if len(nodes) == 0 && (email == sandboxUserEmail || email == "demo@svc.plus") {
+	if len(nodes) == 0 && email == sandboxUserEmail {
 		host := normalizeHost(h.publicURL)
 		if host == "" {
 			host = normalizeHost(c.Request.Host)
