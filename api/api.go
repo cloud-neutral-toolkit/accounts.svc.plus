@@ -2730,10 +2730,9 @@ func (h *handler) isReadOnlyAccount(user *store.User) bool {
 		}
 	}
 
-	// Standard Demo/Sandbox users are always read-only
+	// Standard Sandbox users are always read-only
 	name := strings.TrimSpace(user.Name)
-	if strings.EqualFold(name, "demo") ||
-		email == "demo@svc.plus" ||
+	if strings.EqualFold(name, "sandbox") ||
 		strings.EqualFold(email, sandboxUserEmail) {
 		return true
 	}
