@@ -64,7 +64,7 @@ out/
 target/
 xcontrol-account
 account-export.yaml
-accountsvc
+/accountsvc
 
 # Security tooling reports
 .gitleaks/
