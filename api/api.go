@@ -267,6 +267,7 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authGroup.POST("/register/send", h.sendEmailVerification)
 
 	authGroup.POST("/login", h.login)
+	authGroup.POST("/mfa/verify", h.verifyMFALogin)
 
 	// Token exchange endpoint - converts public token to access/refresh tokens
 	authGroup.POST("/token/exchange", h.exchangeToken)
@@ -277,8 +278,11 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 
 	// Token refresh endpoint - generates new access token using refresh token
 	authGroup.POST("/token/refresh", h.refreshToken)
+	authGroup.POST("/refresh", h.refreshToken)
 
 	authGroup.GET("/mfa/status", h.mfaStatus)
+	authGroup.GET("/sync/config", h.syncConfigSnapshot)
+	authGroup.POST("/sync/ack", h.syncConfigAck)
 
 	// Sandbox binding read endpoint.
 	// Used by the Console Guest/Demo experience. Must be readable either via a
@@ -1057,7 +1061,22 @@ func (h *handler) login(c *gin.Context) {
 
 	if user.MFAEnabled {
 		if totpCode == "" {
-			respondError(c, http.StatusBadRequest, "mfa_code_required", "totp code is required")
+			mfaTicket, err := h.createMFAChallenge(user.ID)
+			if err != nil {
+				respondError(c, http.StatusInternalServerError, "mfa_challenge_creation_failed", "failed to create mfa challenge")
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"message":      "mfa required",
+				"mfaRequired":  true,
+				"mfa_required": true,
+				"mfaMethod":    "totp",
+				"mfa_method":   "totp",
+				"mfaTicket":    mfaTicket,
+				"mfa_ticket":   mfaTicket,
+				// Kept for backward compatibility with existing clients.
+				"mfaToken": mfaTicket,
+			})
 			return
 		}
 
@@ -1085,10 +1104,14 @@ func (h *handler) login(c *gin.Context) {
 		h.setSessionCookie(c, token, expiresAt)
 
 		c.JSON(http.StatusOK, gin.H{
-			"message":   "login successful",
-			"token":     token,
-			"expiresAt": expiresAt.UTC(),
-			"user":      sanitizeUser(user, nil),
+			"message":      "login successful",
+			"token":        token,
+			"access_token": token,
+			"expiresAt":    expiresAt.UTC(),
+			"expires_in":   int64(time.Until(expiresAt).Seconds()),
+			"mfaRequired":  false,
+			"mfa_required": false,
+			"user":         sanitizeUser(user, nil),
 		})
 		return
 	}
@@ -1102,10 +1125,14 @@ func (h *handler) login(c *gin.Context) {
 	h.setSessionCookie(c, token, expiresAt)
 
 	response := gin.H{
-		"message":   "login successful",
-		"token":     token,
-		"expiresAt": expiresAt.UTC(),
-		"user":      sanitizeUser(user, nil),
+		"message":      "login successful",
+		"token":        token,
+		"access_token": token,
+		"expiresAt":    expiresAt.UTC(),
+		"expires_in":   int64(time.Until(expiresAt).Seconds()),
+		"mfaRequired":  false,
+		"mfa_required": false,
+		"user":         sanitizeUser(user, nil),
 	}
 
 	if !h.isReadOnlyAccount(user) {
@@ -1117,6 +1144,98 @@ func (h *handler) login(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+func (h *handler) verifyMFALogin(c *gin.Context) {
+	var req struct {
+		MFATicket string `json:"mfa_ticket"`
+		MFAToken  string `json:"mfaToken"`
+		Code      string `json:"code"`
+		TOTPCode  string `json:"totpCode"`
+		Method    string `json:"method"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
+		return
+	}
+
+	mfaTicket := strings.TrimSpace(req.MFATicket)
+	if mfaTicket == "" {
+		mfaTicket = strings.TrimSpace(req.MFAToken)
+	}
+	if mfaTicket == "" {
+		respondError(c, http.StatusBadRequest, "mfa_ticket_required", "mfa ticket is required")
+		return
+	}
+
+	code := strings.TrimSpace(req.Code)
+	if code == "" {
+		code = strings.TrimSpace(req.TOTPCode)
+	}
+	if code == "" {
+		respondError(c, http.StatusBadRequest, "mfa_code_required", "totp code is required")
+		return
+	}
+
+	method := strings.ToLower(strings.TrimSpace(req.Method))
+	if method == "" {
+		method = "totp"
+	}
+	if method != "totp" {
+		respondError(c, http.StatusBadRequest, "unsupported_mfa_method", "unsupported mfa method")
+		return
+	}
+
+	challenge, ok := h.lookupMFAChallenge(mfaTicket)
+	if !ok {
+		respondError(c, http.StatusUnauthorized, "invalid_mfa_ticket", "mfa ticket is invalid or expired")
+		return
+	}
+
+	user, err := h.store.GetUserByID(c.Request.Context(), challenge.userID)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "authentication_failed", "failed to authenticate user")
+		return
+	}
+	if !user.MFAEnabled {
+		respondError(c, http.StatusBadRequest, "mfa_not_enabled", "multi-factor authentication is not enabled")
+		return
+	}
+
+	valid, err := totp.ValidateCustom(code, user.MFATOTPSecret, time.Now().UTC(), totp.ValidateOpts{
+		Period:    30,
+		Skew:      1,
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
+	})
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "invalid_mfa_code", "invalid totp code")
+		return
+	}
+	if !valid {
+		respondError(c, http.StatusUnauthorized, "invalid_mfa_code", "invalid totp code")
+		return
+	}
+
+	h.removeMFAChallenge(mfaTicket)
+
+	token, expiresAt, err := h.createSession(user.ID)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "session_creation_failed", "failed to create session")
+		return
+	}
+
+	h.setSessionCookie(c, token, expiresAt)
+	c.JSON(http.StatusOK, gin.H{
+		"message":      "login successful",
+		"token":        token,
+		"access_token": token,
+		"expiresAt":    expiresAt.UTC(),
+		"expires_in":   int64(time.Until(expiresAt).Seconds()),
+		"mfaRequired":  false,
+		"mfa_required": false,
+		"user":         sanitizeUser(user, nil),
+	})
 }
 
 type tokenRefreshRequest struct {
