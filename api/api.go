@@ -375,6 +375,7 @@ type registerRequest struct {
 
 type loginRequest struct {
 	Identifier string `json:"identifier"`
+	Account    string `json:"account"`
 	Username   string `json:"username"`
 	Email      string `json:"email"`
 	Password   string `json:"password"`
@@ -992,6 +993,9 @@ func (h *handler) login(c *gin.Context) {
 	}
 
 	identifier := strings.TrimSpace(req.Identifier)
+	if identifier == "" {
+		identifier = strings.TrimSpace(req.Account)
+	}
 	if identifier == "" {
 		identifier = strings.TrimSpace(req.Username)
 	}
