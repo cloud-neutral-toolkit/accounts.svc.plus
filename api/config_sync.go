@@ -62,27 +62,49 @@ func (h *handler) respondSyncConfigSnapshot(c *gin.Context) {
 	profiles := []gin.H{}
 	nodes := []gin.H{}
 	if changed {
+		proxyUUID := strings.TrimSpace(user.ProxyUUID)
+		if proxyUUID == "" {
+			proxyUUID = strings.TrimSpace(user.ID)
+		}
+		host := extractHostFromPublicURL(h.publicURL)
+		if host == "" {
+			host = "accounts.svc.plus"
+		}
+		_, registeredNames := registeredNodeMetadata(h.agentStatusReader)
+		nodeName := resolveNodeName(host, registeredNames)
+		tcpScheme := xrayconfig.VLESSTCPScheme()
+		vlessURI := renderVLESSURIScheme(tcpScheme, map[string]string{
+			"UUID":   proxyUUID,
+			"DOMAIN": host,
+			"SNI":    host,
+			"FP":     defaultTLSFP,
+			"FLOW":   xrayconfig.DefaultFlow,
+			"TAG":    url.QueryEscape(nodeName),
+		})
+
 		profiles = append(profiles, gin.H{
-			"id":      strings.TrimSpace(user.ID),
-			"remark":  strings.TrimSpace(user.Name),
-			"address": extractHostFromPublicURL(h.publicURL),
-			"port":    1443,
-			"uuid":    strings.TrimSpace(user.ProxyUUID),
-			"flow":    xrayconfig.DefaultFlow,
-			"source":  "server",
+			"id":        strings.TrimSpace(user.ID),
+			"remark":    nodeName,
+			"address":   host,
+			"port":      1443,
+			"uuid":      proxyUUID,
+			"flow":      xrayconfig.DefaultFlow,
+			"source":    "server",
+			"vless_uri": vlessURI,
 		})
 		nodes = append(nodes, gin.H{
 			"id":         strings.TrimSpace(user.ID),
-			"name":       strings.TrimSpace(user.Name),
+			"name":       nodeName,
 			"protocol":   "vless",
 			"transport":  "tcp",
 			"security":   "tls",
-			"address":    extractHostFromPublicURL(h.publicURL),
+			"address":    host,
 			"port":       1443,
-			"uuid":       strings.TrimSpace(user.ProxyUUID),
+			"uuid":       proxyUUID,
 			"flow":       xrayconfig.DefaultFlow,
 			"source":     "server",
 			"updated_at": updatedAt,
+			"vless_uri":  vlessURI,
 		})
 	}
 
