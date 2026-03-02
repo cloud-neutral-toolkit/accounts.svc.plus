@@ -383,17 +383,30 @@ func envIntOrDefault(key string, fallback int) int {
 }
 
 func nodeNameForHost(host string) string {
+	h := strings.TrimSpace(host)
+	if h == "" {
+		return "unknown-node"
+	}
+	return strings.ToLower(h)
+}
+
+// countryCodeForHost extracts a two-letter country code from the host's
+// subdomain prefix. For example "jp-xhttp.svc.plus" yields "JP",
+// "us-east.example.com" yields "US".
+func countryCodeForHost(host string) string {
 	prefix := host
 	if idx := strings.Index(prefix, "."); idx > 0 {
 		prefix = prefix[:idx]
 	}
-	prefix = strings.TrimSpace(prefix)
-	if prefix == "" {
-		prefix = host
+	// Take the part before the first dash: "jp-xhttp" -> "jp"
+	if idx := strings.Index(prefix, "-"); idx > 0 {
+		prefix = prefix[:idx]
 	}
-	prefix = strings.ReplaceAll(prefix, "_", "-")
-	prefix = strings.ToUpper(prefix)
-	return prefix + "-NODE"
+	prefix = strings.TrimSpace(prefix)
+	if len(prefix) == 2 {
+		return strings.ToUpper(prefix)
+	}
+	return ""
 }
 
 func renderVLESSURIScheme(tpl string, values map[string]string) string {

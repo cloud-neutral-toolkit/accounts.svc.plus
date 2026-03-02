@@ -53,6 +53,7 @@ func (h *handler) respondSyncConfigSnapshot(c *gin.Context) {
 	}
 
 	renderedJSON, digest, warnings, err := h.renderUserXrayConfig(user)
+	_ = renderedJSON // server-side config, not sent to clients
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "config_render_failed", "failed to render xray config")
 		return
@@ -66,46 +67,58 @@ func (h *handler) respondSyncConfigSnapshot(c *gin.Context) {
 		if proxyUUID == "" {
 			proxyUUID = strings.TrimSpace(user.ID)
 		}
-		host := extractHostFromPublicURL(h.publicURL)
-		if host == "" {
-			host = "accounts.svc.plus"
-		}
-		_, registeredNames := registeredNodeMetadata(h.agentStatusReader)
-		nodeName := resolveNodeName(host, registeredNames)
-		tcpScheme := xrayconfig.VLESSTCPScheme()
-		vlessURI := renderVLESSURIScheme(tcpScheme, map[string]string{
-			"UUID":   proxyUUID,
-			"DOMAIN": host,
-			"SNI":    host,
-			"FP":     defaultTLSFP,
-			"FLOW":   xrayconfig.DefaultFlow,
-			"TAG":    url.QueryEscape(nodeName),
-		})
 
-		profiles = append(profiles, gin.H{
-			"id":        strings.TrimSpace(user.ID),
-			"remark":    nodeName,
-			"address":   host,
-			"port":      1443,
-			"uuid":      proxyUUID,
-			"flow":      xrayconfig.DefaultFlow,
-			"source":    "server",
-			"vless_uri": vlessURI,
-		})
-		nodes = append(nodes, gin.H{
-			"id":         strings.TrimSpace(user.ID),
-			"name":       nodeName,
-			"protocol":   "vless",
-			"transport":  "tcp",
-			"security":   "tls",
-			"address":    host,
-			"port":       1443,
-			"uuid":       proxyUUID,
-			"flow":       xrayconfig.DefaultFlow,
-			"source":     "server",
-			"updated_at": updatedAt,
-			"vless_uri":  vlessURI,
-		})
+		// Collect node hosts from registered agents + publicURL fallback.
+		registeredHosts, registeredNames := registeredNodeMetadata(h.agentStatusReader)
+		hosts := parseProxyNodeHosts(h.publicURL, registeredHosts)
+
+		xhttpPath := envOrDefault("XRAY_XHTTP_PATH", defaultXHTTPPath)
+		xhttpMode := envOrDefault("XRAY_XHTTP_MODE", defaultXHTTPMode)
+		xhttpScheme := xrayconfig.VLESSXHTTPScheme()
+
+		for _, host := range hosts {
+			nodeName := resolveNodeName(host, registeredNames)
+			countryCode := countryCodeForHost(host)
+			vlessURI := renderVLESSURIScheme(xhttpScheme, map[string]string{
+				"UUID":   proxyUUID,
+				"DOMAIN": host,
+				"NODE":   host,
+				"PATH":   url.QueryEscape(xhttpPath),
+				"MODE":   url.QueryEscape(xhttpMode),
+				"SNI":    host,
+				"FP":     defaultTLSFP,
+				"TAG":    url.QueryEscape(nodeName),
+			})
+
+			profiles = append(profiles, gin.H{
+				"id":           strings.TrimSpace(user.ID),
+				"remark":       nodeName,
+				"address":      host,
+				"port":         443,
+				"uuid":         proxyUUID,
+				"flow":         "",
+				"transport":    "xhttp",
+				"security":     "tls",
+				"source":       "server",
+				"country_code": countryCode,
+				"vless_uri":    vlessURI,
+			})
+			nodes = append(nodes, gin.H{
+				"id":           strings.TrimSpace(user.ID),
+				"name":         nodeName,
+				"protocol":     "vless",
+				"transport":    "xhttp",
+				"security":     "tls",
+				"address":      host,
+				"port":         443,
+				"uuid":         proxyUUID,
+				"flow":         "",
+				"source":       "server",
+				"country_code": countryCode,
+				"updated_at":   updatedAt,
+				"vless_uri":    vlessURI,
+			})
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -124,9 +137,8 @@ func (h *handler) respondSyncConfigSnapshot(c *gin.Context) {
 			"digest":   digest,
 			"warnings": warnings,
 		},
-		"rendered_json": renderedJSON,
-		"digest":        digest,
-		"warnings":      warnings,
+		"digest":   digest,
+		"warnings": warnings,
 	})
 }
 
