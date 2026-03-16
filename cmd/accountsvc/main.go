@@ -44,12 +44,111 @@ var (
 const (
 	// SandboxEmail is the canonical email for the sandbox account.
 	SandboxEmail = "sandbox@svc.plus"
+	// ReviewEmail is the canonical email for the readonly App Review account.
+	ReviewEmail = "review@svc.plus"
 )
 
 const (
 	rootUsername             = "admin"
 	rootBootstrapPasswordEnv = "ROOT_BOOTSTRAP_PASSWORD"
 )
+
+var defaultReviewPermissions = []string{
+	"admin.settings.read",
+	"admin.users.metrics.read",
+	"admin.users.list.read",
+	"admin.agents.status.read",
+	"admin.blacklist.read",
+}
+
+func ensureReviewUser(ctx context.Context, st store.Store, cfg config.ReviewAccount, logger *slog.Logger) error {
+	email := strings.ToLower(strings.TrimSpace(cfg.Email))
+	if email == "" {
+		email = ReviewEmail
+	}
+	name := strings.TrimSpace(cfg.Name)
+	if name == "" {
+		name = "Review"
+	}
+	groups := cfg.Groups
+	if len(groups) == 0 {
+		groups = []string{"User", "Beta", "Review", "ReadOnly Role"}
+	}
+	permissions := cfg.Permissions
+	if len(permissions) == 0 {
+		permissions = defaultReviewPermissions
+	}
+
+	reviewUser, err := st.GetUserByEmail(ctx, email)
+	if err != nil && !errors.Is(err, store.ErrUserNotFound) {
+		return fmt.Errorf("lookup review user: %w", err)
+	}
+
+	if !cfg.Enabled {
+		if reviewUser != nil && reviewUser.Active {
+			reviewUser.Active = false
+			if err := st.UpdateUser(ctx, reviewUser); err != nil {
+				return fmt.Errorf("disable review user: %w", err)
+			}
+			if logger != nil {
+				logger.Info("review account disabled", "email", email)
+			}
+		}
+		return nil
+	}
+
+	password := strings.TrimSpace(cfg.Password)
+	if password == "" {
+		return fmt.Errorf("review account %q enabled without password", email)
+	}
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash review password: %w", err)
+	}
+
+	if reviewUser == nil {
+		user := &store.User{
+			Name:          name,
+			Email:         email,
+			EmailVerified: true,
+			PasswordHash:  string(hashed),
+			Level:         store.LevelUser,
+			Role:          store.RoleReadOnly,
+			Groups:        groups,
+			Permissions:   permissions,
+			Active:        true,
+		}
+		if err := st.CreateUser(ctx, user); err != nil {
+			return fmt.Errorf("create review user: %w", err)
+		}
+		if logger != nil {
+			logger.Info("review account ensured", "email", email, "created", true)
+		}
+		return nil
+	}
+
+	reviewUser.Name = name
+	reviewUser.Email = email
+	reviewUser.EmailVerified = true
+	reviewUser.PasswordHash = string(hashed)
+	reviewUser.Role = store.RoleReadOnly
+	reviewUser.Level = store.LevelUser
+	reviewUser.Groups = groups
+	reviewUser.Permissions = permissions
+	reviewUser.Active = true
+	reviewUser.MFATOTPSecret = ""
+	reviewUser.MFAEnabled = false
+	reviewUser.MFASecretIssuedAt = time.Time{}
+	reviewUser.MFAConfirmedAt = time.Time{}
+	if err := st.UpdateUser(ctx, reviewUser); err != nil {
+		return fmt.Errorf("update review user: %w", err)
+	}
+	if logger != nil {
+		logger.Info("review account ensured", "email", email, "created", false)
+	}
+	return nil
+}
 
 type mailerAdapter struct {
 	sender mailer.Sender
@@ -596,6 +695,9 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		logger.Warn("failed to ensure sandbox user", "err", err)
 	}
 	startSandboxUUIDRotator(ctx, st, logger)
+	if err := ensureReviewUser(ctx, st, cfg.ReviewAccount, logger); err != nil {
+		logger.Warn("failed to ensure review user", "err", err)
+	}
 
 	var emailSender api.EmailSender
 	emailVerificationEnabled := true

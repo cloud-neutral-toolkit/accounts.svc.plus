@@ -19,16 +19,17 @@ type Log struct {
 
 // Config holds configuration for the account service.
 type Config struct {
-	Mode    string  `yaml:"mode"`
-	Log     Log     `yaml:"log"`
-	Server  Server  `yaml:"server"`
-	Store   Store   `yaml:"store"`
-	Session Session `yaml:"session"`
-	Auth    Auth    `yaml:"auth"`
-	SMTP    SMTP    `yaml:"smtp"`
-	Xray    Xray    `yaml:"xray"`
-	Agent   Agent   `yaml:"agent"`
-	Agents  Agents  `yaml:"agents"`
+	Mode          string        `yaml:"mode"`
+	Log           Log           `yaml:"log"`
+	Server        Server        `yaml:"server"`
+	Store         Store         `yaml:"store"`
+	Session       Session       `yaml:"session"`
+	Auth          Auth          `yaml:"auth"`
+	SMTP          SMTP          `yaml:"smtp"`
+	Xray          Xray          `yaml:"xray"`
+	Agent         Agent         `yaml:"agent"`
+	Agents        Agents        `yaml:"agents"`
+	ReviewAccount ReviewAccount `yaml:"reviewAccount"`
 }
 
 // Server defines HTTP server configuration.
@@ -161,6 +162,17 @@ type AgentTLS struct {
 // Agents describes the controller-side agent configuration.
 type Agents struct {
 	Credentials []AgentCredential `yaml:"credentials"`
+}
+
+// ReviewAccount controls the built-in readonly review user intended for App
+// Review and feature validation.
+type ReviewAccount struct {
+	Enabled     bool     `yaml:"enabled"`
+	Email       string   `yaml:"email"`
+	Name        string   `yaml:"name"`
+	Password    string   `yaml:"password"`
+	Groups      []string `yaml:"groups"`
+	Permissions []string `yaml:"permissions"`
 }
 
 // AgentCredential represents a single agent identity authorised to call the

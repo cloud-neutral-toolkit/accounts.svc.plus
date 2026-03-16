@@ -105,17 +105,29 @@ func (h *handler) requireAdminPermission(c *gin.Context, permission string) (*st
 		return user, true
 	}
 
-	if !store.IsOperatorRole(user.Role) {
-		respondError(c, http.StatusForbidden, "forbidden", "insufficient permissions")
-		return nil, false
+	if store.IsOperatorRole(user.Role) {
+		if permission != "" && !h.operatorPermissionAllowed(c, permission) {
+			respondError(c, http.StatusForbidden, "forbidden", "operator permission denied")
+			return nil, false
+		}
+		return user, true
 	}
 
-	if permission != "" && !h.operatorPermissionAllowed(c, permission) {
-		respondError(c, http.StatusForbidden, "forbidden", "operator permission denied")
-		return nil, false
+	if strings.EqualFold(strings.TrimSpace(user.Role), store.RoleReadOnly) {
+		method := c.Request.Method
+		if method != http.MethodGet && method != http.MethodHead {
+			respondError(c, http.StatusForbidden, "read_only_account", "demo account is read-only")
+			return nil, false
+		}
+		if permission == "" || !hasPermission(user.Permissions, permission) {
+			respondError(c, http.StatusForbidden, "forbidden", "readonly permission denied")
+			return nil, false
+		}
+		return user, true
 	}
 
-	return user, true
+	respondError(c, http.StatusForbidden, "forbidden", "insufficient permissions")
+	return nil, false
 }
 
 func (h *handler) requireAdminOrOperator(c *gin.Context) (*store.User, bool) {
@@ -139,6 +151,20 @@ func (h *handler) operatorPermissionAllowed(c *gin.Context, permission string) b
 		return defaultAllowed
 	}
 	return allowed
+}
+
+func hasPermission(permissions []string, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, permission := range permissions {
+		normalized := strings.TrimSpace(permission)
+		if normalized == "*" || strings.EqualFold(normalized, target) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *handler) resolveSessionToken(c *gin.Context) string {

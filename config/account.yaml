@@ -107,3 +107,20 @@ agents:
       token: "replace-with-agent-token"
       groups:
         - "default"
+
+reviewAccount:
+  enabled: true
+  email: "review@svc.plus"
+  name: "Review"
+  password: "Review123!"
+  groups:
+    - "User"
+    - "Beta"
+    - "Review"
+    - "ReadOnly Role"
+  permissions:
+    - "admin.settings.read"
+    - "admin.users.metrics.read"
+    - "admin.users.list.read"
+    - "admin.agents.status.read"
+    - "admin.blacklist.read"
