@@ -72,6 +72,7 @@ type handler struct {
 	publicURL                 string
 	agentRegistry             agentRegistry
 	db                        *gorm.DB
+	stripe                    *stripeClient
 }
 
 type agentRegistry interface {
@@ -248,6 +249,13 @@ func WithGormDB(db *gorm.DB) Option {
 	}
 }
 
+// WithStripeConfig configures Stripe billing integration.
+func WithStripeConfig(cfg StripeConfig) Option {
+	return func(h *handler) {
+		h.stripe = newStripeClient(cfg)
+	}
+}
+
 // RegisterRoutes attaches account service endpoints to the router.
 func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	h := &handler{
@@ -326,6 +334,8 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.GET("/subscriptions", h.listSubscriptions)
 	authProtected.POST("/subscriptions", h.upsertSubscription)
 	authProtected.POST("/subscriptions/cancel", h.cancelSubscription)
+	authProtected.POST("/stripe/checkout", h.stripeCheckout)
+	authProtected.POST("/stripe/portal", h.stripePortal)
 
 	authProtected.POST("/config/sync", h.syncConfig)
 
@@ -358,6 +368,8 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 
 	// Internal routes for service-to-service reads.
 	internalGroup := r.Group("/api/internal")
+
+	r.POST("/api/billing/stripe/webhook", h.stripeWebhook)
 	internalGroup.Use(auth.InternalAuthMiddleware())
 	internalGroup.GET("/public-overview", h.internalPublicOverview)
 	internalGroup.GET("/sandbox/guest", h.internalSandboxGuest)
@@ -2435,6 +2447,25 @@ func (h *handler) cancelSubscription(c *gin.Context) {
 	if externalID == "" {
 		respondError(c, http.StatusBadRequest, "external_id_required", "externalId is required")
 		return
+	}
+
+	if h.stripe != nil && h.stripe.enabled() {
+		subscriptions, err := h.store.ListSubscriptionsByUser(c.Request.Context(), user.ID)
+		if err == nil {
+			for i := range subscriptions {
+				subscription := subscriptions[i]
+				if strings.TrimSpace(subscription.ExternalID) != externalID {
+					continue
+				}
+				if strings.EqualFold(strings.TrimSpace(subscription.Provider), "stripe") && strings.EqualFold(strings.TrimSpace(subscription.Kind), "subscription") {
+					if err := h.stripe.cancelSubscription(c.Request.Context(), externalID); err != nil {
+						respondError(c, http.StatusBadGateway, "stripe_cancel_failed", "failed to cancel stripe subscription")
+						return
+					}
+				}
+				break
+			}
+		}
 	}
 
 	sub, err := h.store.CancelSubscription(c.Request.Context(), user.ID, externalID, time.Now().UTC())
