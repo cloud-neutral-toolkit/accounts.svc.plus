@@ -638,21 +638,6 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		logger = slog.Default()
 	}
 
-	r := gin.New()
-	corsConfig := buildCORSConfig(logger, cfg.Server)
-	if corsConfig.AllowAllOrigins {
-		logger.Info("configured cors", "allowAllOrigins", true)
-	} else {
-		logger.Info("configured cors", "allowedOrigins", corsConfig.AllowOrigins)
-	}
-	r.Use(cors.New(corsConfig))
-	r.Use(gin.Recovery())
-	r.Use(func(c *gin.Context) {
-		start := time.Now()
-		c.Next()
-		logger.Info("request", "method", c.Request.Method, "path", c.FullPath(), "status", c.Writer.Status(), "latency", time.Since(start))
-	})
-
 	storeCfg := store.Config{
 		Driver:       cfg.Store.Driver,
 		DSN:          cfg.Store.DSN,
@@ -698,6 +683,37 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 	if err := ensureReviewUser(ctx, st, cfg.ReviewAccount, logger); err != nil {
 		logger.Warn("failed to ensure review user", "err", err)
 	}
+	if err := st.EnsureTenant(ctx, &store.Tenant{
+		ID:      store.SharedXWorkmateTenantID,
+		Name:    store.SharedXWorkmateTenantName,
+		Edition: store.SharedPublicTenantEdition,
+	}); err != nil {
+		return fmt.Errorf("ensure shared xworkmate tenant: %w", err)
+	}
+	if err := st.EnsureTenantDomain(ctx, &store.TenantDomain{
+		TenantID:  store.SharedXWorkmateTenantID,
+		Domain:    store.SharedXWorkmateDomain,
+		Kind:      store.TenantDomainKindGenerated,
+		IsPrimary: true,
+		Status:    store.TenantDomainStatusVerified,
+	}); err != nil {
+		return fmt.Errorf("ensure shared xworkmate tenant domain: %w", err)
+	}
+
+	r := gin.New()
+	corsConfig := buildCORSConfig(logger, cfg.Server, st)
+	if corsConfig.AllowAllOrigins {
+		logger.Info("configured cors", "allowAllOrigins", true)
+	} else {
+		logger.Info("configured cors", "allowedOrigins", cfg.Server.AllowedOrigins, "dynamicTenantDomains", true)
+	}
+	r.Use(cors.New(corsConfig))
+	r.Use(gin.Recovery())
+	r.Use(func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+		logger.Info("request", "method", c.Request.Method, "path", c.FullPath(), "status", c.Writer.Status(), "latency", time.Since(start))
+	})
 
 	var emailSender api.EmailSender
 	emailVerificationEnabled := true
@@ -1275,7 +1291,14 @@ func openAdminSettingsDB(cfg config.Store) (*gorm.DB, func(context.Context) erro
 		return nil, nil, fmt.Errorf("admin settings db connection failed after sidecar wait: %w", err)
 	}
 
-	if err := db.AutoMigrate(&model.AdminSetting{}, &model.SandboxBinding{}); err != nil {
+	if err := db.AutoMigrate(
+		&model.AdminSetting{},
+		&model.SandboxBinding{},
+		&model.Tenant{},
+		&model.TenantDomain{},
+		&model.TenantMembership{},
+		&model.XWorkmateProfile{},
+	); err != nil {
 		return nil, nil, err
 	}
 
@@ -1321,7 +1344,7 @@ func isExampleDomain(host string) bool {
 	return strings.HasSuffix(normalized, ".example.com")
 }
 
-func buildCORSConfig(logger *slog.Logger, serverCfg config.Server) cors.Config {
+func buildCORSConfig(logger *slog.Logger, serverCfg config.Server, st store.Store) cors.Config {
 	allowOrigins, allowAll := resolveAllowedOrigins(logger, serverCfg)
 
 	cfg := cors.Config{
@@ -1352,8 +1375,34 @@ func buildCORSConfig(logger *slog.Logger, serverCfg config.Server) cors.Config {
 		cfg.AllowAllOrigins = true
 		cfg.AllowCredentials = false
 	} else {
-		cfg.AllowOrigins = allowOrigins
 		cfg.AllowCredentials = true
+		allowedOriginSet := make(map[string]struct{}, len(allowOrigins))
+		for _, origin := range allowOrigins {
+			allowedOriginSet[origin] = struct{}{}
+		}
+		cfg.AllowOriginFunc = func(origin string) bool {
+			normalized, err := parseOrigin(origin)
+			if err != nil {
+				return false
+			}
+			if _, ok := allowedOriginSet[normalized]; ok {
+				return true
+			}
+
+			parsed, err := url.Parse(normalized)
+			if err != nil {
+				return false
+			}
+			host := store.NormalizeHostname(parsed.Host)
+			if store.IsSharedTenantHost(host) {
+				return true
+			}
+			if st == nil {
+				return false
+			}
+			_, _, err = st.ResolveTenantByHost(context.Background(), host)
+			return err == nil
+		}
 	}
 
 	return cfg

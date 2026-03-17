@@ -346,6 +346,8 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 
 	authProtected.GET("/session", h.session)
 	authProtected.DELETE("/session", h.deleteSession)
+	authProtected.GET("/xworkmate/profile", h.getXWorkmateProfile)
+	authProtected.PUT("/xworkmate/profile", h.updateXWorkmateProfile)
 
 	authProtected.POST("/mfa/totp/provision", h.provisionTOTP)
 	authProtected.POST("/mfa/totp/verify", h.verifyTOTP)
@@ -374,6 +376,7 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.POST("/admin/users/:userId/resume", h.resumeUser)
 	authProtected.DELETE("/admin/users/:userId", h.deleteUser)
 	authProtected.POST("/admin/users/:userId/renew-uuid", h.renewProxyUUID)
+	authProtected.POST("/admin/tenants/bootstrap", h.bootstrapTenant)
 	authProtected.GET("/admin/blacklist", h.listBlacklist)
 	authProtected.POST("/admin/blacklist", h.addToBlacklist)
 	authProtected.DELETE("/admin/blacklist/:email", h.removeFromBlacklist)
@@ -1416,7 +1419,17 @@ func (h *handler) session(c *gin.Context) {
 		slog.Warn("failed to rotate sandbox proxy uuid", "err", err, "userID", user.ID)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"user": sanitizeUser(user, nil)})
+	sanitized, err := h.buildSessionUser(c.Request.Context(), h.resolveTenantHost(c), user)
+	if err != nil {
+		if errors.Is(err, store.ErrTenantNotFound) {
+			c.JSON(http.StatusOK, gin.H{"user": sanitizeUser(user, nil)})
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "session_tenant_resolution_failed", "failed to resolve tenant session context")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"user": sanitized})
 }
 
 func (h *handler) deleteSession(c *gin.Context) {
@@ -2699,7 +2712,7 @@ func (h *handler) oauthLogin(c *gin.Context) {
 		return
 	}
 
-	state := h.generateState()
+	state := buildOAuthState(h.resolveFrontendURL(c))
 	// In a real app, we should store state in a secure cookie or session.
 	// For now, we'll just redirect.
 	c.Redirect(http.StatusTemporaryRedirect, provider.AuthCodeURL(state))
@@ -2814,7 +2827,13 @@ func (h *handler) oauthCallback(c *gin.Context) {
 		return
 	}
 
-	frontendURL := h.oauthFrontendURL
+	frontendURL := h.validateFrontendURL(parseOAuthStateFrontendURL(c.Query("state")))
+	if frontendURL == "" {
+		frontendURL = h.resolveFrontendURL(c)
+	}
+	if frontendURL == "" {
+		frontendURL = h.oauthFrontendURL
+	}
 	if frontendURL == "" {
 		frontendURL = "http://localhost:3000"
 	}

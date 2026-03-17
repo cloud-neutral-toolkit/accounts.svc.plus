@@ -105,6 +105,15 @@ type Store interface {
 	ListAgents(ctx context.Context) ([]*Agent, error)
 	DeleteAgent(ctx context.Context, id string) error
 	DeleteStaleAgents(ctx context.Context, staleThreshold time.Duration) (int, error)
+
+	EnsureTenant(ctx context.Context, tenant *Tenant) error
+	EnsureTenantDomain(ctx context.Context, domain *TenantDomain) error
+	UpsertTenantMembership(ctx context.Context, membership *TenantMembership) error
+	ResolveTenantByHost(ctx context.Context, host string) (*Tenant, *TenantDomain, error)
+	ListTenantMembershipsByUser(ctx context.Context, userID string) ([]TenantMembership, error)
+	GetTenantMembership(ctx context.Context, tenantID, userID string) (*TenantMembership, error)
+	GetXWorkmateProfile(ctx context.Context, tenantID, userID, scope string) (*XWorkmateProfile, error)
+	UpsertXWorkmateProfile(ctx context.Context, profile *XWorkmateProfile) error
 }
 
 // Domain level errors returned by the store implementation.
@@ -131,6 +140,10 @@ type memoryStore struct {
 	identities              map[string]*Identity
 	agents                  map[string]*Agent
 	sessions                map[string]*sessionRecord
+	tenants                 map[string]*Tenant
+	tenantDomains           map[string]*TenantDomain
+	tenantMemberships       map[string]map[string]*TenantMembership
+	xworkmateProfiles       map[string]*XWorkmateProfile
 }
 
 type sessionRecord struct {
@@ -165,6 +178,10 @@ func newMemoryStore(allowSuperAdminCounting bool) Store {
 		identities:              make(map[string]*Identity),
 		agents:                  make(map[string]*Agent),
 		sessions:                make(map[string]*sessionRecord),
+		tenants:                 make(map[string]*Tenant),
+		tenantDomains:           make(map[string]*TenantDomain),
+		tenantMemberships:       make(map[string]map[string]*TenantMembership),
+		xworkmateProfiles:       make(map[string]*XWorkmateProfile),
 	}
 }
 
