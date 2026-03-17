@@ -672,6 +672,19 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		}
 	}()
 
+	gormDB, gormCleanup, err := openAdminSettingsDB(cfg.Store)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if gormCleanup != nil {
+			if err := gormCleanup(context.Background()); err != nil {
+				logger.Error("failed to close admin settings db", "err", err)
+			}
+		}
+	}()
+	service.SetDB(gormDB)
+
 	if err := ensureRootUser(ctx, st, logger); err != nil {
 		return err
 	}
@@ -769,19 +782,6 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		})
 		logger.Info("token service initialized", "auth_enabled", cfg.Auth.Enable)
 	}
-
-	gormDB, gormCleanup, err := openAdminSettingsDB(cfg.Store)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if gormCleanup != nil {
-			if err := gormCleanup(context.Background()); err != nil {
-				logger.Error("failed to close admin settings db", "err", err)
-			}
-		}
-	}()
-	service.SetDB(gormDB)
 
 	if err := applyRBACSchema(ctx, gormDB, cfg.Store.Driver); err != nil {
 		return fmt.Errorf("apply rbac schema: %w", err)
