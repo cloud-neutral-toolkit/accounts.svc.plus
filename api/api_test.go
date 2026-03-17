@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,8 +18,10 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/oauth2"
 
 	"account/internal/agentserver"
+	"account/internal/auth"
 	"account/internal/service"
 	"account/internal/store"
 )
@@ -56,6 +59,38 @@ func (s *stubMetricsProvider) Compute(context.Context) (service.UserMetrics, err
 		return service.UserMetrics{}, s.err
 	}
 	return s.metrics, nil
+}
+
+type stubOAuthProvider struct {
+	profile     *auth.OAuthUserProfile
+	exchangeErr error
+	profileErr  error
+}
+
+func (s *stubOAuthProvider) AuthCodeURL(state string) string {
+	return "https://oauth.example.test/authorize?state=" + state
+}
+
+func (s *stubOAuthProvider) Exchange(context.Context, string) (*oauth2.Token, error) {
+	if s.exchangeErr != nil {
+		return nil, s.exchangeErr
+	}
+	return &oauth2.Token{AccessToken: "oauth-token", TokenType: "Bearer"}, nil
+}
+
+func (s *stubOAuthProvider) FetchProfile(context.Context, *oauth2.Token) (*auth.OAuthUserProfile, error) {
+	if s.profileErr != nil {
+		return nil, s.profileErr
+	}
+	if s.profile == nil {
+		return nil, errors.New("missing oauth profile")
+	}
+	cloned := *s.profile
+	return &cloned, nil
+}
+
+func (s *stubOAuthProvider) Name() string {
+	return "github"
 }
 
 type testEmailSender struct {
@@ -329,6 +364,113 @@ func TestRegisterEndpoint(t *testing.T) {
 	groups, ok := resp.User["groups"].([]interface{})
 	if !ok || len(groups) == 0 {
 		t.Fatalf("expected groups array in response")
+	}
+}
+
+func TestOAuthCallbackIssuesOneTimeExchangeCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	profile := &auth.OAuthUserProfile{
+		ID:       "oauth-user-1",
+		Email:    "oauth-user@example.com",
+		Name:     "OAuth User",
+		Verified: true,
+	}
+	RegisterRoutes(
+		router,
+		WithStore(store.NewMemoryStore()),
+		WithOAuthProviders(map[string]auth.OAuthProvider{
+			"github": &stubOAuthProvider{profile: profile},
+		}),
+		WithOAuthFrontendURL("https://console.svc.plus"),
+	)
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/callback/github?code=test-oauth-code", nil)
+	callbackRec := httptest.NewRecorder()
+	router.ServeHTTP(callbackRec, callbackReq)
+
+	if callbackRec.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("expected oauth callback redirect, got %d: %s", callbackRec.Code, callbackRec.Body.String())
+	}
+
+	location := callbackRec.Header().Get("Location")
+	if location == "" {
+		t.Fatalf("expected oauth callback to set redirect location")
+	}
+	redirectURL, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse redirect url: %v", err)
+	}
+	if redirectURL.Query().Get("public_token") != "" {
+		t.Fatalf("expected public_token to be removed from oauth redirect, got %q", location)
+	}
+	if redirectURL.Query().Get("userId") != "" || redirectURL.Query().Get("role") != "" {
+		t.Fatalf("expected redirect to avoid caller-asserted identity fields, got %q", location)
+	}
+
+	exchangeCode := redirectURL.Query().Get("exchange_code")
+	if exchangeCode == "" {
+		t.Fatalf("expected oauth redirect to include exchange_code, got %q", location)
+	}
+
+	exchangeBody, err := json.Marshal(map[string]string{"exchange_code": exchangeCode})
+	if err != nil {
+		t.Fatalf("marshal exchange payload: %v", err)
+	}
+
+	exchangeReq := httptest.NewRequest(http.MethodPost, "/api/auth/token/exchange", bytes.NewReader(exchangeBody))
+	exchangeReq.Header.Set("Content-Type", "application/json")
+	exchangeRec := httptest.NewRecorder()
+	router.ServeHTTP(exchangeRec, exchangeReq)
+
+	if exchangeRec.Code != http.StatusOK {
+		t.Fatalf("expected successful token exchange, got %d: %s", exchangeRec.Code, exchangeRec.Body.String())
+	}
+
+	var exchangeResp struct {
+		Token       string                 `json:"token"`
+		AccessToken string                 `json:"access_token"`
+		User        map[string]interface{} `json:"user"`
+	}
+	if err := json.Unmarshal(exchangeRec.Body.Bytes(), &exchangeResp); err != nil {
+		t.Fatalf("decode exchange response: %v", err)
+	}
+	if exchangeResp.Token == "" {
+		t.Fatalf("expected exchanged session token")
+	}
+	if exchangeResp.AccessToken != exchangeResp.Token {
+		t.Fatalf("expected access_token alias to match session token")
+	}
+	if exchangeResp.User == nil {
+		t.Fatalf("expected exchange response user payload")
+	}
+	if got := exchangeResp.User["email"]; got != profile.Email {
+		t.Fatalf("expected exchange response email %q, got %#v", profile.Email, got)
+	}
+
+	sessionReq := httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
+	sessionReq.Header.Set("Authorization", "Bearer "+exchangeResp.Token)
+	sessionRec := httptest.NewRecorder()
+	router.ServeHTTP(sessionRec, sessionReq)
+	if sessionRec.Code != http.StatusOK {
+		t.Fatalf("expected exchanged session token to resolve session, got %d: %s", sessionRec.Code, sessionRec.Body.String())
+	}
+
+	replayReq := httptest.NewRequest(http.MethodPost, "/api/auth/token/exchange", bytes.NewReader(exchangeBody))
+	replayReq.Header.Set("Content-Type", "application/json")
+	replayRec := httptest.NewRecorder()
+	router.ServeHTTP(replayRec, replayReq)
+	if replayRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected single-use exchange code replay to fail, got %d: %s", replayRec.Code, replayRec.Body.String())
+	}
+
+	var replayResp apiResponse
+	if err := json.Unmarshal(replayRec.Body.Bytes(), &replayResp); err != nil {
+		t.Fatalf("decode replay response: %v", err)
+	}
+	if replayResp.Error != "invalid_exchange_code" {
+		t.Fatalf("expected invalid_exchange_code on replay, got %#v", replayResp.Error)
 	}
 }
 

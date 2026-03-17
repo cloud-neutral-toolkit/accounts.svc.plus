@@ -16,7 +16,7 @@
 - `invalid_session` / `session_token_required`
 - `mfa_code_required` / `invalid_mfa_code`
 - `token_service_unavailable`
-- `invalid_public_token` / `invalid_refresh_token`
+- `invalid_exchange_code` / `invalid_refresh_token`
 - `subscription_not_found`
 - `agent_status_unavailable`
 

@@ -29,12 +29,13 @@
 ## JWT 令牌服务（可选）
 
 启用 `auth.enable: true` 后提供：
-- `POST /api/auth/token/exchange`：使用 `public_token` 换取 access/refresh
+- `POST /api/auth/token/exchange`：使用 OAuth 回调签发的一次性 `exchange_code` 换取真实会话 token
 - `POST /api/auth/token/refresh`：刷新 access token
 
 注意事项：
-- `token/exchange` 需要调用方提供 `user_id/email/roles`
-- 当前版本多数保护路由仍使用会话 token，JWT 仅作为中间件校验存在
-- 若开启 JWT，中间件要求 `Authorization: Bearer <access-token>`，但业务逻辑仍可能需要会话 token
+- `token/exchange` 只接受后端签发的一次性 `exchange_code`，不再接受调用方自报 `user_id/email/roles`
+- `token/exchange` 返回的 `token`/`access_token` 是同一个真实会话 token，供前端 BFF 写入 `xc_session`
+- 当前版本多数保护路由仍使用会话 token，JWT refresh 仅保留给 `token/refresh`
+- 若开启 JWT 中间件，业务逻辑仍可能需要会话 token；因此控制面应优先走会话模型
 
 建议：若主要使用会话认证，请将 `auth.enable` 设为 `false`。

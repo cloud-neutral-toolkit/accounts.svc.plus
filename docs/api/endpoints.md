@@ -10,7 +10,7 @@
 - `POST /api/auth/register/send`：发送邮箱验证码
 - `POST /api/auth/register/verify`：验证邮箱验证码
 - `POST /api/auth/login`：登录
-- `POST /api/auth/token/exchange`：public token 换取 access/refresh
+- `POST /api/auth/token/exchange`：一次性 OAuth `exchange_code` 换取真实会话 token
 - `POST /api/auth/token/refresh`：刷新 access token
 
 ### 需要会话（或受保护）

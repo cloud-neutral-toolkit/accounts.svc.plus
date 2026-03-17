@@ -38,12 +38,19 @@ const defaultEmailVerificationTTL = 10 * time.Minute
 const defaultPasswordResetTTL = 30 * time.Minute
 const maxMFAVerificationAttempts = 5
 const defaultMFALockoutDuration = 5 * time.Minute
+const defaultOAuthExchangeCodeTTL = 5 * time.Minute
 
 const sessionCookieName = "xc_session"
 
 type session struct {
 	userID    string
 	expiresAt time.Time
+}
+
+type oauthExchangeCode struct {
+	sessionToken     string
+	sessionExpiresAt time.Time
+	expiresAt        time.Time
 }
 
 type handler struct {
@@ -64,6 +71,9 @@ type handler struct {
 	resetTTL                  time.Duration
 	passwordResets            map[string]passwordReset
 	resetMu                   sync.RWMutex
+	oauthExchangeCodes        map[string]oauthExchangeCode
+	oauthExchangeMu           sync.RWMutex
+	oauthExchangeTTL          time.Duration
 	metricsProvider           service.UserMetricsProvider
 	agentStatusReader         agentStatusReader
 	tokenService              *auth.TokenService
@@ -271,6 +281,8 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 		registrationVerifications: make(map[string]registrationVerification),
 		resetTTL:                  defaultPasswordResetTTL,
 		passwordResets:            make(map[string]passwordReset),
+		oauthExchangeCodes:        make(map[string]oauthExchangeCode),
+		oauthExchangeTTL:          defaultOAuthExchangeCodeTTL,
 	}
 
 	for _, opt := range opts {
@@ -294,7 +306,7 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authGroup.POST("/login", h.login)
 	authGroup.POST("/mfa/verify", h.verifyMFALogin)
 
-	// Token exchange endpoint - converts public token to access/refresh tokens
+	// Token exchange endpoint - converts one-time OAuth exchange code to a real session token.
 	authGroup.POST("/token/exchange", h.exchangeToken)
 
 	// OAuth2 routes
@@ -1302,55 +1314,46 @@ func (h *handler) refreshToken(c *gin.Context) {
 }
 
 type tokenExchangeRequest struct {
-	PublicToken string `json:"public_token"`
-	UserID      string `json:"user_id"`
-	Email       string `json:"email"`
-	Roles       string `json:"roles"`
+	ExchangeCode string `json:"exchange_code"`
 }
 
 func (h *handler) exchangeToken(c *gin.Context) {
-	if h.tokenService == nil {
-		respondError(c, http.StatusServiceUnavailable, "token_service_unavailable", "token service is not configured")
-		return
-	}
-
 	var req tokenExchangeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
 		return
 	}
 
-	// Validate public token
-	if !h.tokenService.ValidatePublicToken(req.PublicToken) {
-		respondError(c, http.StatusUnauthorized, "invalid_public_token", "invalid public token")
+	sessionToken, _, ok := h.consumeOAuthExchangeCode(req.ExchangeCode)
+	if !ok {
+		respondError(c, http.StatusUnauthorized, "invalid_exchange_code", "invalid or expired exchange code")
 		return
 	}
 
-	// Parse roles
-	var roles []string
-	if req.Roles != "" {
-		roles = strings.Split(req.Roles, ",")
-		for i := range roles {
-			roles[i] = strings.TrimSpace(roles[i])
-		}
-	} else {
-		roles = []string{"user"}
+	sess, ok := h.lookupSession(sessionToken)
+	if !ok {
+		respondError(c, http.StatusUnauthorized, "invalid_exchange_code", "exchange session is invalid or expired")
+		return
 	}
 
-	// Generate token pair
-	tokenPair, err := h.tokenService.GenerateTokenPair(req.UserID, req.Email, roles)
+	user, err := h.store.GetUserByID(c.Request.Context(), sess.userID)
 	if err != nil {
-		slog.Error("failed to generate token pair", "err", err)
-		respondError(c, http.StatusInternalServerError, "token_generation_failed", "failed to generate tokens")
+		respondError(c, http.StatusInternalServerError, "session_user_lookup_failed", "failed to load session user")
 		return
+	}
+
+	expiresIn := int64(time.Until(sess.expiresAt).Seconds())
+	if expiresIn < 0 {
+		expiresIn = 0
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"public_token":  tokenPair.PublicToken,
-		"access_token":  tokenPair.AccessToken,
-		"refresh_token": tokenPair.RefreshToken,
-		"token_type":    tokenPair.TokenType,
-		"expires_in":    tokenPair.ExpiresIn,
+		"token":        sessionToken,
+		"access_token": sessionToken,
+		"token_type":   "Bearer",
+		"expiresAt":    sess.expiresAt.UTC(),
+		"expires_in":   expiresIn,
+		"user":         sanitizeUser(user, nil),
 	})
 }
 
@@ -1523,6 +1526,51 @@ func (h *handler) lookupSession(token string) (session, bool) {
 
 func (h *handler) removeSession(token string) {
 	h.store.DeleteSession(context.Background(), token)
+}
+
+func (h *handler) issueOAuthExchangeCode(sessionToken string, sessionExpiresAt time.Time) (string, time.Time, error) {
+	code, err := h.newRandomToken()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+
+	expiresAt := time.Now().Add(h.oauthExchangeTTL)
+	if h.oauthExchangeTTL <= 0 {
+		expiresAt = time.Now().Add(defaultOAuthExchangeCodeTTL)
+	}
+	if !sessionExpiresAt.IsZero() && sessionExpiresAt.Before(expiresAt) {
+		expiresAt = sessionExpiresAt
+	}
+
+	h.oauthExchangeMu.Lock()
+	defer h.oauthExchangeMu.Unlock()
+	h.oauthExchangeCodes[code] = oauthExchangeCode{
+		sessionToken:     sessionToken,
+		sessionExpiresAt: sessionExpiresAt,
+		expiresAt:        expiresAt,
+	}
+	return code, expiresAt, nil
+}
+
+func (h *handler) consumeOAuthExchangeCode(code string) (string, time.Time, bool) {
+	normalized := strings.TrimSpace(code)
+	if normalized == "" {
+		return "", time.Time{}, false
+	}
+
+	h.oauthExchangeMu.Lock()
+	defer h.oauthExchangeMu.Unlock()
+
+	record, ok := h.oauthExchangeCodes[normalized]
+	if !ok {
+		return "", time.Time{}, false
+	}
+	delete(h.oauthExchangeCodes, normalized)
+
+	if time.Now().After(record.expiresAt) {
+		return "", time.Time{}, false
+	}
+	return record.sessionToken, record.sessionExpiresAt, true
 }
 
 func (h *handler) newRandomToken() (string, error) {
@@ -2660,15 +2708,13 @@ func (h *handler) oauthCallback(c *gin.Context) {
 		return
 	}
 
-	profile, err := provider.FetchProfile(c.Request.Context(), nil) // Exchange is handled inside if we want, or here.
-	// Let's refine the interface to handle token exchange too.
 	token, err := provider.Exchange(c.Request.Context(), code)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "oauth_exchange_failed", "failed to exchange oauth code")
 		return
 	}
 
-	profile, err = provider.FetchProfile(c.Request.Context(), token)
+	profile, err := provider.FetchProfile(c.Request.Context(), token)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "fetch_profile_failed", "failed to fetch user profile")
 		return
@@ -2745,25 +2791,25 @@ func (h *handler) oauthCallback(c *gin.Context) {
 		}
 	}
 
-	// Create session or generate public token for frontend redirect
-	if h.tokenService == nil {
-		respondError(c, http.StatusServiceUnavailable, "token_service_unavailable", "token service not configured")
+	sessionToken, sessionExpiresAt, err := h.createSession(user.ID)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "session_creation_failed", "failed to create session")
 		return
 	}
 
-	publicToken := h.tokenService.GeneratePublicToken(user.ID, user.Email, []string{user.Role})
+	exchangeCode, _, err := h.issueOAuthExchangeCode(sessionToken, sessionExpiresAt)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "exchange_code_creation_failed", "failed to issue exchange code")
+		return
+	}
 
-	// Redirect back to frontend with public token
 	frontendURL := h.oauthFrontendURL
 	if frontendURL == "" {
 		frontendURL = "http://localhost:3000"
 	}
-	targetURL := fmt.Sprintf("%s/login?public_token=%s&userId=%s&email=%s&role=%s",
+	targetURL := fmt.Sprintf("%s/login?exchange_code=%s",
 		strings.TrimSuffix(frontendURL, "/"),
-		publicToken,
-		user.ID,
-		url.QueryEscape(user.Email),
-		user.Role)
+		url.QueryEscape(exchangeCode))
 	c.Redirect(http.StatusTemporaryRedirect, targetURL)
 }
 
