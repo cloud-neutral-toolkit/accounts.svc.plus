@@ -83,10 +83,10 @@ jobs:
     strategy:
       matrix:
         service:
-          - { name: account,    workdir: account,     dockerfile: account/Dockerfile }
-          - { name: dashboard,  workdir: dashboard,   dockerfile: dashboard/Dockerfile }
-          - { name: rag-server, workdir: rag-server,  dockerfile: rag-server/Dockerfile }
-          - { name: xcontrol-init,    workdir: .,             dockerfile: xcontrol-init/Dockerfile }
+          - { name: account, image: accounts, workdir: account, dockerfile: account/Dockerfile }
+          - { name: dashboard, image: dashboard, workdir: dashboard, dockerfile: dashboard/Dockerfile }
+          - { name: rag-server, image: rag-server, workdir: rag-server, dockerfile: rag-server/Dockerfile }
+          - { name: xcontrol-init, image: xcontrol-init, workdir: ., dockerfile: xcontrol-init/Dockerfile }
 
     steps:
       # -------------------------------------------------------------
@@ -110,7 +110,7 @@ jobs:
         id: meta
         uses: ./.github/actions/auto-tag
         with:
-          image: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.service.name }}
+          image: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.service.image }}
 
       # -------------------------------------------------------------
       # Docker Buildx setup
@@ -157,9 +157,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          SERVICE="${{ matrix.service.name }}"
-          ORIGIN_IMG="${{ env.REGISTRY }}/${{ env.ORG }}/${SERVICE}@${{ steps.build.outputs.digest }}"
-          TARGET_REPO="docker.io/${TARGET_NS}/${SERVICE}"
+          IMAGE_NAME="${{ matrix.service.image }}"
+          ORIGIN_IMG="${{ env.REGISTRY }}/${{ env.ORG }}/${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
+          TARGET_REPO="docker.io/${TARGET_NS}/${IMAGE_NAME}"
 
           TAG="latest"
           docker pull "$ORIGIN_IMG"
@@ -173,10 +173,10 @@ jobs:
     strategy:
       matrix:
         service:
-          - { name: dashboard,  workdir: dashboard,   dockerfile: dashboard/Dockerfile }
-          - { name: account,    workdir: account,     dockerfile: account/Dockerfile }
-          - { name: rag-server, workdir: rag-server,  dockerfile: rag-server/Dockerfile }
-          - { name: xcontrol-init,    workdir: .,             dockerfile: xcontrol-init/Dockerfile }
+          - { name: dashboard, image: dashboard, workdir: dashboard, dockerfile: dashboard/Dockerfile }
+          - { name: account, image: accounts, workdir: account, dockerfile: account/Dockerfile }
+          - { name: rag-server, image: rag-server, workdir: rag-server, dockerfile: rag-server/Dockerfile }
+          - { name: xcontrol-init, image: xcontrol-init, workdir: ., dockerfile: xcontrol-init/Dockerfile }
 
     steps:
       # -------------------------------------------------------------
@@ -184,17 +184,24 @@ jobs:
       # -------------------------------------------------------------
       - uses: actions/checkout@v4
 
+      - name: Resolve short sha tag
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "sha_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
       # -------------------------------------------------------------
       # SBOM Generation
       # -------------------------------------------------------------
       - uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.service.name }}@${{ steps.build.outputs.digest }}
+          image: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.service.image }}:${{ steps.vars.outputs.sha_short }}
           output-file: sbom.spdx.json
 
       - uses: actions/upload-artifact@v4
         with:
-          name: sbom-${{ matrix.service.name }}
+          name: sbom-${{ matrix.service.image }}
           path: sbom.spdx.json
 
       # -------------------------------------------------------------
@@ -202,7 +209,7 @@ jobs:
       # -------------------------------------------------------------
       - uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.service.name }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.service.image }}:${{ steps.vars.outputs.sha_short }}
           severity: HIGH,CRITICAL
           exit-code: '1'
 
@@ -217,5 +224,5 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: "true"
         run: |
-          IMG=${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.service.name }}@${{ steps.build.outputs.digest }}
+          IMG=${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.service.image }}:${{ steps.vars.outputs.sha_short }}
           cosign sign --yes "$IMG"

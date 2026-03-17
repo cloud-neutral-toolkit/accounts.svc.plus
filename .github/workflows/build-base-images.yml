@@ -145,10 +145,17 @@ jobs:
       # -------------------------------------------------------------
       - uses: actions/checkout@v4
 
+      - name: Resolve short sha tag
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "sha_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
 
       - uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.image.name }}@${{ steps.build.outputs.digest }}
+          image: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.image.name }}:${{ steps.vars.outputs.sha_short }}
           output-file: sbom.spdx.json
 
       - uses: actions/upload-artifact@v4
@@ -161,7 +168,7 @@ jobs:
       # -------------------------------------------------------------
       - uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.image.name }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.image.name }}:${{ steps.vars.outputs.sha_short }}
           severity: HIGH,CRITICAL
           exit-code: '1'
 
@@ -173,5 +180,5 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: "true"
         run: |
-          COSIGN_IMAGE=${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.image.name }}@${{ steps.build.outputs.digest }}
+          COSIGN_IMAGE=${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.image.name }}:${{ steps.vars.outputs.sha_short }}
           cosign sign --yes "$COSIGN_IMAGE"

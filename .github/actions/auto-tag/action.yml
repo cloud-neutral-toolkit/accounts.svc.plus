@@ -26,6 +26,9 @@ runs:
           # main → latest
           type=raw,enable=${{ github.ref == 'refs/heads/main' }},value=latest
 
+          # commit → short sha
+          type=sha,format=short,prefix=
+
           # release tag（v1.2.3）
           type=ref,event=tag
           type=semver,pattern={{version}}
