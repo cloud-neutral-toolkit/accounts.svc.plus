@@ -47,6 +47,39 @@ cp .env.example .env
 make dev
 ```
 
+## 提交前同步要求 (Pre-Commit Sync Requirement)
+
+控制仓库中的 `subrepos/accounts.svc.plus` 在每次提交前，必须先同步当前线上运行实例。
+
+线上实例命名规则：
+
+- `<server-name>-<hostname-or-env>-<git-commit-short-id>.<domain>`
+
+例如：
+
+- `accounts-us-xhttp-2886a64.svc.plus`
+
+执行要求：
+
+```bash
+cd /Users/shenlan/workspaces/cloud-neutral-toolkit/github-org-cloud-neutral-toolkit/subrepos/accounts.svc.plus
+
+# 1. 确认线上当前运行 revision / image
+ssh root@us-xhttp.svc.plus 'docker ps --format "table {{.Names}}\t{{.Image}}\t{{.RunningFor}}" | grep accounts'
+
+# 2. 动态定位当前 active accounts 实例并核对 compose 目录与镜像 tag
+ssh root@us-xhttp.svc.plus '
+name=$(docker ps --format "{{.Names}}" | grep "^accounts-" | head -n 1) &&
+echo "$name" &&
+sed -n "1,80p" "/opt/cloud-neutral/accounts/${name}/docker-compose.yml"
+'
+
+# 3. 再开始本地提交
+git status
+```
+
+如果线上 revision 已变化，应先以新的 `<server-name>-<hostname-or-env>-<git-commit-short-id>.<domain>` 实例为准完成同步，再提交本地改动。
+
 ## Stripe 配置 (Stripe Billing Setup)
 
 Stripe 相关服务端能力现在由 `accounts.svc.plus` 承担，包括：
