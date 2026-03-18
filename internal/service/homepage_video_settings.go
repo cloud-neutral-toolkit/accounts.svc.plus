@@ -13,8 +13,6 @@ import (
 
 const homepageVideoDefaultDomainKey = "__default__"
 
-var errHomepageVideoSettingsDBNotInitialized = errors.New("homepage video settings db not initialized")
-
 type HomepageVideoEntry struct {
 	DomainKey string
 	VideoURL  string
@@ -85,7 +83,7 @@ func SaveHomepageVideoSettings(
 ) (HomepageVideoSettings, error) {
 	database := currentDB()
 	if database == nil {
-		return HomepageVideoSettings{}, errHomepageVideoSettingsDBNotInitialized
+		return HomepageVideoSettings{}, ErrServiceDBNotInitialized
 	}
 
 	normalized, err := normalizeHomepageVideoSettings(settings)
