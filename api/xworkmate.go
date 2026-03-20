@@ -35,6 +35,13 @@ type xworkmateProfilePayload struct {
 	ApisixURL       string `json:"apisixUrl"`
 }
 
+var xworkmateForbiddenTokenFields = map[string]struct{}{
+	"openclawtoken": {},
+	"gatewaytoken":  {},
+	"vaulttoken":    {},
+	"apisixtoken":   {},
+}
+
 func (h *handler) ensureSharedXWorkmateTenant(ctx context.Context) error {
 	tenant := &store.Tenant{
 		ID:      store.SharedXWorkmateTenantID,
@@ -235,6 +242,23 @@ func buildSessionTenantEntries(memberships []store.TenantMembership) []gin.H {
 	return result
 }
 
+func buildXWorkmateTokenConfigured(profile *store.XWorkmateProfile) gin.H {
+	result := gin.H{
+		"openclaw": false,
+		"vault":    false,
+		"apisix":   false,
+	}
+	if profile == nil {
+		return result
+	}
+
+	if strings.TrimSpace(profile.VaultSecretPath) != "" && strings.TrimSpace(profile.VaultSecretKey) != "" {
+		result["openclaw"] = true
+	}
+
+	return result
+}
+
 func (h *handler) buildSessionUser(ctx context.Context, host string, user *store.User) (gin.H, error) {
 	access, err := h.resolveXWorkmateAccess(ctx, host, user)
 	if err != nil {
@@ -262,8 +286,6 @@ func buildXWorkmateProfileResponse(access *xworkmateAccessContext, profile *stor
 		"vaultSecretKey":  "",
 		"apisixUrl":       "",
 	}
-	openclawConfigured := false
-
 	if profile != nil {
 		resolvedProfile["openclawUrl"] = profile.OpenclawURL
 		resolvedProfile["openclawOrigin"] = profile.OpenclawOrigin
@@ -272,7 +294,6 @@ func buildXWorkmateProfileResponse(access *xworkmateAccessContext, profile *stor
 		resolvedProfile["vaultSecretPath"] = profile.VaultSecretPath
 		resolvedProfile["vaultSecretKey"] = profile.VaultSecretKey
 		resolvedProfile["apisixUrl"] = profile.ApisixURL
-		openclawConfigured = strings.TrimSpace(profile.VaultSecretPath) != ""
 	}
 
 	return gin.H{
@@ -287,12 +308,29 @@ func buildXWorkmateProfileResponse(access *xworkmateAccessContext, profile *stor
 		"canEditIntegrations": access.CanEditIntegrations,
 		"canManageTenant":     access.CanManageTenant,
 		"profile":             resolvedProfile,
-		"tokenConfigured": gin.H{
-			"openclaw": openclawConfigured,
-			"vault":    false,
-			"apisix":   false,
-		},
+		"tokenConfigured":     buildXWorkmateTokenConfigured(profile),
 	}
+}
+
+func containsForbiddenXWorkmateTokenField(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			if _, ok := xworkmateForbiddenTokenFields[strings.ToLower(strings.TrimSpace(key))]; ok {
+				return true
+			}
+			if containsForbiddenXWorkmateTokenField(nested) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if containsForbiddenXWorkmateTokenField(nested) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (h *handler) getXWorkmateProfile(c *gin.Context) {
@@ -372,11 +410,9 @@ func (h *handler) updateXWorkmateProfile(c *gin.Context) {
 		return
 	}
 
-	for _, forbiddenField := range []string{"openclawToken", "gatewayToken", "vaultToken", "apisixToken"} {
-		if _, ok := raw[forbiddenField]; ok {
-			respondError(c, http.StatusBadRequest, "token_persistence_forbidden", "raw token fields cannot be persisted")
-			return
-		}
+	if containsForbiddenXWorkmateTokenField(raw) {
+		respondError(c, http.StatusBadRequest, "token_persistence_forbidden", "raw token fields cannot be persisted")
+		return
 	}
 
 	profileValue, ok := raw["profile"]
