@@ -3,6 +3,10 @@ name: Build And Push GHCR Image
 on:
   workflow_call:
     inputs:
+      image_tag:
+        description: Optional image tag. Defaults to the current commit SHA.
+        required: false
+        type: string
       push_latest:
         description: Also publish the `latest` tag.
         required: false
@@ -10,6 +14,10 @@ on:
         type: boolean
   workflow_dispatch:
     inputs:
+      image_tag:
+        description: Optional image tag. Defaults to the current commit SHA.
+        required: false
+        type: string
       push_latest:
         description: Also publish the `latest` tag.
         required: false
@@ -52,7 +60,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO_OWNER }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=sha,format=short
+            type=raw,value=${{ inputs.image_tag }},enable=${{ inputs.image_tag != '' }}
+            type=sha,format=short,enable=${{ inputs.image_tag == '' }}
             type=raw,value=latest,enable=${{ inputs.push_latest }}
 
       - name: Build And Push Image
