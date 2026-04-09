@@ -131,6 +131,20 @@ type AccountQuotaState struct {
 	UpdatedAt              time.Time
 }
 
+type AccountBillingProfile struct {
+	AccountUUID        string
+	PackageName        string
+	IncludedQuotaBytes int64
+	BasePricePerByte   float64
+	RegionMultiplier   float64
+	LineMultiplier     float64
+	PeakMultiplier     float64
+	OffPeakMultiplier  float64
+	PricingRuleVersion string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
 type AccountPolicySnapshot struct {
 	AccountUUID        string
 	PolicyVersion      string
@@ -215,6 +229,8 @@ type Store interface {
 	ListBillingLedgerByAccount(ctx context.Context, accountUUID string, limit int) ([]BillingLedgerEntry, error)
 	UpsertAccountQuotaState(ctx context.Context, state *AccountQuotaState) error
 	GetAccountQuotaState(ctx context.Context, accountUUID string) (*AccountQuotaState, error)
+	UpsertAccountBillingProfile(ctx context.Context, profile *AccountBillingProfile) error
+	GetAccountBillingProfile(ctx context.Context, accountUUID string) (*AccountBillingProfile, error)
 	UpsertAccountPolicySnapshot(ctx context.Context, snapshot *AccountPolicySnapshot) error
 	GetLatestAccountPolicySnapshot(ctx context.Context, accountUUID string) (*AccountPolicySnapshot, error)
 	UpsertNodeHealthSnapshot(ctx context.Context, snapshot *NodeHealthSnapshot) error
@@ -264,6 +280,7 @@ type memoryStore struct {
 	trafficMinuteBuckets    map[string]*TrafficMinuteBucket
 	billingLedgerEntries    map[string]*BillingLedgerEntry
 	accountQuotaStates      map[string]*AccountQuotaState
+	accountBillingProfiles  map[string]*AccountBillingProfile
 	accountPolicySnapshots  map[string]*AccountPolicySnapshot
 	nodeHealthSnapshots     map[string]*NodeHealthSnapshot
 	schedulerDecisions      map[string]*SchedulerDecision
@@ -309,6 +326,7 @@ func newMemoryStore(allowSuperAdminCounting bool) Store {
 		trafficMinuteBuckets:    make(map[string]*TrafficMinuteBucket),
 		billingLedgerEntries:    make(map[string]*BillingLedgerEntry),
 		accountQuotaStates:      make(map[string]*AccountQuotaState),
+		accountBillingProfiles:  make(map[string]*AccountBillingProfile),
 		accountPolicySnapshots:  make(map[string]*AccountPolicySnapshot),
 		nodeHealthSnapshots:     make(map[string]*NodeHealthSnapshot),
 		schedulerDecisions:      make(map[string]*SchedulerDecision),

@@ -138,6 +138,20 @@ func TestAccountUsageAndPolicyEndpoints(t *testing.T) {
 		t.Fatalf("upsert quota state: %v", err)
 	}
 
+	if err := st.UpsertAccountBillingProfile(ctx, &store.AccountBillingProfile{
+		AccountUUID:        user.ID,
+		PackageName:        "starter",
+		IncludedQuotaBytes: 4096,
+		BasePricePerByte:   0.125,
+		RegionMultiplier:   1.2,
+		LineMultiplier:     1.5,
+		PeakMultiplier:     1.0,
+		OffPeakMultiplier:  1.0,
+		PricingRuleVersion: "pricing-v1",
+	}); err != nil {
+		t.Fatalf("upsert billing profile: %v", err)
+	}
+
 	if err := st.InsertBillingLedgerEntry(ctx, &store.BillingLedgerEntry{
 		ID:                 "ledger-1",
 		AccountUUID:        user.ID,
@@ -179,9 +193,16 @@ func TestAccountUsageAndPolicyEndpoints(t *testing.T) {
 	}
 
 	var usagePayload struct {
-		AccountUUID   string `json:"accountUuid"`
-		TotalBytes    int64  `json:"totalBytes"`
-		SourceOfTruth string `json:"sourceOfTruth"`
+		AccountUUID    string `json:"accountUuid"`
+		TotalBytes     int64  `json:"totalBytes"`
+		SourceOfTruth  string `json:"sourceOfTruth"`
+		BillingProfile struct {
+			PackageName        string  `json:"packageName"`
+			BasePricePerByte   float64 `json:"basePricePerByte"`
+			RegionMultiplier   float64 `json:"regionMultiplier"`
+			LineMultiplier     float64 `json:"lineMultiplier"`
+			PricingRuleVersion string  `json:"pricingRuleVersion"`
+		} `json:"billingProfile"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &usagePayload); err != nil {
 		t.Fatalf("decode usage payload: %v", err)
@@ -194,6 +215,9 @@ func TestAccountUsageAndPolicyEndpoints(t *testing.T) {
 	}
 	if usagePayload.SourceOfTruth != "postgresql" {
 		t.Fatalf("expected source of truth postgresql, got %q", usagePayload.SourceOfTruth)
+	}
+	if usagePayload.BillingProfile.PackageName != "starter" {
+		t.Fatalf("expected billing profile package starter, got %q", usagePayload.BillingProfile.PackageName)
 	}
 
 	bucketsReq := httptest.NewRequest(http.MethodGet, "/api/account/usage/buckets", nil)
@@ -248,6 +272,11 @@ func TestAccountUsageAndPolicyEndpoints(t *testing.T) {
 		QuotaState    struct {
 			CurrentBalance float64 `json:"currentBalance"`
 		} `json:"quotaState"`
+		BillingProfile struct {
+			PackageName        string  `json:"packageName"`
+			IncludedQuotaBytes int64   `json:"includedQuotaBytes"`
+			BasePricePerByte   float64 `json:"basePricePerByte"`
+		} `json:"billingProfile"`
 		Ledger []struct {
 			ID          string  `json:"id"`
 			EntryType   string  `json:"entryType"`
@@ -263,6 +292,9 @@ func TestAccountUsageAndPolicyEndpoints(t *testing.T) {
 	}
 	if billingPayload.SourceOfTruth != "postgresql" {
 		t.Fatalf("expected billing source of truth postgresql, got %q", billingPayload.SourceOfTruth)
+	}
+	if billingPayload.BillingProfile.IncludedQuotaBytes != 4096 {
+		t.Fatalf("expected billing profile included quota 4096, got %d", billingPayload.BillingProfile.IncludedQuotaBytes)
 	}
 	if billingPayload.QuotaState.CurrentBalance != 87.5 {
 		t.Fatalf("expected billing current balance 87.5, got %v", billingPayload.QuotaState.CurrentBalance)

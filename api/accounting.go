@@ -69,12 +69,16 @@ func (h *handler) accountUsageSummary(c *gin.Context) {
 	suspendState := "active"
 	throttleState := "normal"
 	arrears := false
+	var billingProfile *store.AccountBillingProfile
 	if quota, err := h.store.GetAccountQuotaState(c.Request.Context(), user.ID); err == nil && quota != nil {
 		currentBalance = quota.CurrentBalance
 		remainingQuota = quota.RemainingIncludedQuota
 		suspendState = quota.SuspendState
 		throttleState = quota.ThrottleState
 		arrears = quota.Arrears
+	}
+	if profile, err := h.store.GetAccountBillingProfile(c.Request.Context(), user.ID); err == nil && profile != nil {
+		billingProfile = profile
 	}
 
 	syncDelaySeconds := 0
@@ -98,6 +102,7 @@ func (h *handler) accountUsageSummary(c *gin.Context) {
 		"arrears":                arrears,
 		"lastBucketAt":           lastBucketAt,
 		"syncDelaySeconds":       syncDelaySeconds,
+		"billingProfile":         billingProfile,
 	})
 }
 
@@ -147,12 +152,17 @@ func (h *handler) accountBillingSummary(c *gin.Context) {
 	if snapshot, err := h.store.GetAccountQuotaState(c.Request.Context(), user.ID); err == nil {
 		quota = snapshot
 	}
+	var billingProfile *store.AccountBillingProfile
+	if profile, err := h.store.GetAccountBillingProfile(c.Request.Context(), user.ID); err == nil {
+		billingProfile = profile
+	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"accountUuid":   user.ID,
-		"quotaState":    quota,
-		"ledger":        ledger,
-		"sourceOfTruth": accountingDataSource,
+		"accountUuid":    user.ID,
+		"quotaState":     quota,
+		"billingProfile": billingProfile,
+		"ledger":         ledger,
+		"sourceOfTruth":  accountingDataSource,
 	})
 }
 
@@ -218,13 +228,15 @@ func (h *handler) adminTrafficAccount(c *gin.Context) {
 	}
 	policy, _ := h.store.GetLatestAccountPolicySnapshot(c.Request.Context(), accountUUID)
 	quota, _ := h.store.GetAccountQuotaState(c.Request.Context(), accountUUID)
+	billingProfile, _ := h.store.GetAccountBillingProfile(c.Request.Context(), accountUUID)
 
 	c.JSON(http.StatusOK, gin.H{
-		"accountUuid": accountUUID,
-		"buckets":     buckets,
-		"ledger":      ledger,
-		"policy":      policy,
-		"quotaState":  quota,
+		"accountUuid":    accountUUID,
+		"buckets":        buckets,
+		"ledger":         ledger,
+		"policy":         policy,
+		"quotaState":     quota,
+		"billingProfile": billingProfile,
 	})
 }
 

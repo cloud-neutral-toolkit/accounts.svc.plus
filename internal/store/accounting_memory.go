@@ -61,6 +61,14 @@ func cloneQuotaState(src *AccountQuotaState) *AccountQuotaState {
 	return &copy
 }
 
+func cloneBillingProfile(src *AccountBillingProfile) *AccountBillingProfile {
+	if src == nil {
+		return nil
+	}
+	copy := *src
+	return &copy
+}
+
 func clonePolicySnapshot(src *AccountPolicySnapshot) *AccountPolicySnapshot {
 	if src == nil {
 		return nil
@@ -263,6 +271,36 @@ func (s *memoryStore) GetAccountQuotaState(ctx context.Context, accountUUID stri
 		return nil, ErrUserNotFound
 	}
 	return cloneQuotaState(record), nil
+}
+
+func (s *memoryStore) UpsertAccountBillingProfile(ctx context.Context, profile *AccountBillingProfile) error {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	copy := cloneBillingProfile(profile)
+	if copy == nil {
+		return errors.New("billing profile is required")
+	}
+	now := time.Now().UTC()
+	if copy.CreatedAt.IsZero() {
+		copy.CreatedAt = now
+	}
+	copy.UpdatedAt = now
+	s.accountBillingProfiles[strings.TrimSpace(copy.AccountUUID)] = copy
+	return nil
+}
+
+func (s *memoryStore) GetAccountBillingProfile(ctx context.Context, accountUUID string) (*AccountBillingProfile, error) {
+	_ = ctx
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	record, ok := s.accountBillingProfiles[strings.TrimSpace(accountUUID)]
+	if !ok {
+		return nil, ErrUserNotFound
+	}
+	return cloneBillingProfile(record), nil
 }
 
 func (s *memoryStore) UpsertAccountPolicySnapshot(ctx context.Context, snapshot *AccountPolicySnapshot) error {

@@ -352,6 +352,70 @@ func (s *postgresStore) GetAccountQuotaState(ctx context.Context, accountUUID st
 	return &state, nil
 }
 
+func (s *postgresStore) UpsertAccountBillingProfile(ctx context.Context, profile *AccountBillingProfile) error {
+	if profile == nil {
+		return errors.New("billing profile is required")
+	}
+
+	const query = `
+		INSERT INTO account_billing_profiles (
+			account_uuid, package_name, included_quota_bytes, base_price_per_byte, region_multiplier, line_multiplier, peak_multiplier, offpeak_multiplier, pricing_rule_version
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (account_uuid) DO UPDATE SET
+			package_name = EXCLUDED.package_name,
+			included_quota_bytes = EXCLUDED.included_quota_bytes,
+			base_price_per_byte = EXCLUDED.base_price_per_byte,
+			region_multiplier = EXCLUDED.region_multiplier,
+			line_multiplier = EXCLUDED.line_multiplier,
+			peak_multiplier = EXCLUDED.peak_multiplier,
+			offpeak_multiplier = EXCLUDED.offpeak_multiplier,
+			pricing_rule_version = EXCLUDED.pricing_rule_version,
+			updated_at = now()
+		RETURNING created_at, updated_at`
+
+	return s.db.QueryRowContext(
+		ctx,
+		query,
+		strings.TrimSpace(profile.AccountUUID),
+		strings.TrimSpace(profile.PackageName),
+		profile.IncludedQuotaBytes,
+		profile.BasePricePerByte,
+		profile.RegionMultiplier,
+		profile.LineMultiplier,
+		profile.PeakMultiplier,
+		profile.OffPeakMultiplier,
+		strings.TrimSpace(profile.PricingRuleVersion),
+	).Scan(&profile.CreatedAt, &profile.UpdatedAt)
+}
+
+func (s *postgresStore) GetAccountBillingProfile(ctx context.Context, accountUUID string) (*AccountBillingProfile, error) {
+	const query = `
+		SELECT account_uuid, package_name, included_quota_bytes, base_price_per_byte, region_multiplier, line_multiplier, peak_multiplier, offpeak_multiplier, pricing_rule_version, created_at, updated_at
+		FROM account_billing_profiles
+		WHERE account_uuid = $1`
+	var profile AccountBillingProfile
+	err := s.db.QueryRowContext(ctx, query, strings.TrimSpace(accountUUID)).Scan(
+		&profile.AccountUUID,
+		&profile.PackageName,
+		&profile.IncludedQuotaBytes,
+		&profile.BasePricePerByte,
+		&profile.RegionMultiplier,
+		&profile.LineMultiplier,
+		&profile.PeakMultiplier,
+		&profile.OffPeakMultiplier,
+		&profile.PricingRuleVersion,
+		&profile.CreatedAt,
+		&profile.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+	return &profile, nil
+}
+
 func (s *postgresStore) UpsertAccountPolicySnapshot(ctx context.Context, snapshot *AccountPolicySnapshot) error {
 	if snapshot == nil {
 		return errors.New("policy snapshot is required")
