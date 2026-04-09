@@ -31,8 +31,7 @@ runs:
   using: composite
   steps:
     - name: Checkout
-    
-      uses: actions/checkout@v4
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
     - name: Derive platform matrix values
       id: platforms
@@ -60,14 +59,14 @@ runs:
 
     - name: Set up Go
       if: inputs.service != 'dashboard'
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@7b8cf10d4e4a01d4992d18a89f4d7dc5a3e6d6f4 # v4.3.0
       with:
         go-version: '1.22'
         cache: true
 
     - name: Cache Go build data
       if: inputs.service != 'dashboard'
-      uses: actions/cache@v4
+      uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
         path: |
           ~/.cache/go-build
@@ -79,7 +78,7 @@ runs:
 
     - name: Set up Node.js
       if: inputs.service == 'dashboard'
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
         node-version: 20
         cache: yarn
@@ -87,7 +86,7 @@ runs:
 
     - name: Cache dashboard artifacts
       if: inputs.service == 'dashboard'
-      uses: actions/cache@v4
+      uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
         path: |
           dashboard/.next/cache
@@ -99,8 +98,8 @@ runs:
 
     - name: Enable Docker build tooling
       if: inputs.enable_docker == 'true'
-      uses: docker/setup-qemu-action@v3
+      uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
 
     - name: Set up buildx
       if: inputs.enable_docker == 'true'
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
