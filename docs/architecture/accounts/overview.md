@@ -142,6 +142,7 @@ flowchart TB
 - `identities` links OAuth providers to users.
 - `sessions` stores session tokens with expiry.
 - `subscriptions` stores billing state and provider references.
+- `traffic_stat_checkpoints`, `traffic_minute_buckets`, `billing_ledger`, `account_quota_states`, `account_policy_snapshots`, `node_health_snapshots`, and `scheduler_decisions` are the control-plane tables for usage, billing, and orchestration.
 - `admin_settings` stores a versioned permission matrix.
 - `rbac_roles`, `rbac_permissions`, and `rbac_role_permissions` store the RBAC catalog.
 - `agents` stores agent runtime status snapshots.
@@ -161,3 +162,4 @@ flowchart TB
 
 - Some frontend BFF endpoints use the same account service backend but shape cookies and auth state for browser usage.
 - `api/agent-server/v1/*` is the canonical route family for the console and agent runtime.
+- Usage and billing APIs are PostgreSQL-backed and do not depend on Prometheus.

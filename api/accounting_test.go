@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -137,6 +138,20 @@ func TestAccountUsageAndPolicyEndpoints(t *testing.T) {
 		t.Fatalf("upsert quota state: %v", err)
 	}
 
+	if err := st.InsertBillingLedgerEntry(ctx, &store.BillingLedgerEntry{
+		ID:                 "ledger-1",
+		AccountUUID:        user.ID,
+		BucketStart:        bucketStart,
+		BucketEnd:          bucketStart.Add(time.Minute),
+		EntryType:          "traffic_charge",
+		RatedBytes:         384,
+		AmountDelta:        -1.25,
+		BalanceAfter:       87.5,
+		PricingRuleVersion: "pricing-v1",
+	}); err != nil {
+		t.Fatalf("insert billing ledger: %v", err)
+	}
+
 	if err := st.UpsertAccountPolicySnapshot(ctx, &store.AccountPolicySnapshot{
 		AccountUUID:        user.ID,
 		PolicyVersion:      "policy-v1",
@@ -164,8 +179,9 @@ func TestAccountUsageAndPolicyEndpoints(t *testing.T) {
 	}
 
 	var usagePayload struct {
-		AccountUUID string `json:"accountUuid"`
-		TotalBytes  int64  `json:"totalBytes"`
+		AccountUUID   string `json:"accountUuid"`
+		TotalBytes    int64  `json:"totalBytes"`
+		SourceOfTruth string `json:"sourceOfTruth"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &usagePayload); err != nil {
 		t.Fatalf("decode usage payload: %v", err)
@@ -175,6 +191,93 @@ func TestAccountUsageAndPolicyEndpoints(t *testing.T) {
 	}
 	if usagePayload.TotalBytes != 384 {
 		t.Fatalf("expected total bytes 384, got %d", usagePayload.TotalBytes)
+	}
+	if usagePayload.SourceOfTruth != "postgresql" {
+		t.Fatalf("expected source of truth postgresql, got %q", usagePayload.SourceOfTruth)
+	}
+
+	bucketsReq := httptest.NewRequest(http.MethodGet, "/api/account/usage/buckets", nil)
+	bucketsReq.Header.Set("Authorization", "Bearer "+sessionToken)
+	bucketsRec := httptest.NewRecorder()
+	router.ServeHTTP(bucketsRec, bucketsReq)
+
+	if bucketsRec.Code != http.StatusOK {
+		t.Fatalf("usage buckets status: %d body=%s", bucketsRec.Code, bucketsRec.Body.String())
+	}
+
+	var bucketsPayload struct {
+		AccountUUID   string `json:"accountUuid"`
+		SourceOfTruth string `json:"sourceOfTruth"`
+		Buckets       []struct {
+			TotalBytes  int64     `json:"totalBytes"`
+			NodeID      string    `json:"nodeId"`
+			BucketStart time.Time `json:"bucketStart"`
+		} `json:"buckets"`
+	}
+	if err := json.Unmarshal(bucketsRec.Body.Bytes(), &bucketsPayload); err != nil {
+		t.Fatalf("decode usage buckets payload: %v", err)
+	}
+	if bucketsPayload.AccountUUID != user.ID {
+		t.Fatalf("expected usage buckets account uuid %q, got %q", user.ID, bucketsPayload.AccountUUID)
+	}
+	if bucketsPayload.SourceOfTruth != "postgresql" {
+		t.Fatalf("expected usage buckets source of truth postgresql, got %q", bucketsPayload.SourceOfTruth)
+	}
+	if len(bucketsPayload.Buckets) != 1 {
+		t.Fatalf("expected 1 usage bucket, got %d", len(bucketsPayload.Buckets))
+	}
+	if bucketsPayload.Buckets[0].TotalBytes != 384 {
+		t.Fatalf("expected usage bucket total bytes 384, got %d", bucketsPayload.Buckets[0].TotalBytes)
+	}
+	if bucketsPayload.Buckets[0].NodeID != "node-a" {
+		t.Fatalf("expected usage bucket node node-a, got %q", bucketsPayload.Buckets[0].NodeID)
+	}
+
+	billingReq := httptest.NewRequest(http.MethodGet, "/api/account/billing/summary", nil)
+	billingReq.Header.Set("Authorization", "Bearer "+sessionToken)
+	billingRec := httptest.NewRecorder()
+	router.ServeHTTP(billingRec, billingReq)
+
+	if billingRec.Code != http.StatusOK {
+		t.Fatalf("billing summary status: %d body=%s", billingRec.Code, billingRec.Body.String())
+	}
+
+	var billingPayload struct {
+		AccountUUID   string `json:"accountUuid"`
+		SourceOfTruth string `json:"sourceOfTruth"`
+		QuotaState    struct {
+			CurrentBalance float64 `json:"currentBalance"`
+		} `json:"quotaState"`
+		Ledger []struct {
+			ID          string  `json:"id"`
+			EntryType   string  `json:"entryType"`
+			RatedBytes  int64   `json:"ratedBytes"`
+			AmountDelta float64 `json:"amountDelta"`
+		} `json:"ledger"`
+	}
+	if err := json.Unmarshal(billingRec.Body.Bytes(), &billingPayload); err != nil {
+		t.Fatalf("decode billing payload: %v", err)
+	}
+	if billingPayload.AccountUUID != user.ID {
+		t.Fatalf("expected billing account uuid %q, got %q", user.ID, billingPayload.AccountUUID)
+	}
+	if billingPayload.SourceOfTruth != "postgresql" {
+		t.Fatalf("expected billing source of truth postgresql, got %q", billingPayload.SourceOfTruth)
+	}
+	if billingPayload.QuotaState.CurrentBalance != 87.5 {
+		t.Fatalf("expected billing current balance 87.5, got %v", billingPayload.QuotaState.CurrentBalance)
+	}
+	if len(billingPayload.Ledger) != 1 {
+		t.Fatalf("expected 1 billing ledger entry, got %d", len(billingPayload.Ledger))
+	}
+	if billingPayload.Ledger[0].ID != "ledger-1" {
+		t.Fatalf("expected billing ledger id ledger-1, got %q", billingPayload.Ledger[0].ID)
+	}
+	if billingPayload.Ledger[0].EntryType != "traffic_charge" {
+		t.Fatalf("expected billing entry type traffic_charge, got %q", billingPayload.Ledger[0].EntryType)
+	}
+	if billingPayload.Ledger[0].RatedBytes != 384 {
+		t.Fatalf("expected billing rated bytes 384, got %d", billingPayload.Ledger[0].RatedBytes)
 	}
 
 	policyReq := httptest.NewRequest(http.MethodGet, "/api/account/policy", nil)
@@ -202,5 +305,80 @@ func TestAccountUsageAndPolicyEndpoints(t *testing.T) {
 	}
 	if len(policyPayload.EligibleNodeGroups) != 1 || policyPayload.EligibleNodeGroups[0] != "hk-premium" {
 		t.Fatalf("unexpected eligible node groups %#v", policyPayload.EligibleNodeGroups)
+	}
+}
+
+func TestInternalNetworkIdentitiesEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "test-internal-token")
+
+	st := store.NewMemoryStore()
+	ctx := context.Background()
+
+	if err := st.CreateUser(ctx, &store.User{
+		Name:          "Exporter User",
+		Email:         "exporter@example.com",
+		PasswordHash:  "hashed",
+		EmailVerified: true,
+		Role:          store.RoleUser,
+		Level:         store.LevelUser,
+		Active:        true,
+		ProxyUUID:     "proxy-exporter-id",
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	if err := st.CreateUser(ctx, &store.User{
+		Name:          "Inactive User",
+		Email:         "inactive@example.com",
+		PasswordHash:  "hashed",
+		EmailVerified: true,
+		Role:          store.RoleUser,
+		Level:         store.LevelUser,
+		Active:        false,
+		ProxyUUID:     "proxy-inactive-id",
+	}); err != nil {
+		t.Fatalf("create inactive user: %v", err)
+	}
+
+	router := gin.New()
+	RegisterRoutes(router, WithStore(st), WithEmailVerification(false))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/network/identities", nil)
+	req.Header.Set("X-Service-Token", os.Getenv("INTERNAL_SERVICE_TOKEN"))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("internal identities status: %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Identities []struct {
+			UUID        string `json:"uuid"`
+			Email       string `json:"email"`
+			AccountUUID string `json:"accountUuid"`
+		} `json:"identities"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode internal identities payload: %v", err)
+	}
+
+	foundExporter := false
+	for _, identity := range payload.Identities {
+		if identity.Email != "exporter@example.com" {
+			continue
+		}
+		foundExporter = true
+		if identity.UUID == "" {
+			t.Fatalf("expected exporter UUID to be populated")
+		}
+		if identity.AccountUUID == "" {
+			t.Fatalf("expected account uuid to be populated")
+		}
+	}
+	if !foundExporter {
+		t.Fatalf("expected exporter identity in payload, got %#v", payload.Identities)
 	}
 }

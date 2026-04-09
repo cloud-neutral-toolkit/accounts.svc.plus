@@ -11,6 +11,8 @@ import (
 	"account/internal/store"
 )
 
+const accountingDataSource = "postgresql"
+
 type nodeHeartbeatRequest struct {
 	NodeID            string  `json:"nodeId"`
 	Region            string  `json:"region"`
@@ -88,6 +90,7 @@ func (h *handler) accountUsageSummary(c *gin.Context) {
 		"totalBytes":             totalBytes,
 		"uplinkBytes":            uplinkBytes,
 		"downlinkBytes":          downlinkBytes,
+		"sourceOfTruth":          accountingDataSource,
 		"currentBalance":         currentBalance,
 		"remainingIncludedQuota": remainingQuota,
 		"suspendState":           suspendState,
@@ -122,8 +125,9 @@ func (h *handler) accountUsageBuckets(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"accountUuid": user.ID,
-		"buckets":     buckets,
+		"accountUuid":   user.ID,
+		"buckets":       buckets,
+		"sourceOfTruth": accountingDataSource,
 	})
 }
 
@@ -145,9 +149,10 @@ func (h *handler) accountBillingSummary(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"accountUuid": user.ID,
-		"quotaState":  quota,
-		"ledger":      ledger,
+		"accountUuid":   user.ID,
+		"quotaState":    quota,
+		"ledger":        ledger,
+		"sourceOfTruth": accountingDataSource,
 	})
 }
 

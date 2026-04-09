@@ -414,6 +414,7 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	internalGroup.Use(auth.InternalAuthMiddleware())
 	internalGroup.GET("/public-overview", h.internalPublicOverview)
 	internalGroup.GET("/sandbox/guest", h.internalSandboxGuest)
+	internalGroup.GET("/network/identities", h.internalNetworkIdentities)
 	internalGroup.GET("/policy/:accountUUID", h.internalAccountPolicy)
 	internalGroup.POST("/nodes/heartbeat", h.internalNodeHeartbeat)
 
