@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -323,6 +324,111 @@ func TestUpdateXWorkmateProfileSynthesizesSecretLocatorsFromLegacyFields(t *test
 	if resp.Profile.VaultSecretPath != "kv/openclaw" || resp.Profile.VaultSecretKey != "token" {
 		t.Fatalf("expected legacy fields to remain readable, got %#v", resp.Profile)
 	}
+}
+
+func TestGetXWorkmateProfileFallsBackWhenVaultStatusReadFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router, _, token := newXWorkmateTestHarnessWithVault(
+		t,
+		nil,
+		&flakyXWorkmateVaultService{failAfter: 4},
+	)
+	body, err := json.Marshal(map[string]any{
+		"profile": map[string]any{
+			"openclawUrl":    "wss://gateway.example.com",
+			"openclawOrigin": "https://gateway.example.com",
+			"vaultUrl":       "https://vault.example.com",
+			"vaultNamespace": "team-a",
+			"secretLocators": []map[string]any{
+				{
+					"id":         "locator-openclaw",
+					"provider":   "vault",
+					"secretPath": "kv/openclaw",
+					"secretKey":  "token",
+					"target":     store.XWorkmateSecretLocatorTargetOpenclawGatewayToken,
+					"required":   true,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, "/api/auth/xworkmate/profile", bytes.NewReader(body))
+	putReq.Header.Set("Content-Type", "application/json")
+	putReq.Header.Set("Authorization", "Bearer "+token)
+	putReq.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
+	putRec := httptest.NewRecorder()
+	router.ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("expected update success, got %d: %s", putRec.Code, putRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/auth/xworkmate/profile", nil)
+	getReq.Header.Set("Authorization", "Bearer "+token)
+	getReq.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
+	getRec := httptest.NewRecorder()
+	router.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected profile fetch success, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+
+	var resp struct {
+		Profile struct {
+			OpenclawURL string `json:"openclawUrl"`
+		} `json:"profile"`
+		TokenConfigured struct {
+			Openclaw bool `json:"openclaw"`
+			Vault    bool `json:"vault"`
+			Apisix   bool `json:"apisix"`
+		} `json:"tokenConfigured"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode profile response: %v", err)
+	}
+
+	if resp.Profile.OpenclawURL != "wss://gateway.example.com" {
+		t.Fatalf("expected profile payload to survive vault read failure, got %#v", resp.Profile)
+	}
+	if !resp.TokenConfigured.Openclaw {
+		t.Fatalf("expected locator-derived openclaw tokenConfigured fallback, got %#v", resp.TokenConfigured)
+	}
+	if resp.TokenConfigured.Vault {
+		t.Fatalf("expected vault tokenConfigured fallback to stay false, got %#v", resp.TokenConfigured)
+	}
+	if resp.TokenConfigured.Apisix {
+		t.Fatalf("expected apisix tokenConfigured fallback to stay false, got %#v", resp.TokenConfigured)
+	}
+}
+
+type flakyXWorkmateVaultService struct {
+	hasSecretCalls int
+	failAfter      int
+}
+
+func (f *flakyXWorkmateVaultService) WriteSecret(ctx context.Context, locator store.XWorkmateSecretLocator, value string) error {
+	_ = ctx
+	_ = locator
+	_ = value
+	return nil
+}
+
+func (f *flakyXWorkmateVaultService) DeleteSecret(ctx context.Context, locator store.XWorkmateSecretLocator) error {
+	_ = ctx
+	_ = locator
+	return nil
+}
+
+func (f *flakyXWorkmateVaultService) HasSecret(ctx context.Context, locator store.XWorkmateSecretLocator) (bool, error) {
+	_ = ctx
+	_ = locator
+	f.hasSecretCalls++
+	if f.failAfter > 0 && f.hasSecretCalls > f.failAfter {
+		return false, errors.New("vault unavailable")
+	}
+	return false, nil
 }
 
 func TestUpdateXWorkmateProfileRejectsNestedRawTokenFields(t *testing.T) {

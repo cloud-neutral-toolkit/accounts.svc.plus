@@ -609,11 +609,9 @@ func (h *handler) getXWorkmateProfile(c *gin.Context) {
 	tokenConfigured := buildXWorkmateTokenConfigured(profile)
 	if h.xworkmateVaultService != nil {
 		_, statusByTarget, err := h.describeXWorkmateSecrets(c.Request.Context(), access, user, profile)
-		if err != nil {
-			respondError(c, http.StatusInternalServerError, "xworkmate_secret_read_failed", "failed to load xworkmate secret status")
-			return
+		if err == nil {
+			tokenConfigured = buildXWorkmateTokenConfiguredWithVaultStatus(profile, statusByTarget)
 		}
-		tokenConfigured = buildXWorkmateTokenConfiguredWithVaultStatus(profile, statusByTarget)
 	}
 
 	c.JSON(http.StatusOK, buildXWorkmateProfileResponse(access, profile, tokenConfigured))
