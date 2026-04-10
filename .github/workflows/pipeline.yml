@@ -8,54 +8,19 @@ on:
   workflow_dispatch:
     inputs:
       target_host:
-        description: Ansible inventory host or alias.
+        description: Ansible host or alias
         required: false
         default: "jp-xhttp-contabo.svc.plus"
         type: string
       run_apply:
-        description: Apply deployment (false = dry-run).
+        description: Apply deployment
         required: true
         default: true
         type: boolean
-      image_tag:
-        description: Optional service image tag. Defaults to the current commit SHA.
+      internal_service_token:
+        description: Optional ACP auth token
         required: false
         default: ""
-        type: string
-      push_image:
-        description: Push the service image to GHCR.
-        required: true
-        default: true
-        type: boolean
-      push_latest:
-        description: Also publish the service image with the latest tag.
-        required: true
-        default: false
-        type: boolean
-      run_base_images:
-        description: Also run the base image workflow when base image sources exist.
-        required: true
-        default: false
-        type: boolean
-      push_base_images:
-        description: Push base images when the base image workflow runs.
-        required: true
-        default: true
-        type: boolean
-      base_image_registry:
-        description: Target registry for base images.
-        required: false
-        default: "ghcr.io"
-        type: string
-      base_image_org:
-        description: Target organization for base images.
-        required: false
-        default: "cloud-neutral-toolkit"
-        type: string
-      dockerhub_namespace:
-        description: Docker Hub namespace for base images.
-        required: false
-        default: "cloudneutral"
         type: string
 
 permissions:
