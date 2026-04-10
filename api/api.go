@@ -39,6 +39,8 @@ const defaultPasswordResetTTL = 30 * time.Minute
 const maxMFAVerificationAttempts = 5
 const defaultMFALockoutDuration = 5 * time.Minute
 const defaultOAuthExchangeCodeTTL = 5 * time.Minute
+const defaultBridgeBootstrapTTL = 5 * time.Minute
+const defaultBridgeBootstrapTarget = "https://xworkmate-bridge.svc.plus"
 
 const sessionCookieName = "xc_session"
 
@@ -74,6 +76,10 @@ type handler struct {
 	oauthExchangeCodes        map[string]oauthExchangeCode
 	oauthExchangeMu           sync.RWMutex
 	oauthExchangeTTL          time.Duration
+	bridgeBootstrapTickets    map[string]bridgeBootstrapTicket
+	bridgeBootstrapByCode     map[string]string
+	bridgeBootstrapMu         sync.RWMutex
+	bridgeBootstrapTTL        time.Duration
 	metricsProvider           service.UserMetricsProvider
 	agentStatusReader         agentStatusReader
 	tokenService              *auth.TokenService
@@ -303,6 +309,9 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 		passwordResets:            make(map[string]passwordReset),
 		oauthExchangeCodes:        make(map[string]oauthExchangeCode),
 		oauthExchangeTTL:          defaultOAuthExchangeCodeTTL,
+		bridgeBootstrapTickets:    make(map[string]bridgeBootstrapTicket),
+		bridgeBootstrapByCode:     make(map[string]string),
+		bridgeBootstrapTTL:        defaultBridgeBootstrapTTL,
 	}
 
 	for _, opt := range opts {
@@ -361,6 +370,9 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.GET("/xworkmate/secrets", h.getXWorkmateSecrets)
 	authProtected.PUT("/xworkmate/secrets/:target", h.putXWorkmateSecret)
 	authProtected.DELETE("/xworkmate/secrets/:target", h.deleteXWorkmateSecret)
+	authProtected.POST("/xworkmate/bridge/bootstrap", h.createXWorkmateBridgeBootstrapTicket)
+	authProtected.GET("/xworkmate/bridge/bootstrap/:shortCode", h.lookupXWorkmateBridgeBootstrapTicket)
+	authProtected.POST("/xworkmate/bridge/bootstrap/:ticketId/revoke", h.revokeXWorkmateBridgeBootstrapTicket)
 
 	authProtected.POST("/mfa/totp/provision", h.provisionTOTP)
 	authProtected.POST("/mfa/totp/verify", h.verifyTOTP)
@@ -417,6 +429,7 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	internalGroup.GET("/network/identities", h.internalNetworkIdentities)
 	internalGroup.GET("/policy/:accountUUID", h.internalAccountPolicy)
 	internalGroup.POST("/nodes/heartbeat", h.internalNodeHeartbeat)
+	internalGroup.POST("/xworkmate/bridge/bootstrap/consume", h.internalConsumeXWorkmateBridgeBootstrapTicket)
 
 	// Public /api routes for admin/management (expected by frontend at /api/admin/...)
 	apiGroup := r.Group("/api")

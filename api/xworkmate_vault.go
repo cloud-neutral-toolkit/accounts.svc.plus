@@ -21,6 +21,7 @@ type xworkmateVaultService interface {
 	WriteSecret(ctx context.Context, locator store.XWorkmateSecretLocator, value string) error
 	DeleteSecret(ctx context.Context, locator store.XWorkmateSecretLocator) error
 	HasSecret(ctx context.Context, locator store.XWorkmateSecretLocator) (bool, error)
+	ReadSecret(ctx context.Context, locator store.XWorkmateSecretLocator) (string, error)
 }
 
 type XWorkmateVaultConfig struct {
@@ -174,6 +175,27 @@ func (s *memoryXWorkmateVaultService) HasSecret(ctx context.Context, locator sto
 	return ok, nil
 }
 
+func (s *memoryXWorkmateVaultService) ReadSecret(ctx context.Context, locator store.XWorkmateSecretLocator) (string, error) {
+	_ = ctx
+	store.NormalizeXWorkmateSecretLocator(&locator)
+	if locator.SecretPath == "" || locator.SecretKey == "" {
+		return "", fmt.Errorf("vault locator is incomplete")
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	secretMap := s.store[locator.SecretPath]
+	if secretMap == nil {
+		return "", fmt.Errorf("secret not found")
+	}
+	value, ok := secretMap[locator.SecretKey]
+	if !ok {
+		return "", fmt.Errorf("secret not found")
+	}
+	return value, nil
+}
+
 func (s *httpXWorkmateVaultService) WriteSecret(ctx context.Context, locator store.XWorkmateSecretLocator, value string) error {
 	store.NormalizeXWorkmateSecretLocator(&locator)
 	if locator.SecretPath == "" || locator.SecretKey == "" {
@@ -254,6 +276,22 @@ func (s *httpXWorkmateVaultService) HasSecret(ctx context.Context, locator store
 	}
 	_, ok := data[locator.SecretKey]
 	return ok, nil
+}
+
+func (s *httpXWorkmateVaultService) ReadSecret(ctx context.Context, locator store.XWorkmateSecretLocator) (string, error) {
+	store.NormalizeXWorkmateSecretLocator(&locator)
+	if locator.SecretPath == "" || locator.SecretKey == "" {
+		return "", fmt.Errorf("vault locator is incomplete")
+	}
+	data, err := s.readSecretMap(ctx, locator.SecretPath)
+	if err != nil {
+		return "", err
+	}
+	value, ok := data[locator.SecretKey]
+	if !ok {
+		return "", fmt.Errorf("secret not found")
+	}
+	return value, nil
 }
 
 func (s *httpXWorkmateVaultService) readSecretMap(ctx context.Context, secretPath string) (map[string]string, error) {
