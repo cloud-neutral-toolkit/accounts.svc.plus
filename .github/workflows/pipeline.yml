@@ -80,7 +80,6 @@ jobs:
       SERVICE_IMAGE_REPO_OWNER: ${{ vars.IMAGE_REPO_OWNER || github.repository_owner }}
       SERVICE_IMAGE_NAME: accounts
     outputs:
-      artifact_name: ${{ steps.service_artifact.outputs.name }}
       service_image_repo: ${{ steps.service_image.outputs.repo }}
       service_preferred_tag: ${{ steps.service_preferred.outputs.tag }}
     steps:
@@ -92,6 +91,14 @@ jobs:
 
       - name: Set Up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Log In To GHCR
+        if: needs.prep.outputs.push_image == 'true'
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ vars.GHCR_USERNAME || github.repository_owner }}
+          password: ${{ secrets.GHCR_TOKEN || github.token }}
 
       - name: Resolve Service Image Repository
         id: service_image
@@ -114,32 +121,15 @@ jobs:
           tag="$(bash .github/scripts/utils/preferred-tag.sh "${{ steps.service_meta.outputs.tags }}")"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
-      - name: Build Service Image Artifact
+      - name: Build And Push Service Image
         uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         with:
           context: .
           file: Dockerfile
           platforms: linux/amd64
-          push: false
+          push: ${{ needs.prep.outputs.push_image == 'true' }}
           tags: ${{ steps.service_meta.outputs.tags }}
           labels: ${{ steps.service_meta.outputs.labels }}
-          outputs: type=docker,dest=${{ runner.temp }}/accounts-image.tar
-
-      - name: Prepare Service Artifact Bundle
-        id: service_artifact
-        run: |
-          set -euo pipefail
-          bundle_dir="${RUNNER_TEMP}/service-image-artifact"
-          mkdir -p "${bundle_dir}"
-          cp "${RUNNER_TEMP}/accounts-image.tar" "${bundle_dir}/accounts-image.tar"
-          printf '%s\n' "${{ steps.service_meta.outputs.tags }}" > "${bundle_dir}/tags.txt"
-          echo "name=accounts-image-artifact" >> "$GITHUB_OUTPUT"
-
-      - name: Upload Service Artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{ steps.service_artifact.outputs.name }}
-          path: ${{ runner.temp }}/service-image-artifact
 
   deploy:
     name: Deploy
@@ -150,7 +140,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image: ${{ needs.build.outputs.service_image_repo }}
-      preferred_tag: ${{ steps.push.outputs.preferred_tag }}
+      preferred_tag: ${{ needs.build.outputs.service_preferred_tag }}
       run_apply: ${{ needs.prep.outputs.run_apply }}
       pushed: "true"
     steps:
@@ -165,39 +155,11 @@ jobs:
           token: ${{ secrets.WORKSPACE_REPO_TOKEN || github.token }}
           path: playbooks
 
-      - name: Download Service Artifact
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
-        with:
-          name: ${{ needs.build.outputs.artifact_name }}
-          path: ${{ runner.temp }}/service-image-artifact
-
-      - name: Log In To GHCR
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
-        with:
-          registry: ghcr.io
-          username: ${{ vars.GHCR_USERNAME || github.repository_owner }}
-          password: ${{ secrets.GHCR_TOKEN || github.token }}
-
-      - name: Load And Push Service Image
-        id: push
-        run: |
-          set -euo pipefail
-
-          docker load -i "${RUNNER_TEMP}/service-image-artifact/accounts-image.tar"
-
-          preferred_tag="$(bash .github/scripts/utils/preferred-tag.sh "$(cat "${RUNNER_TEMP}/service-image-artifact/tags.txt")")"
-          while IFS= read -r tag; do
-            [[ -z "${tag}" ]] && continue
-            docker push "${tag}"
-          done < "${RUNNER_TEMP}/service-image-artifact/tags.txt"
-
-          echo "preferred_tag=${preferred_tag}" >> "$GITHUB_OUTPUT"
-
       - name: Resolve Deploy Image Tag
         id: deploy_image_tag
         run: |
           set -euo pipefail
-          tag="${{ steps.push.outputs.preferred_tag }}"
+          tag="${{ needs.build.outputs.service_preferred_tag }}"
           echo "value=${tag##*:}" >> "$GITHUB_OUTPUT"
 
       - name: Set Up Python
