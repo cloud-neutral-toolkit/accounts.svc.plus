@@ -32,7 +32,7 @@ const (
 
 	XWorkmateSecretLocatorProviderVault = "vault"
 
-	XWorkmateSecretLocatorTargetOpenclawGatewayToken = "openclaw.gateway_token"
+	XWorkmateSecretLocatorTargetBridgeAuthToken      = "bridge.auth_token"
 	XWorkmateSecretLocatorTargetVaultRootToken       = "vault.root_token"
 	XWorkmateSecretLocatorTargetAIGatewayAccessToken = "ai_gateway.access_token"
 	XWorkmateSecretLocatorTargetOllamaCloudAPIKey    = "ollama_cloud.api_key"
@@ -79,20 +79,20 @@ type TenantMembership struct {
 }
 
 type XWorkmateProfile struct {
-	ID              string
-	TenantID        string
-	UserID          string
-	Scope           string
-	OpenclawURL     string
-	OpenclawOrigin  string
-	VaultURL        string
-	VaultNamespace  string
-	VaultSecretPath string
-	VaultSecretKey  string
-	SecretLocators  []XWorkmateSecretLocator
-	ApisixURL       string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                 string
+	TenantID           string
+	UserID             string
+	Scope              string
+	BridgeServerURL    string
+	BridgeServerOrigin string
+	VaultURL           string
+	VaultNamespace     string
+	VaultSecretPath    string
+	VaultSecretKey     string
+	SecretLocators     []XWorkmateSecretLocator
+	ApisixURL          string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type XWorkmateSecretLocator struct {
@@ -179,7 +179,7 @@ func cloneXWorkmateSecretLocators(locators []XWorkmateSecretLocator) []XWorkmate
 
 func legacyXWorkmateSecretLocatorID(profile *XWorkmateProfile) string {
 	if profile == nil {
-		return "legacy|xworkmate|openclaw.gateway_token"
+		return "legacy|xworkmate|bridge.auth_token"
 	}
 
 	return strings.Join([]string{
@@ -187,7 +187,7 @@ func legacyXWorkmateSecretLocatorID(profile *XWorkmateProfile) string {
 		strings.TrimSpace(profile.TenantID),
 		strings.TrimSpace(profile.UserID),
 		NormalizeXWorkmateProfileScope(profile.Scope),
-		XWorkmateSecretLocatorTargetOpenclawGatewayToken,
+		XWorkmateSecretLocatorTargetBridgeAuthToken,
 	}, "|")
 }
 
@@ -197,13 +197,13 @@ func synthesizeXWorkmateSecretLocatorFromLegacy(profile *XWorkmateProfile) XWork
 		Provider:   XWorkmateSecretLocatorProviderVault,
 		SecretPath: profile.VaultSecretPath,
 		SecretKey:  profile.VaultSecretKey,
-		Target:     XWorkmateSecretLocatorTargetOpenclawGatewayToken,
+		Target:     XWorkmateSecretLocatorTargetBridgeAuthToken,
 	}
 }
 
 func compatibilityXWorkmateSecretLocator(locators []XWorkmateSecretLocator) (string, string, bool) {
 	for _, locator := range locators {
-		if locator.Target == XWorkmateSecretLocatorTargetOpenclawGatewayToken &&
+		if locator.Target == XWorkmateSecretLocatorTargetBridgeAuthToken &&
 			locator.SecretPath != "" && locator.SecretKey != "" {
 			return locator.SecretPath, locator.SecretKey, true
 		}
@@ -292,8 +292,8 @@ func NormalizeXWorkmateProfile(profile *XWorkmateProfile) {
 	profile.TenantID = strings.TrimSpace(profile.TenantID)
 	profile.UserID = strings.TrimSpace(profile.UserID)
 	profile.Scope = NormalizeXWorkmateProfileScope(profile.Scope)
-	profile.OpenclawURL = strings.TrimSpace(profile.OpenclawURL)
-	profile.OpenclawOrigin = strings.TrimSpace(profile.OpenclawOrigin)
+	profile.BridgeServerURL = strings.TrimSpace(profile.BridgeServerURL)
+	profile.BridgeServerOrigin = strings.TrimSpace(profile.BridgeServerOrigin)
 	profile.VaultURL = strings.TrimSpace(profile.VaultURL)
 	profile.VaultNamespace = strings.TrimSpace(profile.VaultNamespace)
 	profile.VaultSecretPath = strings.Trim(strings.TrimSpace(profile.VaultSecretPath), "/")

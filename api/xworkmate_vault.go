@@ -54,9 +54,9 @@ type xworkmateManagedSecretTarget struct {
 
 var xworkmateManagedSecretTargets = []xworkmateManagedSecretTarget{
 	{
-		Target:            store.XWorkmateSecretLocatorTargetOpenclawGatewayToken,
+		Target:            store.XWorkmateSecretLocatorTargetBridgeAuthToken,
 		Required:          true,
-		TokenConfiguredID: "openclaw",
+		TokenConfiguredID: "bridge",
 	},
 	{
 		Target:            store.XWorkmateSecretLocatorTargetVaultRootToken,

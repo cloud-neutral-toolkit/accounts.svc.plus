@@ -87,7 +87,7 @@ func TestMemoryStoreResolveTenantAndProfile(t *testing.T) {
 		TenantID:        privateTenant.ID,
 		UserID:          "user-1",
 		Scope:           XWorkmateProfileScopeUserPrivate,
-		OpenclawURL:     "wss://openclaw.tenant-one.svc.plus",
+		BridgeServerURL: "wss://openclaw.tenant-one.svc.plus",
 		VaultSecretPath: "kv/openclaw",
 		VaultSecretKey:  "token",
 	}); err != nil {
@@ -109,8 +109,8 @@ func TestMemoryStoreResolveTenantAndProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get private profile: %v", err)
 	}
-	if profile.OpenclawURL != "wss://openclaw.tenant-one.svc.plus" {
-		t.Fatalf("expected persisted openclaw url, got %q", profile.OpenclawURL)
+	if profile.BridgeServerURL != "wss://openclaw.tenant-one.svc.plus" {
+		t.Fatalf("expected persisted bridge server url, got %q", profile.BridgeServerURL)
 	}
 	if profile.VaultSecretPath != "kv/openclaw" || profile.VaultSecretKey != "token" {
 		t.Fatalf("expected legacy secret fields to round-trip, got %#v", profile)
@@ -121,8 +121,8 @@ func TestMemoryStoreResolveTenantAndProfile(t *testing.T) {
 	if profile.SecretLocators[0].Provider != XWorkmateSecretLocatorProviderVault {
 		t.Fatalf("expected vault provider, got %#v", profile.SecretLocators[0])
 	}
-	if profile.SecretLocators[0].Target != XWorkmateSecretLocatorTargetOpenclawGatewayToken {
-		t.Fatalf("expected openclaw target, got %#v", profile.SecretLocators[0])
+	if profile.SecretLocators[0].Target != XWorkmateSecretLocatorTargetBridgeAuthToken {
+		t.Fatalf("expected bridge auth token target, got %#v", profile.SecretLocators[0])
 	}
 	if profile.SecretLocators[0].SecretPath != "kv/openclaw" || profile.SecretLocators[0].SecretKey != "token" {
 		t.Fatalf("expected synthesized secret locator path/key, got %#v", profile.SecretLocators[0])
@@ -158,7 +158,7 @@ func TestMemoryStorePersistsExplicitSecretLocators(t *testing.T) {
 			Provider:   "vault",
 			SecretPath: "kv/openclaw",
 			SecretKey:  "gateway-token",
-			Target:     XWorkmateSecretLocatorTargetOpenclawGatewayToken,
+			Target:     XWorkmateSecretLocatorTargetBridgeAuthToken,
 			Required:   true,
 		},
 		{

@@ -290,8 +290,8 @@ func (s *memoryStore) UpsertXWorkmateProfile(ctx context.Context, profile *XWork
 	defer s.mu.Unlock()
 
 	if existing, ok := s.xworkmateProfiles[key]; ok {
-		existing.OpenclawURL = profile.OpenclawURL
-		existing.OpenclawOrigin = profile.OpenclawOrigin
+		existing.BridgeServerURL = profile.BridgeServerURL
+		existing.BridgeServerOrigin = profile.BridgeServerOrigin
 		existing.VaultURL = profile.VaultURL
 		existing.VaultNamespace = profile.VaultNamespace
 		existing.VaultSecretPath = profile.VaultSecretPath
@@ -305,20 +305,20 @@ func (s *memoryStore) UpsertXWorkmateProfile(ctx context.Context, profile *XWork
 	}
 
 	stored := &XWorkmateProfile{
-		ID:              profile.ID,
-		TenantID:        profile.TenantID,
-		UserID:          profile.UserID,
-		Scope:           profile.Scope,
-		OpenclawURL:     profile.OpenclawURL,
-		OpenclawOrigin:  profile.OpenclawOrigin,
-		VaultURL:        profile.VaultURL,
-		VaultNamespace:  profile.VaultNamespace,
-		VaultSecretPath: profile.VaultSecretPath,
-		VaultSecretKey:  profile.VaultSecretKey,
-		SecretLocators:  cloneXWorkmateSecretLocators(profile.SecretLocators),
-		ApisixURL:       profile.ApisixURL,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:                 profile.ID,
+		TenantID:           profile.TenantID,
+		UserID:             profile.UserID,
+		Scope:              profile.Scope,
+		BridgeServerURL:    profile.BridgeServerURL,
+		BridgeServerOrigin: profile.BridgeServerOrigin,
+		VaultURL:           profile.VaultURL,
+		VaultNamespace:     profile.VaultNamespace,
+		VaultSecretPath:    profile.VaultSecretPath,
+		VaultSecretKey:     profile.VaultSecretKey,
+		SecretLocators:     cloneXWorkmateSecretLocators(profile.SecretLocators),
+		ApisixURL:          profile.ApisixURL,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	s.xworkmateProfiles[key] = stored
 	profile.CreatedAt = stored.CreatedAt

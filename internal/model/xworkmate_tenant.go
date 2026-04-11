@@ -56,20 +56,20 @@ type TenantMembership struct {
 func (TenantMembership) TableName() string { return "tenant_memberships" }
 
 type XWorkmateProfile struct {
-	ID              string                   `gorm:"column:id;type:text;primaryKey"`
-	TenantID        string                   `gorm:"column:tenant_id;type:text;not null;uniqueIndex:idx_xworkmate_profiles_scope"`
-	UserID          string                   `gorm:"column:user_id;type:text;not null;default:'';uniqueIndex:idx_xworkmate_profiles_scope"`
-	Scope           string                   `gorm:"column:scope;type:text;not null;uniqueIndex:idx_xworkmate_profiles_scope"`
-	OpenclawURL     string                   `gorm:"column:openclaw_url;type:text;not null;default:''"`
-	OpenclawOrigin  string                   `gorm:"column:openclaw_origin;type:text;not null;default:''"`
-	VaultURL        string                   `gorm:"column:vault_url;type:text;not null;default:''"`
-	VaultNamespace  string                   `gorm:"column:vault_namespace;type:text;not null;default:''"`
-	VaultSecretPath string                   `gorm:"column:vault_secret_path;type:text;not null;default:''"`
-	VaultSecretKey  string                   `gorm:"column:vault_secret_key;type:text;not null;default:''"`
-	SecretLocators  []XWorkmateSecretLocator `gorm:"column:secret_locators;type:text;not null;serializer:json;default:'[]'"`
-	ApisixURL       string                   `gorm:"column:apisix_url;type:text;not null;default:''"`
-	CreatedAt       time.Time                `gorm:"column:created_at;not null;autoCreateTime"`
-	UpdatedAt       time.Time                `gorm:"column:updated_at;not null;autoUpdateTime"`
+	ID                 string                   `gorm:"column:id;type:text;primaryKey"`
+	TenantID           string                   `gorm:"column:tenant_id;type:text;not null;uniqueIndex:idx_xworkmate_profiles_scope"`
+	UserID             string                   `gorm:"column:user_id;type:text;not null;default:'';uniqueIndex:idx_xworkmate_profiles_scope"`
+	Scope              string                   `gorm:"column:scope;type:text;not null;uniqueIndex:idx_xworkmate_profiles_scope"`
+	BridgeServerURL    string                   `gorm:"column:openclaw_url;type:text;not null;default:''"`
+	BridgeServerOrigin string                   `gorm:"column:openclaw_origin;type:text;not null;default:''"`
+	VaultURL           string                   `gorm:"column:vault_url;type:text;not null;default:''"`
+	VaultNamespace     string                   `gorm:"column:vault_namespace;type:text;not null;default:''"`
+	VaultSecretPath    string                   `gorm:"column:vault_secret_path;type:text;not null;default:''"`
+	VaultSecretKey     string                   `gorm:"column:vault_secret_key;type:text;not null;default:''"`
+	SecretLocators     []XWorkmateSecretLocator `gorm:"column:secret_locators;type:text;not null;serializer:json;default:'[]'"`
+	ApisixURL          string                   `gorm:"column:apisix_url;type:text;not null;default:''"`
+	CreatedAt          time.Time                `gorm:"column:created_at;not null;autoCreateTime"`
+	UpdatedAt          time.Time                `gorm:"column:updated_at;not null;autoUpdateTime"`
 }
 
 type XWorkmateSecretLocator struct {

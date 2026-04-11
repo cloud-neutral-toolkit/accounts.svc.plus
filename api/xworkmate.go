@@ -26,14 +26,14 @@ type xworkmateAccessContext struct {
 }
 
 type xworkmateProfilePayload struct {
-	OpenclawURL     string                          `json:"openclawUrl"`
-	OpenclawOrigin  string                          `json:"openclawOrigin"`
-	VaultURL        string                          `json:"vaultUrl"`
-	VaultNamespace  string                          `json:"vaultNamespace"`
-	VaultSecretPath string                          `json:"vaultSecretPath"`
-	VaultSecretKey  string                          `json:"vaultSecretKey"`
-	SecretLocators  []xworkmateSecretLocatorPayload `json:"secretLocators"`
-	ApisixURL       string                          `json:"apisixUrl"`
+	BridgeServerURL    string                          `json:"BRIDGE_SERVER_URL"`
+	BridgeServerOrigin string                          `json:"bridgeServerOrigin"`
+	VaultURL           string                          `json:"vaultUrl"`
+	VaultNamespace     string                          `json:"vaultNamespace"`
+	VaultSecretPath    string                          `json:"vaultSecretPath"`
+	VaultSecretKey     string                          `json:"vaultSecretKey"`
+	SecretLocators     []xworkmateSecretLocatorPayload `json:"secretLocators"`
+	ApisixURL          string                          `json:"apisixUrl"`
 }
 
 type xworkmateSecretLocatorPayload struct {
@@ -46,10 +46,11 @@ type xworkmateSecretLocatorPayload struct {
 }
 
 var xworkmateForbiddenTokenFields = map[string]struct{}{
-	"openclawtoken": {},
-	"gatewaytoken":  {},
-	"vaulttoken":    {},
-	"apisixtoken":   {},
+	"bridge_auth_token": {},
+	"bridgeauthtoken":   {},
+	"gatewaytoken":      {},
+	"vaulttoken":        {},
+	"apisixtoken":       {},
 }
 
 func (h *handler) ensureSharedXWorkmateTenant(ctx context.Context) error {
@@ -256,16 +257,16 @@ func buildSessionTenantEntries(memberships []store.TenantMembership) []gin.H {
 
 func buildXWorkmateTokenConfigured(profile *store.XWorkmateProfile) gin.H {
 	result := gin.H{
-		"openclaw": false,
-		"vault":    false,
-		"apisix":   false,
+		"bridge": false,
+		"vault":  false,
+		"apisix": false,
 	}
 	if profile == nil {
 		return result
 	}
 
-	if hasOpenclawXWorkmateSecretLocator(profile) {
-		result["openclaw"] = true
+	if hasBridgeAuthTokenXWorkmateSecretLocator(profile) {
+		result["bridge"] = true
 	}
 
 	return result
@@ -277,8 +278,8 @@ func buildXWorkmateTokenConfiguredWithVaultStatus(profile *store.XWorkmateProfil
 		return result
 	}
 
-	if configured, ok := vaultStatus[store.XWorkmateSecretLocatorTargetOpenclawGatewayToken]; ok {
-		result["openclaw"] = configured
+	if configured, ok := vaultStatus[store.XWorkmateSecretLocatorTargetBridgeAuthToken]; ok {
+		result["bridge"] = configured
 	}
 	if configured, ok := vaultStatus[store.XWorkmateSecretLocatorTargetVaultRootToken]; ok {
 		result["vault"] = configured
@@ -290,7 +291,7 @@ func buildXWorkmateTokenConfiguredWithVaultStatus(profile *store.XWorkmateProfil
 	return result
 }
 
-func hasOpenclawXWorkmateSecretLocator(profile *store.XWorkmateProfile) bool {
+func hasBridgeAuthTokenXWorkmateSecretLocator(profile *store.XWorkmateProfile) bool {
 	if profile == nil {
 		return false
 	}
@@ -299,7 +300,7 @@ func hasOpenclawXWorkmateSecretLocator(profile *store.XWorkmateProfile) bool {
 		return true
 	}
 	for _, locator := range profile.SecretLocators {
-		if locator.Target != store.XWorkmateSecretLocatorTargetOpenclawGatewayToken {
+		if locator.Target != store.XWorkmateSecretLocatorTargetBridgeAuthToken {
 			continue
 		}
 		if strings.TrimSpace(locator.SecretPath) != "" && strings.TrimSpace(locator.SecretKey) != "" {
@@ -367,18 +368,18 @@ func (h *handler) buildSessionUser(ctx context.Context, host string, user *store
 
 func buildXWorkmateProfileResponse(access *xworkmateAccessContext, profile *store.XWorkmateProfile, tokenConfigured gin.H) gin.H {
 	resolvedProfile := gin.H{
-		"openclawUrl":     "",
-		"openclawOrigin":  "",
-		"vaultUrl":        "",
-		"vaultNamespace":  "",
-		"vaultSecretPath": "",
-		"vaultSecretKey":  "",
-		"secretLocators":  []gin.H{},
-		"apisixUrl":       "",
+		"BRIDGE_SERVER_URL":  "",
+		"bridgeServerOrigin": "",
+		"vaultUrl":           "",
+		"vaultNamespace":     "",
+		"vaultSecretPath":    "",
+		"vaultSecretKey":     "",
+		"secretLocators":     []gin.H{},
+		"apisixUrl":          "",
 	}
 	if profile != nil {
-		resolvedProfile["openclawUrl"] = profile.OpenclawURL
-		resolvedProfile["openclawOrigin"] = profile.OpenclawOrigin
+		resolvedProfile["BRIDGE_SERVER_URL"] = profile.BridgeServerURL
+		resolvedProfile["bridgeServerOrigin"] = profile.BridgeServerOrigin
 		resolvedProfile["vaultUrl"] = profile.VaultURL
 		resolvedProfile["vaultNamespace"] = profile.VaultNamespace
 		resolvedProfile["vaultSecretPath"] = profile.VaultSecretPath
@@ -546,8 +547,8 @@ func statusByTargetFromMetadata(profile *store.XWorkmateProfile, target string) 
 	if profile == nil {
 		return false
 	}
-	if target == store.XWorkmateSecretLocatorTargetOpenclawGatewayToken {
-		return hasOpenclawXWorkmateSecretLocator(profile)
+	if target == store.XWorkmateSecretLocatorTargetBridgeAuthToken {
+		return hasBridgeAuthTokenXWorkmateSecretLocator(profile)
 	}
 	for _, locator := range profile.SecretLocators {
 		if locator.Target == strings.ToLower(strings.TrimSpace(target)) &&
@@ -677,17 +678,17 @@ func (h *handler) updateXWorkmateProfile(c *gin.Context) {
 	profileUserID := resolvedXWorkmateProfileUserID(access, user)
 
 	profile := &store.XWorkmateProfile{
-		TenantID:        access.Tenant.ID,
-		UserID:          profileUserID,
-		Scope:           access.ProfileScope,
-		OpenclawURL:     payload.OpenclawURL,
-		OpenclawOrigin:  payload.OpenclawOrigin,
-		VaultURL:        payload.VaultURL,
-		VaultNamespace:  payload.VaultNamespace,
-		VaultSecretPath: payload.VaultSecretPath,
-		VaultSecretKey:  payload.VaultSecretKey,
-		SecretLocators:  buildStoreXWorkmateSecretLocators(payload.SecretLocators),
-		ApisixURL:       payload.ApisixURL,
+		TenantID:           access.Tenant.ID,
+		UserID:             profileUserID,
+		Scope:              access.ProfileScope,
+		BridgeServerURL:    payload.BridgeServerURL,
+		BridgeServerOrigin: payload.BridgeServerOrigin,
+		VaultURL:           payload.VaultURL,
+		VaultNamespace:     payload.VaultNamespace,
+		VaultSecretPath:    payload.VaultSecretPath,
+		VaultSecretKey:     payload.VaultSecretKey,
+		SecretLocators:     buildStoreXWorkmateSecretLocators(payload.SecretLocators),
+		ApisixURL:          payload.ApisixURL,
 	}
 	if err := h.store.UpsertXWorkmateProfile(c.Request.Context(), profile); err != nil {
 		respondError(c, http.StatusInternalServerError, "xworkmate_profile_write_failed", "failed to save xworkmate profile")

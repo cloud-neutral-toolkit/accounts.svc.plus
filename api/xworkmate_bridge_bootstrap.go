@@ -50,13 +50,13 @@ type bridgeBootstrapIssueResponse struct {
 }
 
 type bridgeBootstrapConsumeResponse struct {
-	TicketID      string   `json:"ticketId"`
-	TargetBridge  string   `json:"targetBridge"`
-	OpenclawURL   string   `json:"openclawUrl"`
-	AuthMode      string   `json:"authMode"`
-	ExchangeToken string   `json:"exchangeToken"`
-	ExpiresAt     string   `json:"expiresAt"`
-	Scopes        []string `json:"scopes"`
+	TicketID        string   `json:"ticketId"`
+	TargetBridge    string   `json:"targetBridge"`
+	BridgeServerURL string   `json:"BRIDGE_SERVER_URL"`
+	AuthMode        string   `json:"authMode"`
+	BridgeAuthToken string   `json:"BRIDGE_AUTH_TOKEN"`
+	ExpiresAt       string   `json:"expiresAt"`
+	Scopes          []string `json:"scopes"`
 }
 
 func sanitizeBridgeTarget(raw string) string {
@@ -288,7 +288,7 @@ func (h *handler) internalConsumeXWorkmateBridgeBootstrapTicket(c *gin.Context) 
 		respondError(c, http.StatusNotFound, "xworkmate_profile_not_found", "xworkmate profile not found")
 		return
 	}
-	locator, ok := findStoredXWorkmateSecretLocator(profile, store.XWorkmateSecretLocatorTargetOpenclawGatewayToken)
+	locator, ok := findStoredXWorkmateSecretLocator(profile, store.XWorkmateSecretLocatorTargetBridgeAuthToken)
 	if !ok {
 		respondError(c, http.StatusConflict, "gateway_token_not_configured", "gateway token is not configured")
 		return
@@ -298,8 +298,8 @@ func (h *handler) internalConsumeXWorkmateBridgeBootstrapTicket(c *gin.Context) 
 		respondError(c, http.StatusConflict, "gateway_token_unavailable", "gateway token is unavailable")
 		return
 	}
-	openclawURL := strings.TrimSpace(profile.OpenclawURL)
-	if openclawURL == "" {
+	bridgeServerURL := strings.TrimSpace(profile.BridgeServerURL)
+	if bridgeServerURL == "" {
 		respondError(c, http.StatusConflict, "gateway_endpoint_not_configured", "gateway endpoint is not configured")
 		return
 	}
@@ -308,12 +308,12 @@ func (h *handler) internalConsumeXWorkmateBridgeBootstrapTicket(c *gin.Context) 
 	h.updateBridgeBootstrapTicket(ticket)
 
 	c.JSON(http.StatusOK, bridgeBootstrapConsumeResponse{
-		TicketID:      ticket.TicketID,
-		TargetBridge:  ticket.TargetBridge,
-		OpenclawURL:   openclawURL,
-		AuthMode:      "shared-token",
-		ExchangeToken: gatewayToken,
-		ExpiresAt:     ticket.ExpiresAt.Format(time.RFC3339),
-		Scopes:        append([]string(nil), ticket.Scopes...),
+		TicketID:        ticket.TicketID,
+		TargetBridge:    ticket.TargetBridge,
+		BridgeServerURL: bridgeServerURL,
+		AuthMode:        "shared-token",
+		BridgeAuthToken: gatewayToken,
+		ExpiresAt:       ticket.ExpiresAt.Format(time.RFC3339),
+		Scopes:          append([]string(nil), ticket.Scopes...),
 	})
 }

@@ -83,11 +83,11 @@ func TestBuildXWorkmateTokenConfiguredUsesSecretLocators(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		profile  *store.XWorkmateProfile
-		openclaw bool
-		vault    bool
-		apisix   bool
+		name    string
+		profile *store.XWorkmateProfile
+		bridge  bool
+		vault   bool
+		apisix  bool
 	}{
 		{
 			name: "missing secret key stays false",
@@ -96,26 +96,26 @@ func TestBuildXWorkmateTokenConfiguredUsesSecretLocators(t *testing.T) {
 			},
 		},
 		{
-			name: "legacy path and key mark openclaw configured",
+			name: "legacy path and key mark bridge configured",
 			profile: &store.XWorkmateProfile{
 				VaultSecretPath: "kv/openclaw",
 				VaultSecretKey:  "token",
 			},
-			openclaw: true,
+			bridge: true,
 		},
 		{
-			name: "explicit openclaw locator marks openclaw configured",
+			name: "explicit bridge locator marks bridge configured",
 			profile: &store.XWorkmateProfile{
 				SecretLocators: []store.XWorkmateSecretLocator{
 					{
 						Provider:   "vault",
 						SecretPath: "kv/openclaw",
 						SecretKey:  "token",
-						Target:     store.XWorkmateSecretLocatorTargetOpenclawGatewayToken,
+						Target:     store.XWorkmateSecretLocatorTargetBridgeAuthToken,
 					},
 				},
 			},
-			openclaw: true,
+			bridge: true,
 		},
 		{
 			name: "other locator stays false",
@@ -142,8 +142,8 @@ func TestBuildXWorkmateTokenConfiguredUsesSecretLocators(t *testing.T) {
 			t.Parallel()
 
 			result := buildXWorkmateTokenConfigured(tt.profile)
-			if got := result["openclaw"].(bool); got != tt.openclaw {
-				t.Fatalf("expected openclaw=%v, got %v", tt.openclaw, got)
+			if got := result["bridge"].(bool); got != tt.bridge {
+				t.Fatalf("expected bridge=%v, got %v", tt.bridge, got)
 			}
 			if got := result["vault"].(bool); got != tt.vault {
 				t.Fatalf("expected vault=%v, got %v", tt.vault, got)
@@ -163,14 +163,14 @@ func TestXWorkmateBridgeBootstrapTicketLifecycle(t *testing.T) {
 
 	profileBody, err := json.Marshal(map[string]any{
 		"profile": map[string]any{
-			"openclawUrl": "wss://openclaw.example.com",
+			"BRIDGE_SERVER_URL": "wss://openclaw.example.com",
 			"secretLocators": []map[string]any{
 				{
 					"id":         "locator-openclaw",
 					"provider":   "vault",
 					"secretPath": "kv/openclaw",
 					"secretKey":  "token",
-					"target":     store.XWorkmateSecretLocatorTargetOpenclawGatewayToken,
+					"target":     store.XWorkmateSecretLocatorTargetBridgeAuthToken,
 					"required":   true,
 				},
 			},
@@ -193,7 +193,7 @@ func TestXWorkmateBridgeBootstrapTicketLifecycle(t *testing.T) {
 		Provider:   "vault",
 		SecretPath: "kv/openclaw",
 		SecretKey:  "token",
-		Target:     store.XWorkmateSecretLocatorTargetOpenclawGatewayToken,
+		Target:     store.XWorkmateSecretLocatorTargetBridgeAuthToken,
 	}, "shared-token-value"); err != nil {
 		t.Fatalf("write secret: %v", err)
 	}
@@ -237,11 +237,11 @@ func TestXWorkmateBridgeBootstrapTicketLifecycle(t *testing.T) {
 	if err := json.Unmarshal(consumeRec.Body.Bytes(), &consumed); err != nil {
 		t.Fatalf("decode bootstrap consume response: %v", err)
 	}
-	if consumed.ExchangeToken != "shared-token-value" {
-		t.Fatalf("expected returned exchange token, got %#v", consumed)
+	if consumed.BridgeAuthToken != "shared-token-value" {
+		t.Fatalf("expected returned bridge auth token, got %#v", consumed)
 	}
-	if consumed.OpenclawURL != "wss://openclaw.example.com" {
-		t.Fatalf("expected returned openclaw url, got %#v", consumed)
+	if consumed.BridgeServerURL != "wss://openclaw.example.com" {
+		t.Fatalf("expected returned bridge server url, got %#v", consumed)
 	}
 
 	replayReq := httptest.NewRequest(http.MethodPost, "/api/internal/xworkmate/bridge/bootstrap/consume", bytes.NewReader([]byte(fmt.Sprintf(`{"ticket":%q,"bridge":%q}`, created.Ticket, created.Bridge))))
@@ -296,17 +296,17 @@ func TestUpdateAndGetXWorkmateProfileRoundTripsSecretLocators(t *testing.T) {
 	router, _, token := newXWorkmateTestHarness(t)
 	body, err := json.Marshal(map[string]any{
 		"profile": map[string]any{
-			"openclawUrl":    "wss://gateway.example.com",
-			"openclawOrigin": "https://gateway.example.com",
-			"vaultUrl":       "https://vault.example.com",
-			"vaultNamespace": "team-a",
+			"BRIDGE_SERVER_URL":  "wss://gateway.example.com",
+			"bridgeServerOrigin": "https://gateway.example.com",
+			"vaultUrl":           "https://vault.example.com",
+			"vaultNamespace":     "team-a",
 			"secretLocators": []map[string]any{
 				{
 					"id":         "locator-openclaw",
 					"provider":   "vault",
 					"secretPath": "kv/openclaw",
 					"secretKey":  "token",
-					"target":     store.XWorkmateSecretLocatorTargetOpenclawGatewayToken,
+					"target":     store.XWorkmateSecretLocatorTargetBridgeAuthToken,
 					"required":   true,
 				},
 				{
@@ -345,11 +345,11 @@ func TestUpdateAndGetXWorkmateProfileRoundTripsSecretLocators(t *testing.T) {
 
 	var resp struct {
 		Profile struct {
-			OpenclawURL    string `json:"openclawUrl"`
-			OpenclawOrigin string `json:"openclawOrigin"`
-			VaultURL       string `json:"vaultUrl"`
-			VaultNamespace string `json:"vaultNamespace"`
-			SecretLocators []struct {
+			BridgeServerURL    string `json:"BRIDGE_SERVER_URL"`
+			BridgeServerOrigin string `json:"bridgeServerOrigin"`
+			VaultURL           string `json:"vaultUrl"`
+			VaultNamespace     string `json:"vaultNamespace"`
+			SecretLocators     []struct {
 				ID         string `json:"id"`
 				Provider   string `json:"provider"`
 				SecretPath string `json:"secretPath"`
@@ -362,9 +362,9 @@ func TestUpdateAndGetXWorkmateProfileRoundTripsSecretLocators(t *testing.T) {
 			ApisixURL       string `json:"apisixUrl"`
 		} `json:"profile"`
 		TokenConfigured struct {
-			Openclaw bool `json:"openclaw"`
-			Vault    bool `json:"vault"`
-			Apisix   bool `json:"apisix"`
+			Bridge bool `json:"bridge"`
+			Vault  bool `json:"vault"`
+			Apisix bool `json:"apisix"`
 		} `json:"tokenConfigured"`
 	}
 	if err := json.Unmarshal(getRec.Body.Bytes(), &resp); err != nil {
@@ -380,14 +380,14 @@ func TestUpdateAndGetXWorkmateProfileRoundTripsSecretLocators(t *testing.T) {
 	if resp.Profile.SecretLocators[0].ID != "locator-openclaw" || !resp.Profile.SecretLocators[0].Required {
 		t.Fatalf("expected openclaw locator to round-trip, got %#v", resp.Profile.SecretLocators[0])
 	}
-	if resp.Profile.SecretLocators[0].Target != store.XWorkmateSecretLocatorTargetOpenclawGatewayToken {
-		t.Fatalf("expected openclaw target, got %#v", resp.Profile.SecretLocators[0])
+	if resp.Profile.SecretLocators[0].Target != store.XWorkmateSecretLocatorTargetBridgeAuthToken {
+		t.Fatalf("expected bridge target, got %#v", resp.Profile.SecretLocators[0])
 	}
 	if resp.Profile.SecretLocators[1].Target != store.XWorkmateSecretLocatorTargetAIGatewayAccessToken {
 		t.Fatalf("expected ai gateway target, got %#v", resp.Profile.SecretLocators[1])
 	}
-	if resp.TokenConfigured.Openclaw {
-		t.Fatalf("expected openclaw tokenConfigured=false until a vault-backed secret exists")
+	if resp.TokenConfigured.Bridge {
+		t.Fatalf("expected bridge tokenConfigured=false until a vault-backed secret exists")
 	}
 	if resp.TokenConfigured.Vault {
 		t.Fatalf("expected vault tokenConfigured=false without a vault-backed token locator")
@@ -403,13 +403,13 @@ func TestUpdateXWorkmateProfileSynthesizesSecretLocatorsFromLegacyFields(t *test
 	router, _, token := newXWorkmateTestHarness(t)
 	body, err := json.Marshal(map[string]any{
 		"profile": map[string]any{
-			"openclawUrl":     "wss://gateway.example.com",
-			"openclawOrigin":  "https://gateway.example.com",
-			"vaultUrl":        "https://vault.example.com",
-			"vaultNamespace":  "team-a",
-			"vaultSecretPath": "kv/openclaw",
-			"vaultSecretKey":  "token",
-			"apisixUrl":       "https://apigw.example.com",
+			"BRIDGE_SERVER_URL":  "wss://gateway.example.com",
+			"bridgeServerOrigin": "https://gateway.example.com",
+			"vaultUrl":           "https://vault.example.com",
+			"vaultNamespace":     "team-a",
+			"vaultSecretPath":    "kv/openclaw",
+			"vaultSecretKey":     "token",
+			"apisixUrl":          "https://apigw.example.com",
 		},
 	})
 	if err != nil {
@@ -454,8 +454,8 @@ func TestUpdateXWorkmateProfileSynthesizesSecretLocatorsFromLegacyFields(t *test
 	if len(resp.Profile.SecretLocators) != 1 {
 		t.Fatalf("expected synthesized single locator, got %#v", resp.Profile.SecretLocators)
 	}
-	if resp.Profile.SecretLocators[0].Provider != "vault" || resp.Profile.SecretLocators[0].Target != store.XWorkmateSecretLocatorTargetOpenclawGatewayToken {
-		t.Fatalf("expected synthesized openclaw vault locator, got %#v", resp.Profile.SecretLocators[0])
+	if resp.Profile.SecretLocators[0].Provider != "vault" || resp.Profile.SecretLocators[0].Target != store.XWorkmateSecretLocatorTargetBridgeAuthToken {
+		t.Fatalf("expected synthesized bridge vault locator, got %#v", resp.Profile.SecretLocators[0])
 	}
 	if resp.Profile.VaultSecretPath != "kv/openclaw" || resp.Profile.VaultSecretKey != "token" {
 		t.Fatalf("expected legacy fields to remain readable, got %#v", resp.Profile)
@@ -472,17 +472,17 @@ func TestGetXWorkmateProfileFallsBackWhenVaultStatusReadFails(t *testing.T) {
 	)
 	body, err := json.Marshal(map[string]any{
 		"profile": map[string]any{
-			"openclawUrl":    "wss://gateway.example.com",
-			"openclawOrigin": "https://gateway.example.com",
-			"vaultUrl":       "https://vault.example.com",
-			"vaultNamespace": "team-a",
+			"BRIDGE_SERVER_URL":  "wss://gateway.example.com",
+			"bridgeServerOrigin": "https://gateway.example.com",
+			"vaultUrl":           "https://vault.example.com",
+			"vaultNamespace":     "team-a",
 			"secretLocators": []map[string]any{
 				{
 					"id":         "locator-openclaw",
 					"provider":   "vault",
 					"secretPath": "kv/openclaw",
 					"secretKey":  "token",
-					"target":     store.XWorkmateSecretLocatorTargetOpenclawGatewayToken,
+					"target":     store.XWorkmateSecretLocatorTargetBridgeAuthToken,
 					"required":   true,
 				},
 			},
@@ -513,23 +513,23 @@ func TestGetXWorkmateProfileFallsBackWhenVaultStatusReadFails(t *testing.T) {
 
 	var resp struct {
 		Profile struct {
-			OpenclawURL string `json:"openclawUrl"`
+			BridgeServerURL string `json:"BRIDGE_SERVER_URL"`
 		} `json:"profile"`
 		TokenConfigured struct {
-			Openclaw bool `json:"openclaw"`
-			Vault    bool `json:"vault"`
-			Apisix   bool `json:"apisix"`
+			Bridge bool `json:"bridge"`
+			Vault  bool `json:"vault"`
+			Apisix bool `json:"apisix"`
 		} `json:"tokenConfigured"`
 	}
 	if err := json.Unmarshal(getRec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode profile response: %v", err)
 	}
 
-	if resp.Profile.OpenclawURL != "wss://gateway.example.com" {
+	if resp.Profile.BridgeServerURL != "wss://gateway.example.com" {
 		t.Fatalf("expected profile payload to survive vault read failure, got %#v", resp.Profile)
 	}
-	if !resp.TokenConfigured.Openclaw {
-		t.Fatalf("expected locator-derived openclaw tokenConfigured fallback, got %#v", resp.TokenConfigured)
+	if !resp.TokenConfigured.Bridge {
+		t.Fatalf("expected locator-derived bridge tokenConfigured fallback, got %#v", resp.TokenConfigured)
 	}
 	if resp.TokenConfigured.Vault {
 		t.Fatalf("expected vault tokenConfigured fallback to stay false, got %#v", resp.TokenConfigured)
@@ -580,7 +580,7 @@ func TestUpdateXWorkmateProfileRejectsNestedRawTokenFields(t *testing.T) {
 
 	body, err := json.Marshal(map[string]any{
 		"profile": map[string]any{
-			"openclawUrl": "wss://gateway.example.com",
+			"BRIDGE_SERVER_URL": "wss://gateway.example.com",
 			"security": map[string]any{
 				"gatewayToken": "secret-value",
 			},
@@ -618,11 +618,11 @@ func TestXWorkmateSecretsWriteReadDeleteAndKeepLocatorMetadata(t *testing.T) {
 	router, _, token := newXWorkmateTestHarness(t)
 	profileBody, err := json.Marshal(map[string]any{
 		"profile": map[string]any{
-			"openclawUrl":    "wss://gateway.example.com",
-			"openclawOrigin": "https://gateway.example.com",
-			"vaultUrl":       "https://vault.example.com",
-			"vaultNamespace": "team-a",
-			"apisixUrl":      "https://apigw.example.com",
+			"BRIDGE_SERVER_URL":  "wss://gateway.example.com",
+			"bridgeServerOrigin": "https://gateway.example.com",
+			"vaultUrl":           "https://vault.example.com",
+			"vaultNamespace":     "team-a",
+			"apisixUrl":          "https://apigw.example.com",
 		},
 	})
 	if err != nil {
@@ -640,7 +640,7 @@ func TestXWorkmateSecretsWriteReadDeleteAndKeepLocatorMetadata(t *testing.T) {
 	}
 
 	for _, target := range []string{
-		store.XWorkmateSecretLocatorTargetOpenclawGatewayToken,
+		store.XWorkmateSecretLocatorTargetBridgeAuthToken,
 		store.XWorkmateSecretLocatorTargetVaultRootToken,
 		store.XWorkmateSecretLocatorTargetAIGatewayAccessToken,
 	} {
@@ -693,15 +693,15 @@ func TestXWorkmateSecretsWriteReadDeleteAndKeepLocatorMetadata(t *testing.T) {
 			} `json:"secretLocators"`
 		} `json:"profile"`
 		TokenConfigured struct {
-			Openclaw bool `json:"openclaw"`
-			Vault    bool `json:"vault"`
-			Apisix   bool `json:"apisix"`
+			Bridge bool `json:"bridge"`
+			Vault  bool `json:"vault"`
+			Apisix bool `json:"apisix"`
 		} `json:"tokenConfigured"`
 	}
 	if err := json.Unmarshal(getProfileRec.Body.Bytes(), &profileResp); err != nil {
 		t.Fatalf("decode profile response: %v", err)
 	}
-	if !profileResp.TokenConfigured.Openclaw || !profileResp.TokenConfigured.Vault || !profileResp.TokenConfigured.Apisix {
+	if !profileResp.TokenConfigured.Bridge || !profileResp.TokenConfigured.Vault || !profileResp.TokenConfigured.Apisix {
 		t.Fatalf("expected all synced tokenConfigured fields true, got %#v", profileResp.TokenConfigured)
 	}
 	if len(profileResp.Profile.SecretLocators) != 3 {
@@ -711,7 +711,7 @@ func TestXWorkmateSecretsWriteReadDeleteAndKeepLocatorMetadata(t *testing.T) {
 		t.Fatalf("expected openclaw legacy compatibility fields to remain readable, got %#v", profileResp.Profile)
 	}
 
-	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/auth/xworkmate/secrets/"+store.XWorkmateSecretLocatorTargetOpenclawGatewayToken, nil)
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/auth/xworkmate/secrets/"+store.XWorkmateSecretLocatorTargetBridgeAuthToken, nil)
 	deleteReq.Header.Set("Authorization", "Bearer "+token)
 	deleteReq.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
 	deleteRec := httptest.NewRecorder()
@@ -736,16 +736,16 @@ func TestXWorkmateSecretsWriteReadDeleteAndKeepLocatorMetadata(t *testing.T) {
 			} `json:"secretLocators"`
 		} `json:"profile"`
 		TokenConfigured struct {
-			Openclaw bool `json:"openclaw"`
-			Vault    bool `json:"vault"`
-			Apisix   bool `json:"apisix"`
+			Bridge bool `json:"bridge"`
+			Vault  bool `json:"vault"`
+			Apisix bool `json:"apisix"`
 		} `json:"tokenConfigured"`
 	}
 	if err := json.Unmarshal(getProfileAfterDeleteRec.Body.Bytes(), &afterDeleteResp); err != nil {
 		t.Fatalf("decode post-delete profile response: %v", err)
 	}
-	if afterDeleteResp.TokenConfigured.Openclaw {
-		t.Fatalf("expected deleted openclaw secret to report missing, got %#v", afterDeleteResp.TokenConfigured)
+	if afterDeleteResp.TokenConfigured.Bridge {
+		t.Fatalf("expected deleted bridge secret to report missing, got %#v", afterDeleteResp.TokenConfigured)
 	}
 	if !afterDeleteResp.TokenConfigured.Vault || !afterDeleteResp.TokenConfigured.Apisix {
 		t.Fatalf("expected unrelated secret statuses to remain true, got %#v", afterDeleteResp.TokenConfigured)
@@ -772,7 +772,7 @@ func TestXWorkmateSharedSecretsRequireAdminMembershipForWrites(t *testing.T) {
 		t.Fatalf("marshal secret payload: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPut, "/api/auth/xworkmate/secrets/"+store.XWorkmateSecretLocatorTargetOpenclawGatewayToken, bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/api/auth/xworkmate/secrets/"+store.XWorkmateSecretLocatorTargetBridgeAuthToken, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
@@ -867,7 +867,7 @@ func TestXWorkmatePrivateSecretsAreScopedPerUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal secret payload: %v", err)
 	}
-	writeReq := httptest.NewRequest(http.MethodPut, "/api/auth/xworkmate/secrets/"+store.XWorkmateSecretLocatorTargetOpenclawGatewayToken, bytes.NewReader(body))
+	writeReq := httptest.NewRequest(http.MethodPut, "/api/auth/xworkmate/secrets/"+store.XWorkmateSecretLocatorTargetBridgeAuthToken, bytes.NewReader(body))
 	writeReq.Header.Set("Content-Type", "application/json")
 	writeReq.Header.Set("Authorization", "Bearer "+tokenA)
 	writeReq.Header.Set("X-Forwarded-Host", "tenant-private-1.svc.plus")
@@ -897,25 +897,25 @@ func TestXWorkmatePrivateSecretsAreScopedPerUser(t *testing.T) {
 
 	var userAResp struct {
 		TokenConfigured struct {
-			Openclaw bool `json:"openclaw"`
+			Bridge bool `json:"bridge"`
 		} `json:"tokenConfigured"`
 	}
 	if err := json.Unmarshal(getARec.Body.Bytes(), &userAResp); err != nil {
 		t.Fatalf("decode user A profile response: %v", err)
 	}
-	if !userAResp.TokenConfigured.Openclaw {
+	if !userAResp.TokenConfigured.Bridge {
 		t.Fatalf("expected user A secret to be configured, got %#v", userAResp.TokenConfigured)
 	}
 
 	var userBResp struct {
 		TokenConfigured struct {
-			Openclaw bool `json:"openclaw"`
+			Bridge bool `json:"bridge"`
 		} `json:"tokenConfigured"`
 	}
 	if err := json.Unmarshal(getBRec.Body.Bytes(), &userBResp); err != nil {
 		t.Fatalf("decode user B profile response: %v", err)
 	}
-	if userBResp.TokenConfigured.Openclaw {
+	if userBResp.TokenConfigured.Bridge {
 		t.Fatalf("expected user B to remain isolated from user A secret, got %#v", userBResp.TokenConfigured)
 	}
 }
