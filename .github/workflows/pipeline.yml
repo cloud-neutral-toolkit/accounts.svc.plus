@@ -188,10 +188,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          if rg -n \
-            deploy_accounts_svc_plus.yml \
-            roles/vhosts/accounts_service \
-            '(docker build|podman build|docker buildx build|gcloud builds submit)' \
+          if grep -REn \
+            -e 'docker build' \
+            -e 'podman build' \
+            -e 'docker buildx build' \
+            -e 'gcloud builds submit' \
+            deploy_accounts_svc_plus.yml roles/vhosts/accounts_service \
             ; then
             echo "deploy flow must use the build job image artifact and must not build images on the target host" >&2
             exit 1
@@ -202,8 +204,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          rg -n 'ACCOUNTS_IMAGE_REF' deploy_accounts_svc_plus.yml roles/vhosts/accounts_service >/dev/null
-          rg -n 'IMAGE=\{\{ accounts_service_image_ref \}\}|IMAGE: "\{\{ accounts_service_image_ref \}\}"' \
+          grep -REn 'ACCOUNTS_IMAGE_REF' deploy_accounts_svc_plus.yml roles/vhosts/accounts_service >/dev/null
+          grep -REn 'IMAGE=\{\{ accounts_service_image_ref \}\}|IMAGE: "\{\{ accounts_service_image_ref \}\}"' \
             roles/vhosts/accounts_service >/dev/null
 
       - name: Set Up Python
