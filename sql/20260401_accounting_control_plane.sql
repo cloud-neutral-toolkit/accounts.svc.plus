@@ -67,6 +67,15 @@ CREATE TABLE IF NOT EXISTS public.account_billing_profiles (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.billing_source_sync_state (
+  source_id TEXT PRIMARY KEY,
+  last_completed_until TIMESTAMPTZ NULL,
+  last_attempted_at TIMESTAMPTZ NULL,
+  last_succeeded_at TIMESTAMPTZ NULL,
+  last_error TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS public.account_policy_snapshots (
   account_uuid UUID PRIMARY KEY REFERENCES public.users(uuid) ON DELETE CASCADE,
   policy_version TEXT NOT NULL,
