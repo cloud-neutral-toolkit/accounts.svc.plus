@@ -33,6 +33,7 @@ const (
 	XWorkmateSecretLocatorProviderVault = "vault"
 
 	XWorkmateSecretLocatorTargetBridgeAuthToken      = "bridge.auth_token"
+	XWorkmateSecretLocatorTargetOpenclawGatewayToken = XWorkmateSecretLocatorTargetBridgeAuthToken
 	XWorkmateSecretLocatorTargetVaultRootToken       = "vault.root_token"
 	XWorkmateSecretLocatorTargetAIGatewayAccessToken = "ai_gateway.access_token"
 	XWorkmateSecretLocatorTargetOllamaCloudAPIKey    = "ollama_cloud.api_key"
