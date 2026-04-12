@@ -3080,6 +3080,9 @@ func parseImageVersionInfo(imageRef string) imageVersionInfo {
 	case isHexCommit(tag):
 		info.Commit = tag
 		info.Version = tag
+	case strings.HasPrefix(tag, "sha-") && isHexCommit(strings.TrimPrefix(tag, "sha-")):
+		info.Commit = strings.TrimPrefix(tag, "sha-")
+		info.Version = tag
 	case strings.HasPrefix(tag, "v") && len(tag) > 1:
 		info.Version = tag
 	default:

@@ -21,6 +21,8 @@ version="${tag}"
 
 if [[ "${tag}" =~ ^[0-9a-f]{7,40}$ ]]; then
   commit="${tag}"
+elif [[ "${tag}" =~ ^sha-([0-9a-f]{7,40})$ ]]; then
+  commit="${BASH_REMATCH[1]}"
 fi
 
 ping_json="$(

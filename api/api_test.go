@@ -1527,6 +1527,39 @@ func TestPingEndpointDerivesVersionFromImageEnv(t *testing.T) {
 	}
 }
 
+func TestPingEndpointDerivesCommitFromShaPrefixedImageTag(t *testing.T) {
+	t.Setenv("IMAGE", "ghcr.io/example/accounts:sha-abcdef1234567890abcdef1234567890abcdef12")
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	RegisterRoutes(router)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected ping endpoint to return 200, got %d", rr.Code)
+	}
+
+	var resp map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode ping response: %v", err)
+	}
+	if got := resp["image"]; got != "ghcr.io/example/accounts:sha-abcdef1234567890abcdef1234567890abcdef12" {
+		t.Fatalf("expected image ref from env, got %q", got)
+	}
+	if got := resp["tag"]; got != "sha-abcdef1234567890abcdef1234567890abcdef12" {
+		t.Fatalf("expected tag derived from image ref, got %q", got)
+	}
+	if got := resp["commit"]; got != "abcdef1234567890abcdef1234567890abcdef12" {
+		t.Fatalf("expected commit derived from sha-prefixed image ref, got %q", got)
+	}
+	if got := resp["version"]; got != "sha-abcdef1234567890abcdef1234567890abcdef12" {
+		t.Fatalf("expected version derived from image ref, got %q", got)
+	}
+}
+
 func TestPasswordResetFlow(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
