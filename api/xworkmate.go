@@ -618,6 +618,63 @@ func (h *handler) getXWorkmateProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, buildXWorkmateProfileResponse(access, profile, tokenConfigured))
 }
 
+func (h *handler) getXWorkmateProfileSync(c *gin.Context) {
+	user, ok := h.currentAuthenticatedUser(c)
+	if !ok {
+		return
+	}
+
+	access, err := h.resolveXWorkmateAccess(c.Request.Context(), h.resolveTenantHost(c), user)
+	if err != nil {
+		if errors.Is(err, store.ErrTenantMembershipNotFound) {
+			respondError(c, http.StatusForbidden, "tenant_membership_required", "tenant membership is required")
+			return
+		}
+		if errors.Is(err, store.ErrTenantNotFound) {
+			respondError(c, http.StatusNotFound, "tenant_not_found", "tenant was not found")
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "xworkmate_context_failed", "failed to resolve xworkmate context")
+		return
+	}
+
+	profile, err := h.loadXWorkmateProfile(c.Request.Context(), access, user)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "xworkmate_profile_read_failed", "failed to load xworkmate profile")
+		return
+	}
+
+	bridgeServerURL := ""
+	if profile != nil {
+		bridgeServerURL = strings.TrimSpace(profile.BridgeServerURL)
+	}
+	if bridgeServerURL == "" {
+		respondError(c, http.StatusConflict, "bridge_server_url_unavailable", "bridge server url is unavailable")
+		return
+	}
+	if h.xworkmateVaultService == nil {
+		respondError(c, http.StatusConflict, "bridge_auth_token_unavailable", "bridge auth token is unavailable")
+		return
+	}
+
+	locator, ok := findStoredXWorkmateSecretLocator(profile, store.XWorkmateSecretLocatorTargetBridgeAuthToken)
+	if !ok {
+		respondError(c, http.StatusConflict, "bridge_auth_token_unavailable", "bridge auth token is unavailable")
+		return
+	}
+
+	bridgeAuthToken, err := h.xworkmateVaultService.ReadSecret(c.Request.Context(), locator)
+	if err != nil || strings.TrimSpace(bridgeAuthToken) == "" {
+		respondError(c, http.StatusConflict, "bridge_auth_token_unavailable", "bridge auth token is unavailable")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"BRIDGE_SERVER_URL": bridgeServerURL,
+		"BRIDGE_AUTH_TOKEN": strings.TrimSpace(bridgeAuthToken),
+	})
+}
+
 func (h *handler) updateXWorkmateProfile(c *gin.Context) {
 	user, ok := h.currentAuthenticatedUser(c)
 	if !ok {

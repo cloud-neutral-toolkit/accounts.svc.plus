@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -155,11 +154,11 @@ func TestBuildXWorkmateTokenConfiguredUsesSecretLocators(t *testing.T) {
 	}
 }
 
-func TestXWorkmateBridgeBootstrapTicketLifecycle(t *testing.T) {
+func TestGetXWorkmateProfileSyncReturnsManagedBridgeCredentials(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	vaultService := newMemoryXWorkmateVaultService()
-	router, user, token := newXWorkmateTestHarnessWithVault(t, nil, vaultService)
+	router, _, token := newXWorkmateTestHarnessWithVault(t, nil, vaultService)
 
 	profileBody, err := json.Marshal(map[string]any{
 		"profile": map[string]any{
@@ -198,95 +197,150 @@ func TestXWorkmateBridgeBootstrapTicketLifecycle(t *testing.T) {
 		t.Fatalf("write secret: %v", err)
 	}
 
-	createReq := httptest.NewRequest(http.MethodPost, "/api/auth/xworkmate/bridge/bootstrap", bytes.NewReader([]byte(`{}`)))
-	createReq.Header.Set("Content-Type", "application/json")
-	createReq.Header.Set("Authorization", "Bearer "+token)
-	createReq.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
-	createRec := httptest.NewRecorder()
-	router.ServeHTTP(createRec, createReq)
-	if createRec.Code != http.StatusOK {
-		t.Fatalf("expected bootstrap create success, got %d: %s", createRec.Code, createRec.Body.String())
-	}
-	var created bridgeBootstrapIssueResponse
-	if err := json.Unmarshal(createRec.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode bootstrap create response: %v", err)
-	}
-	if created.Ticket == "" || created.ShortCode == "" {
-		t.Fatalf("expected bootstrap ticket and short code, got %#v", created)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/xworkmate/profile/sync", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected profile sync success, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	lookupReq := httptest.NewRequest(http.MethodGet, "/api/auth/xworkmate/bridge/bootstrap/"+created.ShortCode, nil)
-	lookupReq.Header.Set("Authorization", "Bearer "+token)
-	lookupReq.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
-	lookupRec := httptest.NewRecorder()
-	router.ServeHTTP(lookupRec, lookupReq)
-	if lookupRec.Code != http.StatusOK {
-		t.Fatalf("expected bootstrap lookup success, got %d: %s", lookupRec.Code, lookupRec.Body.String())
+	var payload struct {
+		BridgeServerURL string `json:"BRIDGE_SERVER_URL"`
+		BridgeAuthToken string `json:"BRIDGE_AUTH_TOKEN"`
 	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode profile sync response: %v", err)
+	}
+	if payload.BridgeServerURL != "wss://openclaw.example.com" {
+		t.Fatalf("expected bridge server url, got %#v", payload)
+	}
+	if payload.BridgeAuthToken != "shared-token-value" {
+		t.Fatalf("expected bridge auth token, got %#v", payload)
+	}
+}
 
-	consumeReq := httptest.NewRequest(http.MethodPost, "/api/internal/xworkmate/bridge/bootstrap/consume", bytes.NewReader([]byte(fmt.Sprintf(`{"ticket":%q,"bridge":%q}`, created.Ticket, created.Bridge))))
-	consumeReq.Header.Set("Content-Type", "application/json")
-	consumeReq.Header.Set("X-Service-Token", "internal-test-token")
-	t.Setenv("INTERNAL_SERVICE_TOKEN", "internal-test-token")
-	consumeRec := httptest.NewRecorder()
-	router.ServeHTTP(consumeRec, consumeReq)
-	if consumeRec.Code != http.StatusOK {
-		t.Fatalf("expected bootstrap consume success, got %d: %s", consumeRec.Code, consumeRec.Body.String())
-	}
-	var consumed bridgeBootstrapConsumeResponse
-	if err := json.Unmarshal(consumeRec.Body.Bytes(), &consumed); err != nil {
-		t.Fatalf("decode bootstrap consume response: %v", err)
-	}
-	if consumed.BridgeAuthToken != "shared-token-value" {
-		t.Fatalf("expected returned bridge auth token, got %#v", consumed)
-	}
-	if consumed.BridgeServerURL != "wss://openclaw.example.com" {
-		t.Fatalf("expected returned bridge server url, got %#v", consumed)
-	}
+func TestGetXWorkmateProfileSyncConflictsWhenManagedBridgeContractMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 
-	replayReq := httptest.NewRequest(http.MethodPost, "/api/internal/xworkmate/bridge/bootstrap/consume", bytes.NewReader([]byte(fmt.Sprintf(`{"ticket":%q,"bridge":%q}`, created.Ticket, created.Bridge))))
-	replayReq.Header.Set("Content-Type", "application/json")
-	replayReq.Header.Set("X-Service-Token", "internal-test-token")
-	replayRec := httptest.NewRecorder()
-	router.ServeHTTP(replayRec, replayReq)
-	if replayRec.Code != http.StatusConflict {
-		t.Fatalf("expected bootstrap replay conflict, got %d: %s", replayRec.Code, replayRec.Body.String())
-	}
+	t.Run("missing bridge server url", func(t *testing.T) {
+		vaultService := newMemoryXWorkmateVaultService()
+		router, _, token := newXWorkmateTestHarnessWithVault(t, nil, vaultService)
 
-	revokeCreateReq := httptest.NewRequest(http.MethodPost, "/api/auth/xworkmate/bridge/bootstrap", bytes.NewReader([]byte(`{}`)))
-	revokeCreateReq.Header.Set("Content-Type", "application/json")
-	revokeCreateReq.Header.Set("Authorization", "Bearer "+token)
-	revokeCreateReq.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
-	revokeCreateRec := httptest.NewRecorder()
-	router.ServeHTTP(revokeCreateRec, revokeCreateReq)
-	if revokeCreateRec.Code != http.StatusOK {
-		t.Fatalf("expected second bootstrap create success, got %d: %s", revokeCreateRec.Code, revokeCreateRec.Body.String())
-	}
-	var revokeCreated bridgeBootstrapIssueResponse
-	if err := json.Unmarshal(revokeCreateRec.Body.Bytes(), &revokeCreated); err != nil {
-		t.Fatalf("decode revoke bootstrap create response: %v", err)
-	}
+		profileBody, err := json.Marshal(map[string]any{
+			"profile": map[string]any{
+				"secretLocators": []map[string]any{
+					{
+						"id":         "locator-openclaw",
+						"provider":   "vault",
+						"secretPath": "kv/openclaw",
+						"secretKey":  "token",
+						"target":     store.XWorkmateSecretLocatorTargetBridgeAuthToken,
+						"required":   true,
+					},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("marshal profile: %v", err)
+		}
 
-	revokeReq := httptest.NewRequest(http.MethodPost, "/api/auth/xworkmate/bridge/bootstrap/"+revokeCreated.Ticket+"/revoke", nil)
-	revokeReq.Header.Set("Authorization", "Bearer "+token)
-	revokeReq.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
-	revokeRec := httptest.NewRecorder()
-	router.ServeHTTP(revokeRec, revokeReq)
-	if revokeRec.Code != http.StatusOK {
-		t.Fatalf("expected bootstrap revoke success, got %d: %s", revokeRec.Code, revokeRec.Body.String())
-	}
+		putReq := httptest.NewRequest(http.MethodPut, "/api/auth/xworkmate/profile", bytes.NewReader(profileBody))
+		putReq.Header.Set("Content-Type", "application/json")
+		putReq.Header.Set("Authorization", "Bearer "+token)
+		putReq.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
+		putRec := httptest.NewRecorder()
+		router.ServeHTTP(putRec, putReq)
+		if putRec.Code != http.StatusOK {
+			t.Fatalf("expected profile update success, got %d: %s", putRec.Code, putRec.Body.String())
+		}
 
-	revokedConsumeReq := httptest.NewRequest(http.MethodPost, "/api/internal/xworkmate/bridge/bootstrap/consume", bytes.NewReader([]byte(fmt.Sprintf(`{"ticket":%q,"bridge":%q}`, revokeCreated.Ticket, revokeCreated.Bridge))))
-	revokedConsumeReq.Header.Set("Content-Type", "application/json")
-	revokedConsumeReq.Header.Set("X-Service-Token", "internal-test-token")
-	revokedConsumeRec := httptest.NewRecorder()
-	router.ServeHTTP(revokedConsumeRec, revokedConsumeReq)
-	if revokedConsumeRec.Code != http.StatusGone {
-		t.Fatalf("expected revoked bootstrap consume gone, got %d: %s", revokedConsumeRec.Code, revokedConsumeRec.Body.String())
-	}
+		if err := vaultService.WriteSecret(context.Background(), store.XWorkmateSecretLocator{
+			Provider:   "vault",
+			SecretPath: "kv/openclaw",
+			SecretKey:  "token",
+			Target:     store.XWorkmateSecretLocatorTargetBridgeAuthToken,
+		}, "shared-token-value"); err != nil {
+			t.Fatalf("write secret: %v", err)
+		}
 
-	if user.ID == "" {
-		t.Fatalf("expected created user id")
+		req := httptest.NewRequest(http.MethodGet, "/api/auth/xworkmate/profile/sync", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("expected profile sync conflict, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("missing bridge auth token", func(t *testing.T) {
+		vaultService := newMemoryXWorkmateVaultService()
+		router, _, token := newXWorkmateTestHarnessWithVault(t, nil, vaultService)
+
+		profileBody, err := json.Marshal(map[string]any{
+			"profile": map[string]any{
+				"BRIDGE_SERVER_URL": "wss://openclaw.example.com",
+			},
+		})
+		if err != nil {
+			t.Fatalf("marshal profile: %v", err)
+		}
+
+		putReq := httptest.NewRequest(http.MethodPut, "/api/auth/xworkmate/profile", bytes.NewReader(profileBody))
+		putReq.Header.Set("Content-Type", "application/json")
+		putReq.Header.Set("Authorization", "Bearer "+token)
+		putReq.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
+		putRec := httptest.NewRecorder()
+		router.ServeHTTP(putRec, putReq)
+		if putRec.Code != http.StatusOK {
+			t.Fatalf("expected profile update success, got %d: %s", putRec.Code, putRec.Body.String())
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/auth/xworkmate/profile/sync", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("expected profile sync conflict, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestXWorkmateBridgeBootstrapRoutesRemoved(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router, _, token := newXWorkmateTestHarness(t)
+	requests := []*http.Request{
+		httptest.NewRequest(http.MethodPost, "/api/auth/xworkmate/bridge/bootstrap", bytes.NewReader([]byte(`{}`))),
+		httptest.NewRequest(http.MethodGet, "/api/auth/xworkmate/bridge/bootstrap/SHORTCODE", nil),
+		httptest.NewRequest(http.MethodPost, "/api/auth/xworkmate/bridge/bootstrap/ticket-id/revoke", nil),
+		httptest.NewRequest(http.MethodPost, "/api/internal/xworkmate/bridge/bootstrap/consume", bytes.NewReader([]byte(`{}`))),
+	}
+	for _, req := range requests {
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected route removal 404 for %s %s, got %d: %s", req.Method, req.URL.Path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestGetXWorkmateProfileSyncRequiresSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router, _, _ := newXWorkmateTestHarness(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/xworkmate/profile/sync", nil)
+	req.Header.Set("X-Forwarded-Host", store.SharedXWorkmateDomain)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected profile sync unauthorized without session, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
