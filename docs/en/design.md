@@ -1,24 +1,32 @@
 # Design
 
-This repository is a Go service with API, configuration, runtime operations, and deployment responsibilities.
+Use this page as the English entry point for the current design tradeoffs behind `accounts.svc.plus`.
 
-Use this page to consolidate design decisions, ADR-style tradeoffs, and roadmap-sensitive implementation notes.
+## Primary Decision Record
 
-## Current code-aligned notes
+The main design record is [architecture/design-decisions.md](../architecture/design-decisions.md). It captures the implementation choices that are actually true in the current codebase, including:
 
-- Documentation target: `accounts.svc.plus`
-- Repo kind: `go-service`
-- Manifest and build evidence: go.mod (`account`)
-- Primary implementation and ops directories: `cmd/`, `internal/`, `api/`, `accountsvc/`, `deploy/`, `ansible/`, `scripts/`, `tests/`, `sql/`, `config/`
-- Package scripts snapshot: No package.json scripts were detected.
+- session-first authentication instead of a JWT-only control plane,
+- `store.Store` as the boundary around primary business persistence,
+- GORM used only for specific admin-side models,
+- agent pre-shared token authentication through `agentserver.Registry`,
+- XWorkmate secret locator plus Vault-backed secret persistence,
+- Xray config generation and periodic convergence as the control model.
 
-## Existing docs to reconcile
+## Suggested Reading Order
 
-- `architecture/design-decisions.md`
+1. [Design decisions](../architecture/design-decisions.md)
+2. [Architecture overview](../architecture/overview.md)
+3. [Authentication details](../api/auth.md)
 
-## What this page should cover next
+## Design Snapshot
 
-- Describe the current implementation rather than an aspirational future-only design.
-- Keep terminology aligned with the repository root README, manifests, and actual directories.
-- Link deeper runbooks, specs, or subsystem notes from the legacy docs listed above.
-- Promote one-off implementation notes into reusable design records when behavior, APIs, or deployment contracts change.
+- Runtime truth is meant to come from the current store / runtime contracts, not from duplicated local config-center state.
+- Session, MFA challenge, email verification, password reset, and OAuth exchange state are process-local by design in the current implementation.
+- Admin policy and homepage customization are intentionally separated into GORM-backed services rather than folded into the primary store abstraction.
+- Agent mode reuses the same Xray generation primitives as server mode instead of introducing a second configuration model.
+
+## Related Pages
+
+- [Architecture](architecture.md)
+- [Developer Guide](developer-guide.md)

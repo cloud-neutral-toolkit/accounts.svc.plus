@@ -1,29 +1,37 @@
 # Architecture
 
-This repository is a Go service with API, configuration, runtime operations, and deployment responsibilities.
+Use this page as the English entry point into the shared bilingual architecture documents.
 
-Use this page as the canonical bilingual overview of system boundaries, major components, and repo ownership.
+## Current Architecture In One View
 
-## Current code-aligned notes
+`accounts.svc.plus` is a Gin-based Go service that combines:
 
-- Documentation target: `accounts.svc.plus`
-- Repo kind: `go-service`
-- Manifest and build evidence: go.mod (`account`)
-- Primary implementation and ops directories: `cmd/`, `internal/`, `api/`, `accountsvc/`, `deploy/`, `ansible/`, `scripts/`, `tests/`, `sql/`, `config/`
-- Package scripts snapshot: No package.json scripts were detected.
+- identity and session management,
+- admin control-plane operations,
+- agent and Xray configuration control,
+- and usage / billing read models.
 
-## Existing docs to reconcile
+The actual startup chain is centered in `cmd/accountsvc/main.go`, where the service wires the primary `store.Store`, the GORM-backed admin DB, optional mailer and token service, the agent registry, and the optional Xray periodic syncer before calling `api.RegisterRoutes`.
 
-- `api/overview.md`
-- `architecture/components.md`
-- `architecture/design-decisions.md`
-- `architecture/overview.md`
-- `architecture/roadmap.md`
-- `development/code-structure.md`
+## Read In This Order
 
-## What this page should cover next
+1. [Architecture overview](../architecture/overview.md)
+   This is the main runtime story: startup, request flow, session ownership, agent reporting, and Xray config generation.
+2. [Components](../architecture/components.md)
+   Use this when you need the ownership map by package and dependency direction.
+3. [Design decisions](../architecture/design-decisions.md)
+   Use this when you need the current tradeoffs, not just the shape of the system.
 
-- Describe the current implementation rather than an aspirational future-only design.
-- Keep terminology aligned with the repository root README, manifests, and actual directories.
-- Link deeper runbooks, specs, or subsystem notes from the legacy docs listed above.
-- Keep diagrams and ownership notes synchronized with actual directories, services, and integration dependencies.
+## Key Architecture Themes
+
+- Session-first control plane with optional JWT middleware.
+- `store.Store` as the core business persistence abstraction.
+- Selective GORM usage for admin settings, homepage video, sandbox binding, and tenant / XWorkmate models.
+- Agent status and sandbox bindings projected into `agentserver.Registry`.
+- Xray config generated from database state through `xrayconfig.Generator` and optionally converged by `PeriodicSyncer`.
+
+## Related Pages
+
+- [Design](design.md)
+- [Developer Guide](developer-guide.md)
+- [API overview](../api/overview.md)

@@ -1,15 +1,37 @@
 # Accounts Service Plus Documentation
 
-This repository is a Go service with API, configuration, runtime operations, and deployment responsibilities.
+This documentation set now covers the current engineering reality of `accounts.svc.plus` instead of placeholder summaries. The detailed pages under `docs/architecture/*`, `docs/api/*`, and `docs/development/*` are shared bilingual pages, while `docs/en/*` remains the English entry layer.
 
-## Current state snapshot
+## What Is Covered
 
-- Root README title: `accounts.svc.plus`
-- Build/runtime evidence: go.mod (`account`)
-- Primary directories detected: `cmd/`, `internal/`, `api/`, `accountsvc/`, `deploy/`, `ansible/`, `scripts/`, `tests/`, `sql/`, `config/`
-- Existing docs count: 44
+- System design from `cmd/accountsvc/main.go` through API routing, store access, agent registry, and Xray sync.
+- Package and type ownership for `api`, `internal/store`, `internal/auth`, `internal/service`, `internal/xrayconfig`, `internal/agentmode`, `internal/agentserver`, and `internal/agentproto`.
+- HTTP contracts including request fields, response fields, auth mode, owner handler file, and error conventions.
 
-## Canonical pages
+## Recommended Reading Paths
+
+### For architecture readers
+
+1. [Architecture](architecture.md)
+2. [Detailed startup and runtime flow](../architecture/overview.md)
+3. [Component ownership map](../architecture/components.md)
+4. [Design decisions](../architecture/design-decisions.md)
+
+### For API and integration readers
+
+1. [Developer Guide](developer-guide.md)
+2. [API overview](../api/overview.md)
+3. [Authentication and authorization](../api/auth.md)
+4. [Endpoint matrix](../api/endpoints.md)
+5. [Error conventions](../api/errors.md)
+
+### For codebase readers
+
+1. [Developer Guide](developer-guide.md)
+2. [Code structure reference](../development/code-structure.md)
+3. [Testing baseline](../development/testing.md)
+
+## Canonical Entry Pages
 
 - [Architecture](architecture.md)
 - [Design](design.md)
@@ -18,17 +40,7 @@ This repository is a Go service with API, configuration, runtime operations, and
 - [Developer Guide](developer-guide.md)
 - [Vibe Coding Reference](vibe-coding-reference.md)
 
-## Legacy docs to fold in
+## Notes
 
-- `Runbook/Feature-Sandbox-Mode-and-Sync-Fix.md`
-- `Runbook/Fix-Agent-404-And-UUID-Change.md`
-- `Runbook/Fix-CloudRun-Stunnel-Startup-Failure.md`
-- `Runbook/Fix-Rotating-UUID-Sync-Archive-2026-02-06.md`
-- `Runbook/README.md`
-- `Runbook/Security-Scrubbing-Archive-2026-02-06.md`
-- `SMTP_GMAIL_SETUP.md`
-- `advanced/customization.md`
-- `advanced/performance.md`
-- `advanced/scalability.md`
-- `advanced/security.md`
-- `api/auth.md`
+- Detailed subsystem pages are intentionally shared instead of duplicated into `docs/en/api/*` or `docs/en/architecture/*`.
+- The validation baseline for the current docs set is `go test ./...`; see [testing](../development/testing.md).

@@ -1,31 +1,42 @@
 # 开发手册
 
-该仓库是 Go 服务，文档需要覆盖 API、配置、运行时操作与部署职责。
+本页是共享双语工程参考页的中文导航层。
 
-本页用于记录本地开发环境、项目结构、测试面与贴合当前代码库的贡献约定。
+## 建议起步顺序
 
-## 与当前代码对齐的说明
+1. [代码结构参考](../development/code-structure.md)
+2. [API 总览](../api/overview.md)
+3. [认证与鉴权](../api/auth.md)
+4. [接口矩阵](../api/endpoints.md)
+5. [错误约定](../api/errors.md)
+6. [测试基线](../development/testing.md)
 
-- 文档目标仓库: `accounts.svc.plus`
-- 仓库类型: `go-service`
-- 构建与运行依据: go.mod (`account`)
-- 主要实现与运维目录: `cmd/`, `internal/`, `api/`, `accountsvc/`, `deploy/`, `ansible/`, `scripts/`, `tests/`, `sql/`, `config/`
-- `package.json` 脚本快照: No package.json scripts were detected.
+## 每个细页回答什么问题
 
-## 需要继续归并的现有文档
+- [代码结构参考](../development/code-structure.md)
+  看核心包由谁负责、哪些导出类型重要、哪些非导出 owner 承担主流程，以及各包之间如何连接。
+- [API 总览](../api/overview.md)
+  看路由族如何划分、handler 分布在哪些文件里、认证层是怎样叠加的。
+- [认证与鉴权](../api/auth.md)
+  看 session 登录、MFA、OAuth exchange、JWT refresh、密码重置、XWorkmate secret API 的请求/返回字段。
+- [接口矩阵](../api/endpoints.md)
+  看方法、路径、owner file、鉴权方式、请求参数、返回形状与主要依赖对象。
+- [测试基线](../development/testing.md)
+  看当前文档与代码一致性的校验方式，核心基线是 `go test ./...`。
 
-- `api/auth.md`
-- `api/endpoints.md`
-- `api/errors.md`
-- `api/overview.md`
-- `development/code-structure.md`
-- `development/contributing.md`
-- `development/dev-setup.md`
-- `development/testing.md`
+## 校验基线
 
-## 本页下一步应补充的内容
+本轮文档补齐以源码为事实源，并通过以下命令校验：
 
-- 先描述当前已落地实现，再补充未来规划，避免只写愿景不写现状。
-- 术语需要与仓库根 README、构建清单和实际目录保持一致。
-- 将上方列出的历史 runbook、spec、子系统说明逐步链接并归并到本页。
-- 持续让环境搭建与测试命令对应真实存在的脚本、Make 目标或语言工具链。
+```bash
+go test ./...
+```
+
+如果你修改了路由、类型签名、handler 归属或主依赖对象，应同步更新上面的细页。
+
+## 相关页面
+
+- [架构](architecture.md)
+- [设计](design.md)
+- [环境搭建](../development/dev-setup.md)
+- [贡献约定](../development/contributing.md)

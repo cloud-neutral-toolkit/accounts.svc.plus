@@ -1,31 +1,42 @@
 # Developer Guide
 
-This repository is a Go service with API, configuration, runtime operations, and deployment responsibilities.
+Use this page as the English navigation layer for the shared bilingual engineering references.
 
-Use this page to document local setup, project structure, test surfaces, and contribution conventions tied to the current codebase.
+## Start Here
 
-## Current code-aligned notes
+1. [Code structure reference](../development/code-structure.md)
+2. [API overview](../api/overview.md)
+3. [Authentication and authorization](../api/auth.md)
+4. [Endpoint matrix](../api/endpoints.md)
+5. [Error conventions](../api/errors.md)
+6. [Testing baseline](../development/testing.md)
 
-- Documentation target: `accounts.svc.plus`
-- Repo kind: `go-service`
-- Manifest and build evidence: go.mod (`account`)
-- Primary implementation and ops directories: `cmd/`, `internal/`, `api/`, `accountsvc/`, `deploy/`, `ansible/`, `scripts/`, `tests/`, `sql/`, `config/`
-- Package scripts snapshot: No package.json scripts were detected.
+## What Each Detailed Page Answers
 
-## Existing docs to reconcile
+- [Code structure reference](../development/code-structure.md)
+  Which package owns what, which exported types matter, which non-exported owners carry runtime behavior, and how the core packages connect.
+- [API overview](../api/overview.md)
+  How route families are organized, where handlers live, and how authentication layers stack.
+- [Authentication and authorization](../api/auth.md)
+  Request and response fields for session login, MFA, OAuth exchange, JWT refresh, password reset, and XWorkmate secret flows.
+- [Endpoint matrix](../api/endpoints.md)
+  Method, path, owner file, auth mode, request parameters, response shape, and dependency wiring for the current route set.
+- [Testing baseline](../development/testing.md)
+  The verification baseline for docs and code alignment, centered on `go test ./...`.
 
-- `api/auth.md`
-- `api/endpoints.md`
-- `api/errors.md`
-- `api/overview.md`
-- `development/code-structure.md`
-- `development/contributing.md`
-- `development/dev-setup.md`
-- `development/testing.md`
+## Validation Baseline
 
-## What this page should cover next
+The documentation was aligned against current source, then validated with:
 
-- Describe the current implementation rather than an aspirational future-only design.
-- Keep terminology aligned with the repository root README, manifests, and actual directories.
-- Link deeper runbooks, specs, or subsystem notes from the legacy docs listed above.
-- Keep setup and test commands tied to actual package scripts, Make targets, or language toolchains in this repository.
+```bash
+go test ./...
+```
+
+If you update routes, type signatures, or package ownership, update the detailed pages above in the same change.
+
+## Related Pages
+
+- [Architecture](architecture.md)
+- [Design](design.md)
+- [Development setup](../development/dev-setup.md)
+- [Contributing](../development/contributing.md)
