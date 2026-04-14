@@ -270,3 +270,9 @@ jobs:
 
       - name: Validate Deployed Accounts Service
         run: bash ./scripts/github-actions/validate-deploy.sh "${{ needs.build.outputs.service_image_ref }}" https://accounts.svc.plus
+
+      - name: Validate Review XWorkmate Sync Contract
+        env:
+          REVIEW_ACCOUNT_EMAIL: review@svc.plus
+          REVIEW_ACCOUNT_PASSWORD: ${{ secrets.REVIEW_ACCOUNT_PASSWORD }}
+        run: bash ./scripts/github-actions/validate-review-xworkmate-sync.sh https://accounts.svc.plus

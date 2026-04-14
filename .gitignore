@@ -74,3 +74,4 @@ ansible/vars/*.host.yml
 ansible/vars/*.vault.yml
 
 init.json
+.worktrees/

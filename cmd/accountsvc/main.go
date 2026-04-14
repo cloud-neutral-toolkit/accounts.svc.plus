@@ -46,6 +46,9 @@ const (
 	SandboxEmail = "sandbox@svc.plus"
 	// ReviewEmail is the canonical email for the readonly App Review account.
 	ReviewEmail = "review@svc.plus"
+	// SharedXWorkmateBridgeServerURL is the managed bridge endpoint exposed to
+	// tenant-shared xworkmate clients such as the App Review account.
+	SharedXWorkmateBridgeServerURL = "https://xworkmate-bridge.svc.plus"
 )
 
 const (
@@ -59,6 +62,147 @@ var defaultReviewPermissions = []string{
 	"admin.users.list.read",
 	"admin.agents.status.read",
 	"admin.blacklist.read",
+}
+
+type sharedXWorkmateBootstrapConfig struct {
+	BridgeServerURL string
+	BridgeAuthToken string
+}
+
+func resolveSharedXWorkmateBootstrapConfig() sharedXWorkmateBootstrapConfig {
+	return sharedXWorkmateBootstrapConfig{
+		BridgeServerURL: firstNonEmptyString(
+			os.Getenv("XWORKMATE_BRIDGE_SERVER_URL"),
+			os.Getenv("BRIDGE_SERVER_URL"),
+			SharedXWorkmateBridgeServerURL,
+		),
+		BridgeAuthToken: firstNonEmptyString(
+			os.Getenv("BRIDGE_AUTH_TOKEN"),
+			os.Getenv("INTERNAL_SERVICE_TOKEN"),
+		),
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func normalizeBridgeServerOrigin(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	return (&url.URL{Scheme: parsed.Scheme, Host: parsed.Host}).String()
+}
+
+func managedSharedXWorkmateBridgeLocator() store.XWorkmateSecretLocator {
+	locator := store.XWorkmateSecretLocator{
+		ID:         strings.Join([]string{"managed", store.SharedXWorkmateTenantID, "", store.XWorkmateProfileScopeTenantShared, store.XWorkmateSecretLocatorTargetBridgeAuthToken}, "|"),
+		Provider:   store.XWorkmateSecretLocatorProviderVault,
+		SecretPath: fmt.Sprintf("xworkmate/tenants/%s/shared", store.SharedXWorkmateTenantID),
+		SecretKey:  store.XWorkmateSecretLocatorTargetBridgeAuthToken,
+		Target:     store.XWorkmateSecretLocatorTargetBridgeAuthToken,
+		Required:   true,
+	}
+	store.NormalizeXWorkmateSecretLocator(&locator)
+	return locator
+}
+
+func upsertXWorkmateSecretLocator(
+	locators []store.XWorkmateSecretLocator,
+	locator store.XWorkmateSecretLocator,
+) []store.XWorkmateSecretLocator {
+	next := make([]store.XWorkmateSecretLocator, 0, len(locators)+1)
+	replaced := false
+	for _, current := range locators {
+		store.NormalizeXWorkmateSecretLocator(&current)
+		if current.Target == locator.Target {
+			next = append(next, locator)
+			replaced = true
+			continue
+		}
+		next = append(next, current)
+	}
+	if !replaced {
+		next = append(next, locator)
+	}
+	return next
+}
+
+func ensureSharedReviewXWorkmateProfile(
+	ctx context.Context,
+	st store.Store,
+	reviewCfg config.ReviewAccount,
+	bootstrap sharedXWorkmateBootstrapConfig,
+	writeSecret func(context.Context, store.XWorkmateSecretLocator, string) error,
+	logger *slog.Logger,
+) error {
+	if !reviewCfg.Enabled {
+		return nil
+	}
+
+	bridgeServerURL := strings.TrimSpace(bootstrap.BridgeServerURL)
+	if bridgeServerURL == "" {
+		return fmt.Errorf("shared xworkmate bridge server url is required")
+	}
+	parsedBridgeURL, err := url.Parse(bridgeServerURL)
+	if err != nil || parsedBridgeURL.Scheme == "" || parsedBridgeURL.Host == "" {
+		return fmt.Errorf("shared xworkmate bridge server url is invalid: %q", bridgeServerURL)
+	}
+	bridgeAuthToken := strings.TrimSpace(bootstrap.BridgeAuthToken)
+	if bridgeAuthToken == "" {
+		return fmt.Errorf("shared xworkmate bridge auth token is required")
+	}
+	if writeSecret == nil {
+		return fmt.Errorf("xworkmate vault service is required for shared bridge bootstrap")
+	}
+
+	profile, err := st.GetXWorkmateProfile(
+		ctx,
+		store.SharedXWorkmateTenantID,
+		"",
+		store.XWorkmateProfileScopeTenantShared,
+	)
+	if err != nil && !errors.Is(err, store.ErrXWorkmateProfileNotFound) {
+		return fmt.Errorf("load shared xworkmate profile: %w", err)
+	}
+	if errors.Is(err, store.ErrXWorkmateProfileNotFound) || profile == nil {
+		profile = &store.XWorkmateProfile{
+			TenantID: store.SharedXWorkmateTenantID,
+			Scope:    store.XWorkmateProfileScopeTenantShared,
+		}
+	}
+
+	locator := managedSharedXWorkmateBridgeLocator()
+	profile.BridgeServerURL = bridgeServerURL
+	profile.BridgeServerOrigin = normalizeBridgeServerOrigin(bridgeServerURL)
+	profile.SecretLocators = upsertXWorkmateSecretLocator(
+		profile.SecretLocators,
+		locator,
+	)
+
+	if err := st.UpsertXWorkmateProfile(ctx, profile); err != nil {
+		return fmt.Errorf("upsert shared xworkmate profile: %w", err)
+	}
+	if err := writeSecret(ctx, locator, bridgeAuthToken); err != nil {
+		return fmt.Errorf("persist shared bridge auth token: %w", err)
+	}
+	if logger != nil {
+		logger.Info(
+			"shared xworkmate bridge contract ensured",
+			"bridgeServerURL",
+			bridgeServerURL,
+			"profileScope",
+			store.XWorkmateProfileScopeTenantShared,
+		)
+	}
+	return nil
 }
 
 func ensureReviewUser(ctx context.Context, st store.Store, cfg config.ReviewAccount, logger *slog.Logger) error {
@@ -915,6 +1059,25 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 	})
 	if err != nil {
 		return err
+	}
+	if err := ensureSharedReviewXWorkmateProfile(
+		ctx,
+		st,
+		cfg.ReviewAccount,
+		resolveSharedXWorkmateBootstrapConfig(),
+		func(
+			ctx context.Context,
+			locator store.XWorkmateSecretLocator,
+			value string,
+		) error {
+			if xworkmateVaultService == nil {
+				return errors.New("xworkmate vault service is unavailable")
+			}
+			return xworkmateVaultService.WriteSecret(ctx, locator, value)
+		},
+		logger,
+	); err != nil {
+		logger.Warn("failed to ensure shared review xworkmate profile", "err", err)
 	}
 
 	options := []api.Option{
