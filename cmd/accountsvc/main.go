@@ -884,6 +884,19 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		smtpHost = ""
 	}
 	if smtpHost != "" {
+		switch {
+		case strings.TrimSpace(cfg.SMTP.Username) == "":
+			emailVerificationEnabled = false
+			logger.Warn("smtp username is missing; disabling email verification", "host", smtpHost)
+		case strings.TrimSpace(cfg.SMTP.Password) == "":
+			emailVerificationEnabled = false
+			logger.Warn("smtp password is missing; disabling email verification", "host", smtpHost)
+		case strings.TrimSpace(cfg.SMTP.From) == "":
+			emailVerificationEnabled = false
+			logger.Warn("smtp from address is missing; disabling email verification", "host", smtpHost)
+		}
+	}
+	if smtpHost != "" {
 		tlsMode := mailer.ParseTLSMode(cfg.SMTP.TLS.Mode)
 		sender, err := mailer.New(mailer.Config{
 			Host:               smtpHost,

@@ -949,6 +949,34 @@ func TestRegisterEndpointWithoutEmailVerification(t *testing.T) {
 	}
 }
 
+func TestRegisterSendEndpointWithoutEmailVerification(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	RegisterRoutes(router, WithEmailVerification(false))
+
+	payload := map[string]string{"email": "disabled@example.com"}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal payload: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/register/send", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body: %s", http.StatusOK, rr.Code, rr.Body.String())
+	}
+
+	resp := decodeResponse(t, rr)
+	if resp.Message != "verification email sent" {
+		t.Fatalf("expected verification success message, got %q", resp.Message)
+	}
+}
+
 func TestSessionEndpointAcceptsCookie(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

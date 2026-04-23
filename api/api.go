@@ -762,6 +762,11 @@ func (h *handler) sendEmailVerification(c *gin.Context) {
 		return
 	}
 
+	if !h.emailVerificationEnabled {
+		c.JSON(http.StatusOK, gin.H{"message": "verification email sent"})
+		return
+	}
+
 	var req verificationSendRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
