@@ -149,7 +149,7 @@ func TestGatewayRoleUsesCentralSignedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := `{"join_token":"` + joinToken + `","device_id":"gw-uat-1","platform":"linux","role":"gateway","wireguard_public_key":"` + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{6}, 32)) + `"}`
+	payload := `{"join_token":"` + joinToken + `","device_id":"gw-uat-1","platform":"linux","role":"gateway","wireguard_public_key":"` + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32)) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/overlay/v1/join-tokens/exchange", bytes.NewBufferString(payload))
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -159,6 +159,9 @@ func TestGatewayRoleUsesCentralSignedSnapshot(t *testing.T) {
 	var exchange ExchangeResponse
 	if err := json.Unmarshal(resp.Body.Bytes(), &exchange); err != nil {
 		t.Fatal(err)
+	}
+	if exchange.Device.WireGuardAddress != "10.88.0.1/32" {
+		t.Fatalf("gateway received non-gateway address: %q", exchange.Device.WireGuardAddress)
 	}
 	gatewayReq := httptest.NewRequest(http.MethodGet, "/api/overlay/v1/gateway/signed-config", nil)
 	gatewayReq.Header.Set("Authorization", "Bearer "+exchange.EnrollmentToken)
