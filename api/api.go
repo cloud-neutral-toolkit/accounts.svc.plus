@@ -57,12 +57,6 @@ type session struct {
 	expiresAt time.Time
 }
 
-type oauthExchangeCode struct {
-	sessionToken     string
-	sessionExpiresAt time.Time
-	expiresAt        time.Time
-}
-
 type handler struct {
 	store                     store.Store
 	mu                        sync.RWMutex
@@ -81,8 +75,6 @@ type handler struct {
 	resetTTL                  time.Duration
 	passwordResets            map[string]passwordReset
 	resetMu                   sync.RWMutex
-	oauthExchangeCodes        map[string]oauthExchangeCode
-	oauthExchangeMu           sync.RWMutex
 	oauthExchangeTTL          time.Duration
 	metricsProvider           service.UserMetricsProvider
 	agentStatusReader         agentStatusReader
@@ -343,7 +335,6 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 		registrationVerifications: make(map[string]registrationVerification),
 		resetTTL:                  defaultPasswordResetTTL,
 		passwordResets:            make(map[string]passwordReset),
-		oauthExchangeCodes:        make(map[string]oauthExchangeCode),
 		oauthExchangeTTL:          defaultOAuthExchangeCodeTTL,
 		bridgeCredentials:         make(map[string]memoryBridgeCredential),
 	}
@@ -1506,7 +1497,11 @@ func (h *handler) exchangeToken(c *gin.Context) {
 		return
 	}
 
-	sessionToken, _, ok := h.consumeOAuthExchangeCode(req.ExchangeCode)
+	sessionToken, _, ok, err := h.consumeOAuthExchangeCode(c.Request.Context(), req.ExchangeCode)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "exchange_code_lookup_failed", "failed to load exchange code")
+		return
+	}
 	if !ok {
 		respondError(c, http.StatusUnauthorized, "invalid_exchange_code", "invalid or expired exchange code")
 		return
@@ -1821,7 +1816,7 @@ func (h *handler) removeSession(token string) {
 	h.store.DeleteSession(context.Background(), token)
 }
 
-func (h *handler) issueOAuthExchangeCode(sessionToken string, sessionExpiresAt time.Time) (string, time.Time, error) {
+func (h *handler) issueOAuthExchangeCode(ctx context.Context, sessionToken string, sessionExpiresAt time.Time) (string, time.Time, error) {
 	code, err := h.newRandomToken()
 	if err != nil {
 		return "", time.Time{}, err
@@ -1835,35 +1830,14 @@ func (h *handler) issueOAuthExchangeCode(sessionToken string, sessionExpiresAt t
 		expiresAt = sessionExpiresAt
 	}
 
-	h.oauthExchangeMu.Lock()
-	defer h.oauthExchangeMu.Unlock()
-	h.oauthExchangeCodes[code] = oauthExchangeCode{
-		sessionToken:     sessionToken,
-		sessionExpiresAt: sessionExpiresAt,
-		expiresAt:        expiresAt,
+	if err := h.store.CreateOAuthExchangeCode(ctx, code, sessionToken, sessionExpiresAt, expiresAt); err != nil {
+		return "", time.Time{}, err
 	}
 	return code, expiresAt, nil
 }
 
-func (h *handler) consumeOAuthExchangeCode(code string) (string, time.Time, bool) {
-	normalized := strings.TrimSpace(code)
-	if normalized == "" {
-		return "", time.Time{}, false
-	}
-
-	h.oauthExchangeMu.Lock()
-	defer h.oauthExchangeMu.Unlock()
-
-	record, ok := h.oauthExchangeCodes[normalized]
-	if !ok {
-		return "", time.Time{}, false
-	}
-	delete(h.oauthExchangeCodes, normalized)
-
-	if time.Now().After(record.expiresAt) {
-		return "", time.Time{}, false
-	}
-	return record.sessionToken, record.sessionExpiresAt, true
+func (h *handler) consumeOAuthExchangeCode(ctx context.Context, code string) (string, time.Time, bool, error) {
+	return h.store.ConsumeOAuthExchangeCode(ctx, code)
 }
 
 func (h *handler) newRandomToken() (string, error) {
@@ -3107,7 +3081,7 @@ func (h *handler) oauthCallback(c *gin.Context) {
 		return
 	}
 
-	exchangeCode, _, err := h.issueOAuthExchangeCode(sessionToken, sessionExpiresAt)
+	exchangeCode, _, err := h.issueOAuthExchangeCode(c.Request.Context(), sessionToken, sessionExpiresAt)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "exchange_code_creation_failed", "failed to issue exchange code")
 		return

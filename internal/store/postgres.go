@@ -1380,3 +1380,30 @@ func (s *postgresStore) DeleteSession(ctx context.Context, token string) error {
 	_, err := s.db.ExecContext(ctx, query, token)
 	return err
 }
+
+func (s *postgresStore) CreateOAuthExchangeCode(ctx context.Context, code, sessionToken string, sessionExpiresAt, expiresAt time.Time) error {
+	const query = `INSERT INTO oauth_exchange_codes (code, session_token, session_expires_at, expires_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (code) DO UPDATE SET
+  session_token = EXCLUDED.session_token,
+  session_expires_at = EXCLUDED.session_expires_at,
+  expires_at = EXCLUDED.expires_at`
+	_, err := s.db.ExecContext(ctx, query, strings.TrimSpace(code), sessionToken, sessionExpiresAt.UTC(), expiresAt.UTC())
+	return err
+}
+
+func (s *postgresStore) ConsumeOAuthExchangeCode(ctx context.Context, code string) (string, time.Time, bool, error) {
+	const query = `DELETE FROM oauth_exchange_codes
+WHERE code = $1 AND expires_at > now()
+RETURNING session_token, session_expires_at`
+	var sessionToken string
+	var sessionExpiresAt time.Time
+	err := s.db.QueryRowContext(ctx, query, strings.TrimSpace(code)).Scan(&sessionToken, &sessionExpiresAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", time.Time{}, false, nil
+		}
+		return "", time.Time{}, false, err
+	}
+	return sessionToken, sessionExpiresAt.UTC(), true, nil
+}
