@@ -559,6 +559,9 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	internalGroup.GET("/policy/:accountUUID", h.internalAccountPolicy)
 	internalGroup.POST("/nodes/heartbeat", h.internalNodeHeartbeat)
 	internalGroup.POST("/overlay/nodes/heartbeat", h.internalOverlayNodeHeartbeat)
+	if h.overlayService != nil {
+		internalGroup.POST("/overlay/networks/bootstrap", h.overlayInternalBootstrap)
+	}
 
 	// Public /api routes for admin/management (expected by frontend at /api/admin/...)
 	apiGroup := r.Group("/api")
