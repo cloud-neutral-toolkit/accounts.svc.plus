@@ -209,16 +209,20 @@ func (r *Repository) allocateAddress(tx *gorm.DB, network NetworkRecord) (string
 	if err != nil {
 		return "", ErrInvalidInput
 	}
-	gatewayAddress := network.GatewayWireGuardAddress
-	if gatewayAddress == "" {
-		gatewayAddress = prefix.Addr().Next().String() + "/32"
+	gatewayAddress := prefix.Addr().Next()
+	if configured := strings.TrimSpace(network.GatewayWireGuardAddress); configured != "" {
+		parsed, parseErr := netip.ParsePrefix(configured)
+		if parseErr != nil || !prefix.Contains(parsed.Addr()) {
+			return "", ErrInvalidInput
+		}
+		gatewayAddress = parsed.Addr()
 	}
 	for candidate := prefix.Addr(); prefix.Contains(candidate); candidate = candidate.Next() {
 		if candidate == prefix.Addr() {
 			continue
 		}
 		address := candidate.String() + "/32"
-		if address == gatewayAddress {
+		if candidate == gatewayAddress {
 			continue
 		}
 		var count int64
@@ -257,9 +261,16 @@ func (r *Repository) createDevice(ctx context.Context, tokenHash string, request
 		if networkErr != nil {
 			return networkErr
 		}
-		address, err := r.allocateAddress(tx, network)
-		if err != nil {
-			return err
+		if invite.Role == RoleGateway && request.WireGuardPublicKey != network.GatewayWireGuardKey {
+			return ErrInvalidInput
+		}
+		address := network.GatewayWireGuardAddress
+		if invite.Role != RoleGateway {
+			var err error
+			address, err = r.allocateAddress(tx, network)
+			if err != nil {
+				return err
+			}
 		}
 		device = DeviceRecord{ID: request.DeviceID, UserID: network.OwnerUserID, NetworkID: invite.NetworkID, Role: invite.Role, Name: request.Name, Platform: request.Platform, Hostname: request.Hostname, WireGuardPublicKey: request.WireGuardPublicKey, WireGuardAddress: address, Status: "active", CreatedAt: now, UpdatedAt: now}
 		if err := tx.Create(&device).Error; err != nil {
