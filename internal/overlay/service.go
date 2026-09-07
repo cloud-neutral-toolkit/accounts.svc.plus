@@ -246,12 +246,13 @@ func (s *Service) Exchange(ctx context.Context, request ExchangeRequest) (Exchan
 	if invite.DeviceID != "" && invite.DeviceID != request.DeviceID || invite.Platform != "" && invite.Platform != request.Platform || invite.Role != "" && invite.Role != request.Role {
 		return ExchangeResponse{}, ErrInviteConstraint
 	}
-	credentialSecret := newOpaqueToken("xdc_")
+	credentialRawID := randomHex(16)
+	credentialID := "xdcid_" + credentialRawID
+	credentialSecret := "xdc_" + credentialRawID + "." + newOpaqueToken("")
 	enrollmentSecret := newOpaqueToken("xenr_")
 	credentialIssued := canonicalTime(now)
 	credentialExpiry := canonicalTime(now.Add(s.credentialTTL))
 	enrollmentExpiry := canonicalTime(now.Add(s.enrollmentTTL))
-	credentialID := "xdcid_" + randomHex(16)
 	var device DeviceRecord
 	var network NetworkRecord
 	var createErr error

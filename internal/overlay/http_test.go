@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +74,10 @@ func TestOverlayLifecyclePersistsHashesAndSignsConfig(t *testing.T) {
 	var credentials []CredentialRecord
 	if err := service.repo.DB.Find(&credentials).Error; err != nil || len(credentials) != 1 || credentials[0].TokenHash == exchange.DeviceCredential.Credential {
 		t.Fatalf("credential storage is unsafe: err=%v records=%#v", err, credentials)
+	}
+	credentialRawID := strings.TrimPrefix(exchange.DeviceCredential.CredentialID, "xdcid_")
+	if !strings.HasPrefix(exchange.DeviceCredential.Credential, "xdc_"+credentialRawID+".") {
+		t.Fatalf("device credential is not bound to credential_id")
 	}
 	var invites []InviteRecord
 	if err := service.repo.DB.Find(&invites).Error; err != nil || len(invites) != 1 || invites[0].TokenHash == joinToken || invites[0].RemainingUses != 0 {
