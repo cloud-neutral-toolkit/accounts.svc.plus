@@ -34,8 +34,8 @@ CREATE TABLE IF NOT EXISTS overlay_invites (
 );
 
 CREATE TABLE IF NOT EXISTS overlay_devices (
-  id TEXT PRIMARY KEY,
-  user_uuid UUID REFERENCES users(uuid) ON DELETE CASCADE,
+  id TEXT NOT NULL,
+  user_uuid UUID NOT NULL REFERENCES users(uuid) ON DELETE CASCADE,
   user_id TEXT NOT NULL DEFAULT '',
   network_id TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'one',
@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS overlay_devices (
   last_seen_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_uuid, id),
   UNIQUE (network_id, wireguard_address)
 );
 
