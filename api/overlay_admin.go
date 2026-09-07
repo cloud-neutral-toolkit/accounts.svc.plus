@@ -17,6 +17,7 @@ import (
 const (
 	permissionXConnectZeroRead   = "xconnect.zero.read"
 	permissionXConnectZeroManage = "xconnect.zero.manage"
+	xconnectZeroRootEmail        = "admin@svc.plus"
 )
 
 type overlayAdminBootstrapRequest struct {
@@ -225,7 +226,7 @@ func (h *handler) requireXConnectZeroAccess(c *gin.Context, permission string) (
 	}
 	switch {
 	case store.IsRootRole(user.Role):
-		if !strings.EqualFold(strings.TrimSpace(user.Email), store.RootAdminEmail) {
+		if !strings.EqualFold(strings.TrimSpace(user.Email), xconnectZeroRootEmail) {
 			respondError(c, http.StatusForbidden, "root_email_enforced", "root role is restricted")
 			return nil, false
 		}
