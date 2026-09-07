@@ -30,7 +30,7 @@ func (h *HTTPHandler) Exchange(c *gin.Context) {
 }
 
 func (h *HTTPHandler) MintSession(c *gin.Context) {
-	credential, ok := bearer(c.GetHeader("Authorization"), "XConnect-Device")
+	credential, ok := bearer(c.GetHeader("Authorization"), "Device")
 	if !ok {
 		writeError(c, ErrInvalidToken)
 		return
