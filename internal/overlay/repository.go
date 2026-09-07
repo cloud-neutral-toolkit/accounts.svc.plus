@@ -59,7 +59,7 @@ type DeviceRecord struct {
 	// contract. UAT and production already require this UUID column, while the
 	// formal Zero API uses UserID for explicit per-user queries. New Zero
 	// devices therefore dual-write both representations of the same owner.
-	UserUUID           string     `gorm:"column:user_uuid;type:uuid;index"`
+	UserUUID           string     `gorm:"column:user_uuid;type:uuid;not null;primaryKey"`
 	UserID             string     `gorm:"column:user_id;type:text;index"`
 	NetworkID          string     `gorm:"column:network_id;type:text;not null;index"`
 	Role               string     `gorm:"column:role;type:text;not null;default:'one';index"`
