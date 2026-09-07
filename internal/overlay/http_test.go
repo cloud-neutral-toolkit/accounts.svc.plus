@@ -33,7 +33,7 @@ func newOverlayHTTPTest(t *testing.T) (*Service, *gin.Engine, string) {
 		t.Fatal(err)
 	}
 	gatewayKey := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
-	joinToken, err := service.Seed(t.Context(), BootstrapConfig{Network: BootstrapNetwork{ID: "sit-private", DisplayName: "SIT private", CIDR: "10.77.0.0/29", GatewayID: "gw-sit-1", GatewayWireGuardKey: gatewayKey, GatewayWireGuardAddress: "10.77.0.1/32", GatewayEndpointHost: "gw.example.test", GatewayEndpointPort: 51820, TransportServerName: "gw.example.test", TransportPort: 443, TransportAuthID: "11111111-1111-1111-1111-111111111111"}, Invite: BootstrapInvite{Platform: "linux", Role: RoleOne, ExpiresAt: now.Add(time.Hour)}}, "")
+	joinToken, err := service.Seed(t.Context(), BootstrapConfig{Network: BootstrapNetwork{ID: "sit-private", DisplayName: "SIT private", CIDR: "10.77.0.0/29", GatewayID: "gw-sit-1", GatewayWireGuardKey: gatewayKey, GatewayWireGuardAddress: "10.77.0.1/32", GatewayEndpointHost: "gw.example.test", GatewayEndpointPort: 51820, TransportServerName: "gw.example.test", TransportPort: 443, TransportAuthID: "11111111-1111-1111-1111-111111111111", OwnerUserID: "11111111-2222-4333-8444-555555555555"}, Invite: BootstrapInvite{Platform: "linux", Role: RoleOne, ExpiresAt: now.Add(time.Hour)}}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +65,10 @@ func TestOverlayLifecyclePersistsHashesAndSignsConfig(t *testing.T) {
 	}
 	if exchange.Device.Role != "" || exchange.Device.WireGuardAddress != "10.77.0.2/32" {
 		t.Fatalf("unexpected One device response: %#v", exchange.Device)
+	}
+	var storedDevice DeviceRecord
+	if err := service.repo.DB.First(&storedDevice, "id = ?", exchange.Device.ID).Error; err != nil || storedDevice.UserUUID != storedDevice.UserID || storedDevice.UserID != "11111111-2222-4333-8444-555555555555" {
+		t.Fatalf("device owner compatibility columns diverged: %#v err=%v", storedDevice, err)
 	}
 	var credentials []CredentialRecord
 	if err := service.repo.DB.Find(&credentials).Error; err != nil || len(credentials) != 1 || credentials[0].TokenHash == exchange.DeviceCredential.Credential {

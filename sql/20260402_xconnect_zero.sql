@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS overlay_invites (
 
 CREATE TABLE IF NOT EXISTS overlay_devices (
   id TEXT PRIMARY KEY,
+  user_uuid UUID REFERENCES users(uuid) ON DELETE CASCADE,
   user_id TEXT NOT NULL DEFAULT '',
   network_id TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'one',

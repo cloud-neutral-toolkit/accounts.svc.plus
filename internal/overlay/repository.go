@@ -54,7 +54,12 @@ type InviteRecord struct {
 func (InviteRecord) TableName() string { return "overlay_invites" }
 
 type DeviceRecord struct {
-	ID                 string     `gorm:"column:id;type:text;primaryKey"`
+	ID string `gorm:"column:id;type:text;primaryKey"`
+	// UserUUID preserves the original Accounts overlay_devices ownership
+	// contract. UAT and production already require this UUID column, while the
+	// formal Zero API uses UserID for explicit per-user queries. New Zero
+	// devices therefore dual-write both representations of the same owner.
+	UserUUID           string     `gorm:"column:user_uuid;type:uuid;index"`
 	UserID             string     `gorm:"column:user_id;type:text;index"`
 	NetworkID          string     `gorm:"column:network_id;type:text;not null;index"`
 	Role               string     `gorm:"column:role;type:text;not null;default:'one';index"`
@@ -272,7 +277,7 @@ func (r *Repository) createDevice(ctx context.Context, tokenHash string, request
 				return err
 			}
 		}
-		device = DeviceRecord{ID: request.DeviceID, UserID: network.OwnerUserID, NetworkID: invite.NetworkID, Role: invite.Role, Name: request.Name, Platform: request.Platform, Hostname: request.Hostname, WireGuardPublicKey: request.WireGuardPublicKey, WireGuardAddress: address, Status: "active", CreatedAt: now, UpdatedAt: now}
+		device = DeviceRecord{ID: request.DeviceID, UserUUID: network.OwnerUserID, UserID: network.OwnerUserID, NetworkID: invite.NetworkID, Role: invite.Role, Name: request.Name, Platform: request.Platform, Hostname: request.Hostname, WireGuardPublicKey: request.WireGuardPublicKey, WireGuardAddress: address, Status: "active", CreatedAt: now, UpdatedAt: now}
 		if err := tx.Create(&device).Error; err != nil {
 			return err
 		}
