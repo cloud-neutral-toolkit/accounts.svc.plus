@@ -411,7 +411,7 @@ func (s *Service) buildSignedConfig(device DeviceRecord, network NetworkRecord, 
 		},
 		WireGuard: WireGuard{
 			InterfaceName: "xconone0", Addresses: []string{device.WireGuardAddress}, MTU: 1420,
-			Peers: []WireGuardPeer{{GatewayID: network.GatewayID, PublicKey: network.GatewayWireGuardKey, AllowedIPs: []string{network.CIDR}, Endpoint: Endpoint{Host: "127.0.0.1", Port: 51820}, PersistentKeepaliveSeconds: 25}},
+			Peers: []WireGuardPeer{{GatewayID: network.GatewayID, PublicKey: network.GatewayWireGuardKey, AllowedIPs: []string{network.CIDR}, Endpoint: Endpoint{Host: "127.0.0.1", Port: 18080}, PersistentKeepaliveSeconds: 25}},
 		},
 	}
 	if v2 {
