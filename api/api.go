@@ -600,6 +600,7 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	agentGroup.GET("/nodes", h.listAgentNodes)
 
 	h.registerOverlayV1Routes(r)
+	h.registerOverlayAdminRoutes(r)
 }
 
 type registerRequest struct {
