@@ -322,6 +322,12 @@ type Store interface {
 	GetSession(ctx context.Context, token string) (string, time.Time, error)
 	DeleteSession(ctx context.Context, token string) error
 
+	// OAuth exchange codes are short-lived, single-use credentials. They must
+	// live in the same durable store as sessions so callback and exchange
+	// requests can land on different service instances safely.
+	CreateOAuthExchangeCode(ctx context.Context, code, sessionToken string, sessionExpiresAt, expiresAt time.Time) error
+	ConsumeOAuthExchangeCode(ctx context.Context, code string) (sessionToken string, sessionExpiresAt time.Time, ok bool, err error)
+
 	// Agent management
 	UpsertAgent(ctx context.Context, agent *Agent) error
 	GetAgent(ctx context.Context, id string) (*Agent, error)
@@ -424,6 +430,7 @@ type memoryStore struct {
 	overlayNodes            map[string]*OverlayNode
 	overlayConfigAcks       map[string]*OverlayConfigAck
 	sessions                map[string]*sessionRecord
+	oauthExchangeCodes      map[string]*oauthExchangeRecord
 	tenants                 map[string]*Tenant
 	tenantDomains           map[string]*TenantDomain
 	tenantMemberships       map[string]map[string]*TenantMembership
@@ -446,6 +453,12 @@ type memoryStore struct {
 type sessionRecord struct {
 	UserID    string
 	ExpiresAt time.Time
+}
+
+type oauthExchangeRecord struct {
+	SessionToken     string
+	SessionExpiresAt time.Time
+	ExpiresAt        time.Time
 }
 
 var ErrSessionNotFound = errors.New("session not found")
@@ -478,6 +491,7 @@ func newMemoryStore(allowSuperAdminCounting bool) Store {
 		overlayNodes:            make(map[string]*OverlayNode),
 		overlayConfigAcks:       make(map[string]*OverlayConfigAck),
 		sessions:                make(map[string]*sessionRecord),
+		oauthExchangeCodes:      make(map[string]*oauthExchangeRecord),
 		tenants:                 make(map[string]*Tenant),
 		tenantDomains:           make(map[string]*TenantDomain),
 		tenantMemberships:       make(map[string]map[string]*TenantMembership),
@@ -1202,4 +1216,31 @@ func (s *memoryStore) DeleteSession(ctx context.Context, token string) error {
 	defer s.mu.Unlock()
 	delete(s.sessions, token)
 	return nil
+}
+
+func (s *memoryStore) CreateOAuthExchangeCode(ctx context.Context, code, sessionToken string, sessionExpiresAt, expiresAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.oauthExchangeCodes[strings.TrimSpace(code)] = &oauthExchangeRecord{
+		SessionToken:     sessionToken,
+		SessionExpiresAt: sessionExpiresAt,
+		ExpiresAt:        expiresAt,
+	}
+	return nil
+}
+
+func (s *memoryStore) ConsumeOAuthExchangeCode(ctx context.Context, code string) (string, time.Time, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	normalized := strings.TrimSpace(code)
+	record, ok := s.oauthExchangeCodes[normalized]
+	if !ok {
+		return "", time.Time{}, false, nil
+	}
+	delete(s.oauthExchangeCodes, normalized)
+	if time.Now().After(record.ExpiresAt) {
+		return "", time.Time{}, false, nil
+	}
+	return record.SessionToken, record.SessionExpiresAt, true, nil
 }

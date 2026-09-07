@@ -682,6 +682,18 @@ WHERE email_verified IS TRUE AND email_verified_at IS NULL`,
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )`,
+		// OAuth callbacks and the browser's token exchange may be handled by
+		// different Cloud Run instances. Persist the short-lived exchange code
+		// so it is not tied to the callback instance's process memory.
+		`CREATE TABLE IF NOT EXISTS public.oauth_exchange_codes (
+  code TEXT PRIMARY KEY,
+  session_token TEXT NOT NULL,
+  session_expires_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`,
+		`CREATE INDEX IF NOT EXISTS idx_oauth_exchange_codes_expires_at
+  ON public.oauth_exchange_codes (expires_at)`,
 		`CREATE TABLE IF NOT EXISTS public.rbac_roles (
   role_key TEXT PRIMARY KEY,
   description TEXT NOT NULL DEFAULT '',
