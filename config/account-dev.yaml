@@ -7,20 +7,21 @@ auth:
   enable: true
   token:
     # Fixed token authentication mechanism
-    publicToken: "${AUTH_TOKEN_PUBLIC_TOKEN:-xcontrol-public-token-2024}"
-    refreshSecret: "${AUTH_TOKEN_REFRESH_SECRET:-xcontrol-refresh-secret-2024}"
-    accessSecret: "${AUTH_TOKEN_ACCESS_SECRET:-xcontrol-access-secret-2024}"
+    publicToken: "${AUTH_TOKEN_PUBLIC_TOKEN}"
+    refreshSecret: "${AUTH_TOKEN_REFRESH_SECRET}"
+    accessSecret: "${AUTH_TOKEN_ACCESS_SECRET}"
     accessExpiry: "1h"
     refreshExpiry: "168h"
   oauth:
-    redirectUrl: "${OAUTH_REDIRECT_URL}"
-    frontendUrl: "${OAUTH_FRONTEND_URL:-https://console.svc.plus}"
+    frontendUrl: "${OAUTH_FRONTEND_URL}"
     github:
       clientId: "${GITHUB_CLIENT_ID}"
       clientSecret: "${GITHUB_CLIENT_SECRET}"
+      redirectUrl: "${OAUTH_GITHUB_REDIRECT_URL}"
     google:
       clientId: "${GOOGLE_CLIENT_ID}"
       clientSecret: "${GOOGLE_CLIENT_SECRET}"
+      redirectUrl: "${OAUTH_GOOGLE_REDIRECT_URL}"
 
 server:
   addr: ":8080"

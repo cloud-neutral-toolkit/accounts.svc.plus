@@ -1,238 +1,201 @@
-# GitHub OAuth 注册/登录配置指南
+# GitHub OAuth UAT → PROD 发布 TL;DR
 
-> 适用范围:`accounts.svc.plus`(后端)+ `console.svc.plus` / portal(前端)。
-> 结论先行:**代码链路已完整,上线只缺配置**。凭据全部配在 accounts 侧,前端零凭据、只做转发。
-> 最后更新:2026-07-10
+本文是 `accounts` 与 `portal` 的 GitHub OAuth 环境配置契约。目标是以下三个入口都能完成 GitHub 登录：
 
-## 1. 登录链路总览
-
-```
-浏览器                portal (console.svc.plus)          accounts.svc.plus                GitHub
-  │  点击 GitHub 登录        │                                  │                            │
-  ├────────────────────────>│ /api/auth/oauth/login/github     │                            │
-  │                         ├── 307 (带 frontend_url) ────────>│ /api/auth/oauth/login/github
-  │                         │                                  ├── 302 (state 含 frontend_url) ──> 授权页
-  │                         │                                  │<── 授权回调 code ───────────┤
-  │                         │                                  │ /api/auth/oauth/callback/github
-  │                         │                                  │  换 token → 拉 profile →
-  │                         │                                  │  按邮箱自动注册(+7天 trial)→
-  │                         │                                  │  绑定 identity → 建 session →
-  │                         │                                  │  签发一次性 exchange_code
-  │<── 307 {frontend}/login?exchange_code=... ─────────────────┤
-  │                         │                                  │
-  ├────────────────────────>│ POST /api/auth/token/exchange    │
-  │                         ├── 转发换正式 session token ─────>│
-  │<── 登录完成,跳转首页 ──┤                                  │
+```text
+UAT            https://console-cloudflare-uat.onwalk.net/login
+PROD 主入口    https://console.svc.plus/login
+PROD Serverless https://console-serverless-prod.svc.plus/login
 ```
 
-关键代码位置:
+## 结论
 
-| 环节 | 文件 |
-|---|---|
-| portal 登录按钮转发 | `portal/src/app/api/auth/oauth/login/[provider]/route.ts` |
-| 后端 login/callback | `accounts.svc.plus/api/api.go` (`oauthLogin` / `oauthCallback`) |
-| Provider 实现 | `accounts.svc.plus/internal/auth/oauth.go` |
-| frontend_url 校验白名单 | `accounts.svc.plus/api/xworkmate.go` (`validateFrontendURL`) |
-| provider 装配(读配置) | `accounts.svc.plus/cmd/accountsvc/main.go`(约 L1126 起) |
-| exchange_code 消费 | `portal/src/app/(auth)/login/LoginContent.tsx` + `portal/src/app/api/auth/token/exchange/route.ts` |
+```text
+PROD pipeline → kv/data/prod/accounts/* → PROD Accounts service
+UAT pipeline  → kv/data/uat/accounts/*  → UAT Accounts service
+```
 
-## 2. GitHub 侧:注册 OAuth App
+- GitOps 保存非敏感配置：`enabled`、`client_id`、回调 URL、前端 URL，以及对应 Vault 路径。
+- Vault 只保存敏感 OAuth 值：`client_secret`。
+- UAT 与 PROD 使用不同 GitHub OAuth App、不同 Client ID、不同 Client Secret。
+- `console-serverless-prod.svc.plus` 属于 PROD，复用 PROD OAuth App；它的 `frontend_url` 必须加入 PROD Accounts 的允许来源，但 GitHub callback 仍使用规范的 `accounts.svc.plus` 地址。
+- 不在源码、GitOps、GitHub Variables 或镜像中保存 Client Secret。
 
-打开 <https://github.com/settings/developers> → **OAuth Apps** → **New OAuth App**:
+## 1. 环境、入口与 OAuth App
 
-| 字段 | 值 |
-|---|---|
-| Application name | `svc.plus Console`(随意) |
-| Homepage URL | `https://console.svc.plus` |
-| Authorization callback URL | `https://accounts.svc.plus/api/auth/oauth/callback/github` |
+| 环境 | GitHub OAuth App name | Console 入口 | Accounts 入口 | GitHub callback |
+|---|---|---|---|---|
+| UAT | `onwalk.net Console (UAT)` | `https://console-cloudflare-uat.onwalk.net` | `https://accounts-cloudflare-uat.onwalk.net` | `https://accounts-cloudflare-uat.onwalk.net/api/auth/oauth/callback/github` |
+| PROD | `svc.plus Console (PROD)` | `https://console.svc.plus` | `https://accounts.svc.plus` | `https://accounts.svc.plus/api/auth/oauth/callback/github` |
+| PROD Serverless | 复用 `svc.plus Console (PROD)` | `https://console-serverless-prod.svc.plus` | `https://accounts.svc.plus` | `https://accounts.svc.plus/api/auth/oauth/callback/github` |
 
-创建后记录 **Client ID**;点 **Generate a new client secret** 获取 **Client Secret**(只显示一次)。
+GitHub Developer Settings 中两套 App 均按以下选项创建：
 
-注意事项:
+- **Allow wildcard matching**：关闭
+- **Enable Device Flow**：关闭
+- **Expire user access tokens**：开启
+- callback URL 使用精确的环境地址，不使用通配符
 
-- ⚠️ callback URL 填的是 **accounts 后端**地址,不是 console 前端地址 —— 最常见的填错点。
-- 一个 GitHub OAuth App 只支持一个 callback URL。本地调试请**另建一个 dev App**,callback 填 `http://localhost:8080/api/auth/oauth/callback/github`(accounts 本地端口)。
-- 权限 scope 由代码写死为 `user:email` + `read:user`,GitHub App 侧无需额外配置。
+GitHub Client ID 是公开标识，可写入 GitOps；Client Secret 只能写入对应环境的 Vault。
 
-## 3. accounts.svc.plus 侧(核心)
+## 2. GitOps 路径
 
-> **部署链路先看清**(2026-07-10 勘误):线上 accounts.svc.plus 实际走 **GitHub Actions pipeline → x-evor/playbooks `deploy_accounts_svc_plus.yml` → VPS docker compose**,配置由 `roles/vhosts/accounts_service/templates/account.yaml.j2` + `app.env.j2` 渲染,凭据来自 GitHub Actions secrets(源头存 Vault)。**`deploy/gcp/cloud-run/` 与 `config/account.cloudrun.yaml` 是 Cloud Run 路线的配置,当前未启用**;§3.1–3.3 中 gcloud / Secret Manager 相关内容仅在走 Cloud Run 时适用。
->
-> **VPS 路线的真实缺口**:playbooks 的 `account.yaml.j2` 已含 `auth.enable: true` + OAuth 占位符,但 `app.env.j2` / role defaults / pipeline deploy env 均未注入 `GITHUB_CLIENT_ID`、`GITHUB_CLIENT_SECRET`、`AUTH_TOKEN_*` —— envsubst 渲染为空,导致 provider 未装配(线上 404 的真正根因;已在 install.svc.plus 主机的 `/opt/cloud-neutral/accounts/managed/prod/env/app.env` 实地确认)。
->
-> **修复(2026-07-10,playbooks 分支 `accounts-oauth-env` + accounts pipeline.yml)**:
-> 1. `app.env.j2` 增加 `AUTH_TOKEN_*`、`GITHUB_CLIENT_ID/SECRET`、`GOOGLE_CLIENT_ID/SECRET` 行
-> 2. `defaults/main.yml` 的 `accounts_service_env_defaults` 增加对应 env lookup;CI 侧变量名用 `OAUTH_GITHUB_*` 前缀(**GitHub Actions 禁止 secret/env 以 `GITHUB_` 开头**),由 role 映射回容器内的 `GITHUB_CLIENT_*`
-> 3. `account.yaml.j2` 修复 token 段 `${VAR:-default}` 写法(envsubst 不支持,此前线上 JWT 签名密钥实为字面量垃圾串);`frontendUrl` 改为 Jinja 直渲 `{{ accounts_service_frontend_url }}`;`redirectUrl` 拆为 per-provider 硬编码
-> 4. accounts 仓库 `pipeline.yml` deploy step 透传 `OAUTH_GITHUB_CLIENT_ID`(明文)+ 4 个 `${{ secrets.* }}`
-> 5. GitHub 仓库 secrets 需补录:`OAUTH_GITHUB_CLIENT_SECRET`、`AUTH_TOKEN_PUBLIC_TOKEN`、`AUTH_TOKEN_REFRESH_SECRET`、`AUTH_TOKEN_ACCESS_SECRET`(源头存 Vault,见 §3.2)
+仓库：`/Users/shenlan/workspaces/ai-workspace-infra/gitops`
 
-### 3.1 补配置模板(Cloud Run 路线,当前未启用)
+当前已落地的 GitHub 配置文件：
 
-Cloud Run 部署使用 `CONFIG_TEMPLATE=/app/config/account.cloudrun.yaml`,该文件此前**没有 `auth:` 段**,导致 provider map 为空,`/api/auth/oauth/login/github` 返回 `404 provider_not_found`。已补上(2026-07-10):
+```text
+services/accounts/uat/oauth/github.json
+services/accounts/prod/oauth/github.json
+```
+
+对应 Vault 路径由文件中的 `vault_secret_path` 声明：
+
+```text
+kv/data/uat/accounts/oauth/github
+kv/data/prod/accounts/oauth/github
+```
+
+UAT GitOps JSON：
+
+```json
+{
+  "enabled": true,
+  "client_id": "Ov23lig2e4djTzbo3vo1",
+  "redirect_url": "https://accounts-cloudflare-uat.onwalk.net/api/auth/oauth/callback/github",
+  "frontend_url": "https://console-cloudflare-uat.onwalk.net",
+  "vault_secret_path": "kv/data/uat/accounts/oauth/github",
+  "vault_secret_key": "client_secret"
+}
+```
+
+PROD GitOps JSON：
+
+```json
+{
+  "enabled": true,
+  "client_id": "Ov23lijWHcN9Xa9HANCd",
+  "redirect_url": "https://accounts.svc.plus/api/auth/oauth/callback/github",
+  "frontend_url": "https://console.svc.plus",
+  "vault_secret_path": "kv/data/prod/accounts/oauth/github",
+  "vault_secret_key": "client_secret"
+}
+```
+
+`console-serverless-prod.svc.plus` 是同一 PROD OAuth App 的额外前端入口，不新增 GitOps Secret，也不新增 GitHub callback；部署 PROD Accounts 时将该域名加入 `ALLOWED_ORIGINS`。
+
+## 3. Vault KV 结构
+
+Vault KV v2 的完整数据只包含敏感字段：
+
+```json
+{
+  "client_secret": "<environment-github-client-secret>"
+}
+```
+
+路径与用途：
+
+| 环境 | Vault KV path | 保存字段 | 消费服务 |
+|---|---|---|---|
+| UAT | `kv/data/uat/accounts/oauth/github` | `client_secret` | UAT Accounts |
+| PROD | `kv/data/prod/accounts/oauth/github` | `client_secret` | PROD Accounts |
+
+写入或读取时使用 Vault CLI 的 KV v2 语义，例如：
+
+```bash
+vault kv put kv/uat/accounts/oauth/github client_secret='<UAT_SECRET>'
+vault kv put kv/prod/accounts/oauth/github client_secret='<PROD_SECRET>'
+vault kv get kv/uat/accounts/oauth/github
+vault kv get kv/prod/accounts/oauth/github
+```
+
+命令中的 secret 只作为占位符示例，禁止把真实值写入 shell history、日志或文档。
+
+## 4. Backend 配置契约
+
+`config/account-uat.yaml` 与 `config/account-prod.yaml` 通过部署环境注入以下变量。配置模板经过 `envsubst` 渲染，使用纯 `${VAR}`，不使用 `${VAR:-default}`：
 
 ```yaml
 auth:
   enable: true
-  token:
-    publicToken: "${AUTH_TOKEN_PUBLIC_TOKEN}"
-    refreshSecret: "${AUTH_TOKEN_REFRESH_SECRET}"
-    accessSecret: "${AUTH_TOKEN_ACCESS_SECRET}"
-    accessExpiry: "1h"
-    refreshExpiry: "168h"
   oauth:
-    frontendUrl: "https://console.svc.plus"
+    frontendUrl: "${OAUTH_FRONTEND_URL}"
     github:
       clientId: "${GITHUB_CLIENT_ID}"
       clientSecret: "${GITHUB_CLIENT_SECRET}"
-      redirectUrl: "https://accounts.svc.plus/api/auth/oauth/callback/github"
-    google:
-      clientId: "${GOOGLE_CLIENT_ID}"
-      clientSecret: "${GOOGLE_CLIENT_SECRET}"
-      redirectUrl: "https://accounts.svc.plus/api/auth/oauth/callback/google"
+      redirectUrl: "${OAUTH_GITHUB_REDIRECT_URL}"
 ```
 
-两个关键约束(踩坑记录):
+环境映射：
 
-- ⚠️ **模板由 `entrypoint.sh` 用 `envsubst` 渲染,不支持 `${VAR:-default}` 默认值语法** —— 写了会原样留在渲染结果里变成垃圾字符串(`config/account.yaml` 里的 `:-` 默认值写法实际从未生效过)。cloudrun 模板只用纯 `${VAR}`,固定值直接硬编码。
-- ⚠️ **`auth.enable: true` 会激活 TokenService**,给 `/api/auth` 受保护组、`/api`(admin)、`/api/overlay` 挂上 `AuthMiddleware`(此前这些组无中间件,靠 handler 自行校验)。已确认兼容:middleware 接受 Bearer JWT **或** DB session token 回退,portal 全部以 `Authorization: Bearer <session-token>` 调用,cookie 名 `xc_session` 两边一致。副作用是未带凭据的请求会在 middleware 层被 401(实为安全加固)。
-
-### 3.2 密钥清单(源头统一存 Vault)
-
-本次新增、需要入 Vault(建议路径 `kv/accounts.svc.plus`)再同步到 GitHub Actions secrets 的条目:
-
-| Vault 字段 | 说明 | 生成方式 |
+| 变量 | UAT | PROD |
 |---|---|---|
-| `GITHUB_CLIENT_SECRET` | GitHub OAuth App 的 Client Secret | GitHub App 页面生成,只显示一次 |
-| `AUTH_TOKEN_PUBLIC_TOKEN` | TokenService 公共 token | `openssl rand -base64 32` |
-| `AUTH_TOKEN_REFRESH_SECRET` | JWT refresh 签名密钥 | `openssl rand -base64 32` |
-| `AUTH_TOKEN_ACCESS_SECRET` | JWT access 签名密钥 | `openssl rand -base64 32` |
-| `GOOGLE_CLIENT_SECRET` | (开 Google 登录时)Google OAuth Client Secret | GCP OAuth 同意屏幕 |
+| `GITHUB_CLIENT_ID` | GitOps UAT `client_id` | GitOps PROD `client_id` |
+| `GITHUB_CLIENT_SECRET` | Vault UAT `client_secret` | Vault PROD `client_secret` |
+| `OAUTH_FRONTEND_URL` | `https://console-cloudflare-uat.onwalk.net` | `https://console.svc.plus` |
+| `OAUTH_GITHUB_REDIRECT_URL` | UAT GitHub callback | PROD GitHub callback |
+| `ALLOWED_ORIGINS` | UAT Console + Accounts origins | `console.svc.plus` + `console-serverless-prod.svc.plus` + Accounts origin |
 
-**不是密钥、不进 Vault** 的配置项(直接写在 playbooks defaults / pipeline env):`GITHUB_CLIENT_ID`(`Ov23lioecyD2bjWNQJr0`,公开值)、`OAUTH_REDIRECT_URL`(`https://accounts.svc.plus/api/auth/oauth/callback/github`)、`OAUTH_FRONTEND_URL`(`https://console.svc.plus`)。
+部署适配器负责把 GitOps 的非敏感字段和 Vault 的 `client_secret` 合并后注入容器；Accounts 代码不直接访问 Vault，也不把 secret 写回配置仓库。
 
-既有已在链路上的密钥(应确认 Vault 已有记录,不必新建):`ACCOUNT_PG_PASSWORD`、`BRIDGE_AUTH_TOKEN`、`BRIDGE_REVIEW_AUTH_TOKEN`、`INTERNAL_SERVICE_TOKEN`、`SMTP_USERNAME`/`SMTP_PASSWORD`、`REVIEW_ACCOUNT_PASSWORD`、`SINGLE_NODE_VPS_SSH_PRIVATE_KEY`、`WORKSPACE_REPO_TOKEN`、`GHCR_TOKEN`、`XWORKMATE_VAULT_TOKEN`。
+## 5. Frontend 配置与路由
 
-### 3.2.1 GitHub Actions 仓库 secrets/vars(部署实际读取处)
+`portal/src/app/api/auth/oauth/login/[provider]/route.ts` 在服务端根据当前请求 host 解析 Accounts API：
 
-pipeline 从 `ai-workspace-services/accounts` 的仓库 secrets 取值(**不是** Vault 直读;Vault 是源头,需人工同步)。新仓库迁移后缺口较大 —— 下表为 pipeline 引用但仓库可能未配的项:
+- `console-cloudflare-uat.onwalk.net` → UAT runtime config → `accounts-cloudflare-uat.onwalk.net`
+- `console.svc.plus` → PROD runtime config → `accounts.svc.plus`
+- `console-serverless-prod.svc.plus` → PROD runtime config → `accounts.svc.plus`
 
-| 仓库 secret | Vault 源 | 必需性 |
-|---|---|---|
-| `SINGLE_NODE_VPS_SSH_PRIVATE_KEY` | `kv/CICD` 同名字段 | 必需(缺失 → SSH prep step 退出 1)。**已设** ✓ |
-| `OAUTH_GITHUB_CLIENT_SECRET` | `kv/accounts.svc.plus` → `GITHUB_CLIENT_SECRET` | 必需。**已设** ✓ |
-| `AUTH_TOKEN_PUBLIC_TOKEN` | `kv/accounts.svc.plus` 同名 | 必需。**已设** ✓ |
-| `AUTH_TOKEN_REFRESH_SECRET` | `kv/accounts.svc.plus` 同名 | 必需。**已设** ✓ |
-| `AUTH_TOKEN_ACCESS_SECRET` | `kv/accounts.svc.plus` 同名 | 必需。**已设** ✓ |
-| `SSH_KNOWN_HOSTS` | — | 可选:`prepare-ssh.sh` 用 `ssh-keyscan` 兜底,可留空 |
-| `WORKSPACE_REPO_TOKEN` | 能 checkout playbooks 仓库的 PAT | 可选:playbooks 现可经重定向用 `github.token` checkout;私有化后再补 |
-| `GHCR_TOKEN` | GHCR PAT | 可选(缺省回退 `github.token`) |
+`frontend_url` 使用浏览器当前 origin 传给 Accounts。Accounts 只接受配置的环境来源，因此 Serverless PROD 入口必须在 PROD `ALLOWED_ORIGINS` 中声明。
 
-仓库 **variables**(非密钥):`OAUTH_GITHUB_CLIENT_ID`(= `Ov23lioecyD2bjWNQJr0`,已设);可选 `IMAGE_REPO_OWNER`、`GHCR_USERNAME`(缺省取仓库 owner)。
+前端不读取、不构造、不转发 Client Secret。OAuth 登录按钮只触发：
 
-> ⚠️ **CI 侧 secret/var 不能以 `GITHUB_` 开头**(Actions 保留前缀),故用 `OAUTH_GITHUB_*`,由 playbooks role 在 `defaults/main.yml` 映射回容器内的 `GITHUB_CLIENT_*`。
+```text
+{accounts_origin}/api/auth/oauth/login/github
+```
 
-#### SSH 部署私钥的实测结论(2026-07-10,避免重复排查)
+## 6. UAT → PROD 发布顺序
 
-排查 SSH prep 失败时踩过的坑,记录如下:
+1. 在 GitHub Developer Settings 创建或确认 UAT App 与 PROD App，callback 精确匹配本表。
+2. 将 UAT/PROD Client Secret 分别写入对应 Vault KV path；不得交叉复用。
+3. 确认 GitOps 文件中的 `enabled`、Client ID、URL 与 Vault path 一致。
+4. 发布 UAT pipeline，注入 UAT GitOps + UAT Vault，验证 UAT 登录。
+5. 仅在 UAT 验证通过后，把同一变更提升到 PROD pipeline，注入 PROD GitOps + PROD Vault。
+6. PROD 发布前确认 `console-serverless-prod.svc.plus` 已加入 PROD `ALLOWED_ORIGINS`。
+7. 发布后分别验证三个入口的 GitHub 登录闭环。
 
-- 目标机 `jp-xhttp-contabo.svc.plus` 与 `install.svc.plus` **是同一台 VPS**(都解析到 `46.250.251.132`,容器名 `accounts-managed-prod-contabo`)。
-- 该机 root `authorized_keys` 有 3 把公钥,其中两把可用于 CI:
-  - `SHA256:gzdFOEMwseZMm28xj/OMgAw5DNhAMsZalvswt0yKO1o` — `github-actions@cloud-neutral-toolkit`(ED25519)
-  - `SHA256:OsewibjqqX2/22JWDNUfxxM0GcPae29DbSFJm9v1hGM` — `shenlan@…`(RSA 3072)
-- **Vault `kv/CICD` 里的 `SINGLE_NODE_VPS_SSH_PRIVATE_KEY` / `SSH_PRIVATE_DEPLOY_KEY` / `SSH_PRIVATE_DEPLOY_KEY_B64` / `SSH_PUBLIC_DEPLOY_KEY` 四个字段其实是同一把 —— 那把 `Osewib…` 的 RSA 键,不是 `gzdF…`**。别被"应该用 github-actions 键"误导:`Osewib` RSA 本就在 authorized_keys 里,能正常登录部署。
-- Vault 里存的 PEM **末尾缺换行**,本地 `ssh-keygen -yf` 会报 `invalid format`;CI 的 `.github/scripts/normalize-private-key.py` 会 `rstrip("\n")+"\n"` 自动补,故 CI 无碍。本地核验时先 `{ vault kv get -field=… ; echo; } > tmp` 补换行再 `ssh-keygen -yf tmp`。
+## 7. 验证清单
 
-设置命令(值直接从 Vault 管道进 secret,不落屏):
+先检查 Accounts login endpoint 是否返回 GitHub 授权跳转：
 
 ```bash
-export VAULT_ADDR=https://vault.svc.plus VAULT_TOKEN=<token>
-{ vault kv get -field=SINGLE_NODE_VPS_SSH_PRIVATE_KEY kv/CICD; echo; } \
-  | gh secret set SINGLE_NODE_VPS_SSH_PRIVATE_KEY -R ai-workspace-services/accounts
-vault kv get -field=GITHUB_CLIENT_SECRET      kv/accounts.svc.plus | gh secret set OAUTH_GITHUB_CLIENT_SECRET -R ai-workspace-services/accounts
-vault kv get -field=AUTH_TOKEN_PUBLIC_TOKEN   kv/accounts.svc.plus | gh secret set AUTH_TOKEN_PUBLIC_TOKEN     -R ai-workspace-services/accounts
-vault kv get -field=AUTH_TOKEN_REFRESH_SECRET kv/accounts.svc.plus | gh secret set AUTH_TOKEN_REFRESH_SECRET   -R ai-workspace-services/accounts
-vault kv get -field=AUTH_TOKEN_ACCESS_SECRET  kv/accounts.svc.plus | gh secret set AUTH_TOKEN_ACCESS_SECRET    -R ai-workspace-services/accounts
+curl -fsSIL "https://accounts-cloudflare-uat.onwalk.net/api/auth/oauth/login/github"
+curl -fsSIL "https://accounts.svc.plus/api/auth/oauth/login/github"
 ```
 
-### 3.2.2 gcloud/Secret Manager(仅 Cloud Run 路线,当前未启用,跳过)
+浏览器验证：
 
-以下命令仅走 Cloud Run 时适用:
-
-```bash
-echo -n "<github-client-secret>" | gcloud secrets create github-client-secret --data-file=-
-openssl rand -base64 32 | tr -d '\n' | gcloud secrets create auth-token-public --data-file=-
-openssl rand -base64 32 | tr -d '\n' | gcloud secrets create auth-token-refresh-secret --data-file=-
-openssl rand -base64 32 | tr -d '\n' | gcloud secrets create auth-token-access-secret --data-file=-
-
-for s in github-client-secret auth-token-public auth-token-refresh-secret auth-token-access-secret; do
-  gcloud secrets add-iam-policy-binding "$s" \
-    --member="serviceAccount:266500572462-compute@developer.gserviceaccount.com" \
-    --role="roles/secretmanager.secretAccessor"
-done
+```text
+https://console-cloudflare-uat.onwalk.net/login
+https://console.svc.plus/login
+https://console-serverless-prod.svc.plus/login
 ```
 
-### 3.3 Cloud Run 服务注入环境变量
+成功标准：
 
-`deploy/gcp/cloud-run/prod-service.yaml` 的 `accounts-api` 容器 `env:` 已追加(2026-07-10):
+- 登录按钮跳转到 GitHub 授权页，且 `client_id` 属于对应环境 App。
+- GitHub callback 无 `redirect_uri_mismatch`。
+- callback 完成后回到发起登录的 Console origin，而不是固定回 PROD 主入口。
+- UAT 不出现 `accounts.svc.plus`；Serverless PROD 不出现 UAT Accounts 地址。
+- `/api/ping` 的发布镜像、commit 与 pipeline 发布版本一致。
 
-```yaml
-- name: GITHUB_CLIENT_ID
-  value: "Ov23lioecyD2bjWNQJr0"   # Client ID 不敏感,可明文
-- name: GITHUB_CLIENT_SECRET
-  valueFrom:
-    secretKeyRef: { name: github-client-secret, key: latest }
-- name: AUTH_TOKEN_PUBLIC_TOKEN
-  valueFrom:
-    secretKeyRef: { name: auth-token-public, key: latest }
-- name: AUTH_TOKEN_REFRESH_SECRET
-  valueFrom:
-    secretKeyRef: { name: auth-token-refresh-secret, key: latest }
-- name: AUTH_TOKEN_ACCESS_SECRET
-  valueFrom:
-    secretKeyRef: { name: auth-token-access-secret, key: latest }
-```
+常见故障：
 
-preview 环境同理修改 `preview-service.yaml`(callback URL 需对应 preview 域名,并使用单独的 GitHub OAuth App)。
-
-### 3.4 重新部署并验证
-
-```bash
-curl -si "https://accounts.svc.plus/api/auth/oauth/login/github" | head -5
-```
-
-- ✅ 配置生效:`307` + `Location: https://github.com/login/oauth/authorize?...`
-- ❌ 未生效:`404 {"error":"provider_not_found"}` → 检查 3.1–3.3
-
-## 4. console / portal 侧:基本零配置
-
-- **不需要任何 GitHub 凭据** —— 登录按钮只是 307 转发到 accounts。
-- `ACCOUNT_SERVICE_URL` 默认 fallback 即 `https://accounts.svc.plus`(见 `portal/src/server/serviceConfig.ts`),生产不配也可工作;若已配置,确认指向正确。
-- accounts 的 CORS `allowedOrigins` 已包含 `https://console.svc.plus`,无需改动。
-
-## 5. 端到端验证
-
-1. 浏览器打开 `https://console.svc.plus/login`
-2. 点击 GitHub 登录 → 跳转 GitHub 授权页
-3. 授权后落回 `https://console.svc.plus/login?exchange_code=...`
-4. 页面自动 POST `/api/auth/token/exchange` 换 session,跳转首页
-5. 新用户自动注册,`EmailVerified=true`,并附带 7 天 trial 订阅(`PlanID: TRIAL-7D`)
-
-## 6. 已知遗留问题(不阻塞上线)
-
-| 问题 | 说明 | 建议 |
-|---|---|---|
-| CSRF state 未校验 | `oauthLogin` 生成 nonce,但 callback 只解析 state 里的 frontend_url,从不比对 nonce(代码注释自认) | 开放注册前修复:nonce 存 HttpOnly cookie,callback 比对 |
-| `frontend_url` 取到容器 hostname | portal route 用 `request.nextUrl.origin`,容器内直连时得到 Docker 容器 ID(如 `https://302d8d7d135c:3000`);后端白名单会拒绝并回退 `OAUTH_FRONTEND_URL`,导致 dev 登录后被弹回 console.svc.plus | portal 优先读配置的公网 URL 或 `X-Forwarded-Host`;生产经代理访问不受影响 |
-| identity 未用于登录匹配 | callback 仅按 email 查用户;用户更换 GitHub 主邮箱会被当新用户重新注册 | 先按 `(provider, external_id)` 查 identity 表,再回退 email |
-
-## 7. 排障速查
-
-| 现象 | 原因 | 处理 |
-|---|---|---|
-| `404 provider_not_found` | 配置模板无 `auth:` 段 / 未设 `GITHUB_CLIENT_ID` | 见 §3.1–3.3 |
-| GitHub 报 `redirect_uri_mismatch` | OAuth App callback URL 与 `redirectUrl` 配置不一致 | 两边对齐,注意 http/https 与端口 |
-| `email_not_verified` (401) | GitHub 账号主邮箱未验证 | 用户需在 GitHub 验证邮箱 |
-| `email_missing` (400) | profile 拿不到邮箱(罕见,私有邮箱兜底已实现) | 检查 scope 是否被改动 |
-| 登录后落到 console.svc.plus 而非 dev 前端 | `frontend_url` 白名单拒绝了 dev 域名 | 本地用 `localhost:3000`(在白名单内),或见 §6 第 2 条 |
-| `invalid_exchange_code` | exchange_code 过期(一次性、短 TTL)或重复使用 | 重新走登录流程 |
+| 现象 | 优先检查 |
+|---|---|
+| `provider_not_found` | `enabled`、Client ID/Secret 注入、`auth.enable` |
+| `redirect_uri_mismatch` | GitHub App callback 与 `OAUTH_GITHUB_REDIRECT_URL` 是否逐字符一致 |
+| UAT 跳到 PROD | portal UAT runtime config、请求 host 路由、`ACCOUNT_SERVICE_URL` 是否覆盖了 UAT |
+| Serverless PROD 回调被拒绝 | PROD `ALLOWED_ORIGINS` 是否包含 `https://console-serverless-prod.svc.plus` |
+| GitOps 泄露 secret | 检查提交内容；GitOps 只允许 `vault_secret_path`/`vault_secret_key`，禁止 `client_secret` |

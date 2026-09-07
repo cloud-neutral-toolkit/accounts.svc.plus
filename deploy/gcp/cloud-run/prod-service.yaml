@@ -68,7 +68,15 @@ spec:
               key: latest
         # --- Auth / OAuth Configuration ---
         - name: GITHUB_CLIENT_ID
-          value: "Ov23lioecyD2bjWNQJr0"
+          value: "Ov23lijWHcN9Xa9HANCd"
+        - name: OAUTH_FRONTEND_URL
+          value: "https://console.svc.plus"
+        - name: OAUTH_GITHUB_REDIRECT_URL
+          value: "https://accounts.svc.plus/api/auth/oauth/callback/github"
+        - name: OAUTH_GOOGLE_REDIRECT_URL
+          value: "https://accounts.svc.plus/api/auth/oauth/callback/google"
+        - name: ALLOWED_ORIGINS
+          value: "https://console.svc.plus,https://console-serverless-prod.svc.plus,https://accounts.svc.plus"
         - name: GITHUB_CLIENT_SECRET
           valueFrom:
             secretKeyRef:
