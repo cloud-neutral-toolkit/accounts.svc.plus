@@ -15,15 +15,15 @@ auth:
     accessExpiry: "1h"
     refreshExpiry: "168h"
   oauth:
-    frontendUrl: "https://console.svc.plus"
+    frontendUrl: "${OAUTH_FRONTEND_URL}"
     github:
       clientId: "${GITHUB_CLIENT_ID}"
       clientSecret: "${GITHUB_CLIENT_SECRET}"
-      redirectUrl: "https://accounts.svc.plus/api/auth/oauth/callback/github"
+      redirectUrl: "${OAUTH_GITHUB_REDIRECT_URL}"
     google:
       clientId: "${GOOGLE_CLIENT_ID}"
       clientSecret: "${GOOGLE_CLIENT_SECRET}"
-      redirectUrl: "https://accounts.svc.plus/api/auth/oauth/callback/google"
+      redirectUrl: "${OAUTH_GOOGLE_REDIRECT_URL}"
 
 server:
   addr: ":8080"
@@ -37,6 +37,7 @@ server:
     - "https://global-homepage.svc.plus"
     - "https://accounts.svc.plus"
     - "https://console.svc.plus"
+    - "https://console-serverless-prod.svc.plus"
     - "https://localhost:8443"
     - "http://localhost:8080"
     - "http://127.0.0.1:8080"
