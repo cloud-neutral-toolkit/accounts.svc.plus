@@ -33,6 +33,7 @@ import (
 	"account/internal/mailer"
 	"account/internal/model"
 	"account/internal/observability"
+	"account/internal/overlay"
 	"account/internal/service"
 	"account/internal/store"
 	"account/internal/tasksession"
@@ -1117,6 +1118,14 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		}
 	}()
 	service.SetDB(gormDB)
+	overlayConfig, err := overlay.ConfigFromEnv()
+	if err != nil {
+		return err
+	}
+	overlayService, err := overlay.NewService(gormDB, overlayConfig)
+	if err != nil {
+		return err
+	}
 
 	// The root-account check below reads public.users. Bootstrap the core
 	// account/RBAC schema first so a new environment can start without a
@@ -1506,6 +1515,7 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 			return sqlDB.PingContext(probeCtx)
 		}))
 	}
+	options = append(options, api.WithOverlayService(overlayService))
 
 	// Pre-load sandbox bindings from database into the registry
 	if agentRegistry != nil {

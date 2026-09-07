@@ -34,6 +34,8 @@ const (
 )
 
 var defaultOperatorPermissions = map[string]bool{
+	permissionXConnectZeroRead:    true,
+	permissionXConnectZeroManage:  false,
 	permissionAdminSettingsRead:   true,
 	permissionAdminSettingsWrite:  false,
 	permissionAdminUsersMetrics:   true,
