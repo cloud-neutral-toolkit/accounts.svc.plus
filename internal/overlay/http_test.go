@@ -86,7 +86,7 @@ func TestOverlayLifecyclePersistsHashesAndSignsConfig(t *testing.T) {
 
 	sessionBody := `{"client_nonce":"00000000-0000-4000-8000-000000000001"}`
 	sessionReq := httptest.NewRequest(http.MethodPost, "/api/overlay/v1/device/session", bytes.NewBufferString(sessionBody))
-	sessionReq.Header.Set("Authorization", "XConnect-Device "+exchange.DeviceCredential.Credential)
+	sessionReq.Header.Set("Authorization", "Device "+exchange.DeviceCredential.Credential)
 	sessionResp := httptest.NewRecorder()
 	router.ServeHTTP(sessionResp, sessionReq)
 	if sessionResp.Code != http.StatusOK {
