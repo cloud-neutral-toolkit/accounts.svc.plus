@@ -67,6 +67,26 @@ type Device struct {
 	LastSeenAt         *time.Time `json:"last_seen_at,omitempty"`
 }
 
+// AdminDevice is the owner-scoped read model for the Portal. It is separate
+// from Device because enrollment and exchange responses intentionally keep a
+// strict, backwards-compatible contract.
+type AdminDevice struct {
+	ID                 string     `json:"id"`
+	UserID             string     `json:"user_id,omitempty"`
+	NetworkID          string     `json:"network_id"`
+	Role               string     `json:"role"`
+	Name               string     `json:"name"`
+	Platform           string     `json:"platform"`
+	Hostname           string     `json:"hostname"`
+	WireGuardPublicKey string     `json:"wireguard_public_key"`
+	WireGuardAddress   string     `json:"wireguard_address"`
+	Status             string     `json:"status"`
+	LastSeenAt         *time.Time `json:"last_seen_at"`
+	ConnectionStatus   string     `json:"connection_status"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+}
+
 type SigningKey struct {
 	KeyID     string     `json:"key_id"`
 	Algorithm string     `json:"algorithm"`

@@ -33,6 +33,8 @@ type Service struct {
 	clock           func() time.Time
 }
 
+const adminDeviceACKRecentWindow = 5 * time.Minute
+
 func NewService(db *gorm.DB, cfg Config) (*Service, error) {
 	if db == nil {
 		return nil, errors.New("overlay service requires a database")
@@ -85,44 +87,52 @@ func (s *Service) AdminOverview(ctx context.Context, ownerUserID string) (AdminO
 	if ownerUserID == "" {
 		return AdminOverview{}, ErrInvalidInput
 	}
-	var networks, devices, gateways, ones, connectedGateways, connectedOnes int64
+	var networks int64
 	if err := s.repo.DB.WithContext(ctx).Model(&NetworkRecord{}).Where("owner_user_id = ?", ownerUserID).Count(&networks).Error; err != nil {
 		return AdminOverview{}, err
 	}
-	ownedNetworks := s.repo.DB.WithContext(ctx).Model(&NetworkRecord{}).Select("id").Where("owner_user_id = ?", ownerUserID)
-	if err := s.repo.DB.WithContext(ctx).Model(&DeviceRecord{}).Where("network_id IN (?) AND status = ?", ownedNetworks, "active").Count(&devices).Error; err != nil {
+	adminDevices, err := s.AdminDevices(ctx, ownerUserID)
+	if err != nil {
 		return AdminOverview{}, err
 	}
-	if err := s.repo.DB.WithContext(ctx).Model(&DeviceRecord{}).Where("network_id IN (?) AND role = ? AND status = ?", ownedNetworks, RoleGateway, "active").Count(&gateways).Error; err != nil {
-		return AdminOverview{}, err
-	}
-	if err := s.repo.DB.WithContext(ctx).Model(&DeviceRecord{}).Where("network_id IN (?) AND role = ? AND status = ?", ownedNetworks, RoleOne, "active").Count(&ones).Error; err != nil {
-		return AdminOverview{}, err
-	}
-	connectedSince := s.now().Add(-5 * time.Minute)
-	if err := s.repo.DB.WithContext(ctx).Model(&DeviceRecord{}).Where("network_id IN (?) AND role = ? AND status = ? AND last_seen_at >= ?", ownedNetworks, RoleGateway, "active", connectedSince).Count(&connectedGateways).Error; err != nil {
-		return AdminOverview{}, err
-	}
-	if err := s.repo.DB.WithContext(ctx).Model(&DeviceRecord{}).Where("network_id IN (?) AND role = ? AND status = ? AND last_seen_at >= ?", ownedNetworks, RoleOne, "active", connectedSince).Count(&connectedOnes).Error; err != nil {
-		return AdminOverview{}, err
+	var devices, gateways, ones, connectedGateways, connectedOnes int64
+	for _, device := range adminDevices {
+		if device.Status != "active" {
+			continue
+		}
+		devices++
+		connected := device.ConnectionStatus == "recent_ack"
+		switch device.Role {
+		case RoleGateway:
+			gateways++
+			if connected {
+				connectedGateways++
+			}
+		case RoleOne:
+			ones++
+			if connected {
+				connectedOnes++
+			}
+		}
 	}
 	return AdminOverview{
-		Status:        "available",
-		NetworkCount:  networks,
-		DeviceCount:   devices,
-		GatewayCount:  gateways,
-		OneCount:      ones,
+		Status:       "available",
+		NetworkCount: networks,
+		DeviceCount:  devices,
+		GatewayCount: gateways,
+		OneCount:     ones,
+		// These legacy overview fields mean recent current-generation ACK,
+		// not a live tunnel or WireGuard handshake.
 		GatewayStatus: overlayResourceStatus(gateways, connectedGateways, networks),
 		OneStatus:     overlayResourceStatus(ones, connectedOnes, networks),
 		SigningKeyID:  s.keyID,
 	}, nil
 }
 
-// The admin read model reports enrollment state, not a fabricated network
-// handshake. A device becomes "active" only after Accounts has persisted its
-// enrollment; the lab/gateway heartbeat and WireGuard handshake remain the
-// data-plane verification signals. Keeping that distinction explicit prevents
-// the Portal from claiming a live tunnel merely because a record exists.
+// The admin read model reports lifecycle state and recent configuration ACKs,
+// not a fabricated network handshake. A recent_ack only means that Accounts
+// received a current-generation configuration ACK; it does not claim that a
+// live tunnel or WireGuard handshake exists.
 
 func overlayResourceStatus(activeCount, connectedCount, networkCount int64) string {
 	if connectedCount > 0 {
@@ -149,18 +159,62 @@ func (s *Service) AdminNetworks(ctx context.Context, ownerUserID string) ([]Netw
 	return result, nil
 }
 
-func (s *Service) AdminDevices(ctx context.Context, ownerUserID string) ([]Device, error) {
-	var records []DeviceRecord
-	ownedNetworks := s.repo.DB.WithContext(ctx).Model(&NetworkRecord{}).Select("id").Where("owner_user_id = ?", strings.TrimSpace(ownerUserID))
-	if err := s.repo.DB.WithContext(ctx).Where("network_id IN (?)", ownedNetworks).Order("id ASC").Find(&records).Error; err != nil {
+func (s *Service) AdminDevices(ctx context.Context, ownerUserID string) ([]AdminDevice, error) {
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	var networks []NetworkRecord
+	if err := s.repo.DB.WithContext(ctx).Where("owner_user_id = ?", ownerUserID).Order("id ASC").Find(&networks).Error; err != nil {
 		return nil, err
 	}
-	result := make([]Device, 0, len(records))
+	if len(networks) == 0 {
+		return []AdminDevice{}, nil
+	}
+
+	networkByID := make(map[string]NetworkRecord, len(networks))
+	networkIDs := make([]string, 0, len(networks))
+	for _, network := range networks {
+		networkByID[network.ID] = network
+		networkIDs = append(networkIDs, network.ID)
+	}
+
+	var records []DeviceRecord
+	if err := s.repo.DB.WithContext(ctx).Where("network_id IN ?", networkIDs).Order("id ASC").Find(&records).Error; err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return []AdminDevice{}, nil
+	}
+
+	var acks []AckRecord
+	if err := s.repo.DB.WithContext(ctx).
+		Model(&AckRecord{}).
+		Joins("JOIN overlay_networks ON overlay_networks.id = overlay_signed_config_acks.network_id").
+		Where("overlay_networks.owner_user_id = ? AND overlay_signed_config_acks.generation = overlay_networks.config_generation", ownerUserID).
+		Find(&acks).Error; err != nil {
+		return nil, err
+	}
+	currentACK := make(map[string]time.Time, len(acks))
+	for _, ack := range acks {
+		network, ok := networkByID[ack.NetworkID]
+		if !ok || ack.Generation != network.ConfigGeneration || ack.ConfigID != configID(network.ID, ack.DeviceID, network.ConfigGeneration) {
+			continue
+		}
+		currentACK[adminDeviceACKKey(ack.NetworkID, ack.DeviceID)] = ack.ReceivedAt
+	}
+
+	now := s.now()
+	result := make([]AdminDevice, 0, len(records))
 	for _, record := range records {
-		result = append(result, toDevice(record))
+		network, ok := networkByID[record.NetworkID]
+		if !ok {
+			continue
+		}
+		ackReceivedAt, acknowledged := currentACK[adminDeviceACKKey(network.ID, record.ID)]
+		result = append(result, toAdminDevice(record, ackReceivedAt, acknowledged, now))
 	}
 	return result, nil
 }
+
+func adminDeviceACKKey(networkID, deviceID string) string { return networkID + "\x00" + deviceID }
 
 func (s *Service) AdminInvites(ctx context.Context, ownerUserID string) ([]InviteSummary, error) {
 	var records []InviteRecord
@@ -673,6 +727,23 @@ func toDevice(record DeviceRecord) Device {
 		role = RoleGateway
 	}
 	return Device{ID: record.ID, UserID: record.UserID, NetworkID: record.NetworkID, Role: role, Name: record.Name, Platform: record.Platform, Hostname: record.Hostname, WireGuardPublicKey: record.WireGuardPublicKey, WireGuardAddress: record.WireGuardAddress, CreatedAt: record.CreatedAt.UTC(), UpdatedAt: record.UpdatedAt.UTC(), LastSeenAt: record.LastSeenAt}
+}
+
+func toAdminDevice(record DeviceRecord, ackReceivedAt time.Time, acknowledged bool, now time.Time) AdminDevice {
+	connectionStatus := "never_seen"
+	if record.Status == "revoked" {
+		connectionStatus = "revoked"
+	} else if acknowledged {
+		connectionStatus = "stale"
+		lastACKAt := ackReceivedAt
+		if record.LastSeenAt != nil && record.LastSeenAt.After(lastACKAt) {
+			lastACKAt = *record.LastSeenAt
+		}
+		if !lastACKAt.After(now) && !lastACKAt.Before(now.Add(-adminDeviceACKRecentWindow)) {
+			connectionStatus = "recent_ack"
+		}
+	}
+	return AdminDevice{ID: record.ID, UserID: record.UserID, NetworkID: record.NetworkID, Role: record.Role, Name: record.Name, Platform: record.Platform, Hostname: record.Hostname, WireGuardPublicKey: record.WireGuardPublicKey, WireGuardAddress: record.WireGuardAddress, Status: record.Status, LastSeenAt: record.LastSeenAt, ConnectionStatus: connectionStatus, CreatedAt: record.CreatedAt.UTC(), UpdatedAt: record.UpdatedAt.UTC()}
 }
 
 func toNetwork(record NetworkRecord) Network {

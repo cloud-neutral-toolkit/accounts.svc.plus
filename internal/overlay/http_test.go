@@ -67,6 +67,19 @@ func TestOverlayLifecyclePersistsHashesAndSignsConfig(t *testing.T) {
 	if exchange.Device.Role != "" || exchange.Device.WireGuardAddress != "10.77.0.2/32" {
 		t.Fatalf("unexpected One device response: %#v", exchange.Device)
 	}
+	var exchangePayload map[string]json.RawMessage
+	if err := json.Unmarshal(resp.Body.Bytes(), &exchangePayload); err != nil {
+		t.Fatal(err)
+	}
+	var exchangeDevicePayload map[string]json.RawMessage
+	if err := json.Unmarshal(exchangePayload["device"], &exchangeDevicePayload); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"role", "status", "connection_status"} {
+		if _, ok := exchangeDevicePayload[field]; ok {
+			t.Fatalf("strict exchange Device contract unexpectedly exposed admin field %q: %s", field, exchangeDevicePayload[field])
+		}
+	}
 	var storedDevice DeviceRecord
 	if err := service.repo.DB.First(&storedDevice, "id = ?", exchange.Device.ID).Error; err != nil || storedDevice.UserUUID != storedDevice.UserID || storedDevice.UserID != "11111111-2222-4333-8444-555555555555" {
 		t.Fatalf("device owner compatibility columns diverged: %#v err=%v", storedDevice, err)
