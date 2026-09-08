@@ -283,6 +283,22 @@ type AdminBootstrapResult struct {
 	JoinURI string        `json:"join_uri"`
 }
 
+// AdminInviteRequest creates one device-bound enrollment invitation for an
+// existing owner-scoped network. A raw token is returned only once in JoinURI.
+type AdminInviteRequest struct {
+	ControllerURL string    `json:"controller_url"`
+	NetworkID     string    `json:"network_id"`
+	DeviceID      string    `json:"device_id"`
+	Platform      string    `json:"platform"`
+	Role          string    `json:"role"`
+	ExpiresAt     time.Time `json:"expires_at"`
+}
+
+type AdminInviteResult struct {
+	Invite  InviteSummary `json:"invite"`
+	JoinURI string        `json:"join_uri"`
+}
+
 type BootstrapConfig struct {
 	Network BootstrapNetwork
 	Invite  BootstrapInvite

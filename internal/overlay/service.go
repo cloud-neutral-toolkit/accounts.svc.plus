@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -134,6 +135,59 @@ func (s *Service) AdminInvites(ctx context.Context, ownerUserID string) ([]Invit
 		result = append(result, InviteSummary{ID: record.ID, NetworkID: record.NetworkID, DeviceID: record.DeviceID, Platform: record.Platform, Role: record.Role, ExpiresAt: record.ExpiresAt.UTC(), RemainingUses: record.RemainingUses, ConsumedAt: record.ConsumedAt, CreatedAt: record.CreatedAt.UTC()})
 	}
 	return result, nil
+}
+
+// AdminCreateInvite creates a single device-bound enrollment invitation for an
+// existing network owned by the authenticated account. The raw invitation is
+// intentionally returned only in this response; persistence keeps its digest.
+func (s *Service) AdminCreateInvite(ctx context.Context, ownerUserID, controllerURL string, request AdminInviteRequest) (AdminInviteResult, error) {
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	controllerURL = strings.TrimRight(strings.TrimSpace(controllerURL), "/")
+	request.NetworkID = strings.TrimSpace(request.NetworkID)
+	request.DeviceID = strings.TrimSpace(request.DeviceID)
+	request.Platform = strings.TrimSpace(request.Platform)
+	request.Role = strings.TrimSpace(request.Role)
+	if ownerUserID == "" || controllerURL == "" || request.NetworkID == "" || !overlayDeviceIDPattern.MatchString(request.DeviceID) || request.ExpiresAt.IsZero() || !request.ExpiresAt.After(s.now()) {
+		return AdminInviteResult{}, ErrInvalidInput
+	}
+	if request.Role == "" {
+		request.Role = RoleOne
+	}
+	if request.Role != RoleOne && request.Role != RoleGateway {
+		return AdminInviteResult{}, ErrInvalidInput
+	}
+	switch request.Platform {
+	case "linux", "darwin", "windows", "ios", "android":
+	default:
+		return AdminInviteResult{}, ErrInvalidInput
+	}
+
+	var network NetworkRecord
+	if err := s.repo.DB.WithContext(ctx).Where("id = ? AND owner_user_id = ?", request.NetworkID, ownerUserID).First(&network).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return AdminInviteResult{}, ErrNotFound
+		}
+		return AdminInviteResult{}, err
+	}
+
+	joinToken := newOpaqueToken("xjt_")
+	invite := InviteRecord{
+		ID:            uuid.NewString(),
+		NetworkID:     network.ID,
+		TokenHash:     HashSecret(joinToken),
+		DeviceID:      request.DeviceID,
+		Platform:      request.Platform,
+		Role:          request.Role,
+		ExpiresAt:     canonicalTime(request.ExpiresAt),
+		RemainingUses: 1,
+	}
+	if err := s.repo.DB.WithContext(ctx).Create(&invite).Error; err != nil {
+		return AdminInviteResult{}, err
+	}
+	return AdminInviteResult{
+		Invite:  InviteSummary{ID: invite.ID, NetworkID: invite.NetworkID, DeviceID: invite.DeviceID, Platform: invite.Platform, Role: invite.Role, ExpiresAt: invite.ExpiresAt, RemainingUses: invite.RemainingUses, CreatedAt: invite.CreatedAt.UTC()},
+		JoinURI: "xconnect://join/" + joinToken + "?controller=" + url.QueryEscape(controllerURL),
+	}, nil
 }
 
 func (s *Service) AdminBootstrap(ctx context.Context, cfg BootstrapConfig, controllerURL, joinToken string) (AdminBootstrapResult, error) {
