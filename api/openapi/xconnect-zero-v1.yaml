@@ -6,6 +6,96 @@ info:
 servers:
   - url: https://accounts.example.invalid
 paths:
+  /api/overlay/v1/registrations:
+    post:
+      summary: Request owner approval for a declared XConnect One identity
+      description: >-
+        Unauthenticated request that creates no device, peer, credential,
+        enrollment session, configuration, route or VPN access. The public key
+        is a declaration, not hardware or person attestation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegistrationRequest'}
+      responses:
+        '201':
+          description: Pending owner approval; the registration token is returned once.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RegistrationCreated'}
+        '400': {description: Invalid request or unsupported platform}
+        '404': {description: Network is unavailable for registration}
+        '409': {description: Existing device identity conflicts}
+        '429': {description: Per-network pending or durable creation budget reached}
+  /api/overlay/v1/registrations/{registrationID}/exchange:
+    post:
+      summary: Poll or consume an owner-approved One registration
+      security: [{RegistrationBearer: []}]
+      parameters:
+        - {$ref: '#/components/parameters/RegistrationID'}
+      responses:
+        '200': {description: Single-use existing ExchangeResponse after approval}
+        '202':
+          description: Still pending owner approval
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RegistrationPending'}
+        '401': {description: Invalid or mismatched registration token}
+        '409': {description: Rejected, consumed, or stale registration}
+        '410': {description: Absolute registration expiry}
+  /api/overlay/v1/admin/registrations:
+    get:
+      summary: List current-owner registration audit summaries
+      security: [{UserBearer: []}]
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema: {type: string}
+      responses:
+        '200':
+          description: Newest 100 registrations and an optional next cursor
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RegistrationPage'}
+        '401': {description: Active authenticated user required}
+        '403': {description: xconnect.zero.manage permission required}
+  /api/overlay/v1/admin/registrations/{registrationID}/approve:
+    post:
+      summary: Approve a pending registration for the explicitly named owned network
+      security: [{UserBearer: []}]
+      parameters:
+        - {$ref: '#/components/parameters/RegistrationID'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegistrationApproval'}
+      responses:
+        '200':
+          description: Updated registration summary
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RegistrationMutation'}
+        '404': {description: Registration or requested network is not currently owned}
+        '409': {description: Registration is no longer pending}
+        '410': {description: Registration expired}
+  /api/overlay/v1/admin/registrations/{registrationID}/reject:
+    post:
+      summary: Reject a pending registration for a currently owned network
+      security: [{UserBearer: []}]
+      parameters:
+        - {$ref: '#/components/parameters/RegistrationID'}
+      responses:
+        '200':
+          description: Updated registration summary
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RegistrationMutation'}
+        '404': {description: Registration network is not currently owned}
+        '409': {description: Registration is no longer pending}
+        '410': {description: Registration expired}
   /api/overlay/v1/join-tokens/exchange:
     post:
       summary: Consume a one-use invite and register a One or Gateway device
@@ -96,6 +186,11 @@ components:
       in: path
       required: true
       schema: {type: integer, minimum: 1}
+    RegistrationID:
+      name: registrationID
+      in: path
+      required: true
+      schema: {type: string}
   securitySchemes:
     EnrollmentBearer:
       type: http
@@ -109,6 +204,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    RegistrationBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: xrt
   schemas:
     ExchangeRequest:
       type: object
@@ -122,3 +221,68 @@ components:
         hostname: {type: string}
         wireguard_public_key: {type: string}
         role: {type: string, enum: [one, gateway], default: one}
+    RegistrationRequest:
+      type: object
+      additionalProperties: false
+      required: [network_id, device_id, platform, wireguard_public_key]
+      properties:
+        network_id: {type: string}
+        device_id: {type: string, pattern: '^[a-z0-9][a-z0-9._-]{0,127}$'}
+        name: {type: string, maxLength: 255}
+        hostname: {type: string, maxLength: 255}
+        platform: {type: string, enum: [linux, darwin, windows]}
+        wireguard_public_key: {type: string, description: Base64-encoded 32-byte declared public key}
+    RegistrationCreated:
+      type: object
+      required: [registration_id, registration_token, status, expires_at, interval]
+      properties:
+        registration_id: {type: string}
+        registration_token: {type: string, description: One-time capability; save locally and never log it}
+        status: {type: string, const: pending}
+        expires_at: {type: string, format: date-time}
+        interval: {type: integer, const: 5}
+    RegistrationPending:
+      type: object
+      required: [status, expires_at, interval]
+      properties:
+        status: {type: string, const: pending}
+        expires_at: {type: string, format: date-time}
+        interval: {type: integer, const: 5}
+    RegistrationSummary:
+      type: object
+      required: [registration_id, network_id, device_id, name, hostname, platform, status, wireguard_public_key_fingerprint, created_at, expires_at]
+      properties:
+        registration_id: {type: string}
+        network_id: {type: string}
+        device_id: {type: string}
+        name: {type: string}
+        hostname: {type: string}
+        platform: {type: string, enum: [linux, darwin, windows]}
+        status: {type: string, enum: [pending, approved, rejected, expired, consumed]}
+        wireguard_public_key_fingerprint: {type: string, description: SHA-256 hex of decoded 32-byte public key declaration}
+        created_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        approved_at: {type: string, format: date-time}
+        rejected_at: {type: string, format: date-time}
+        consumed_at: {type: string, format: date-time}
+    RegistrationPage:
+      type: object
+      required: [registrations, has_more]
+      properties:
+        registrations:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/RegistrationSummary'}
+        has_more: {type: boolean}
+        next_cursor: {type: string}
+    RegistrationApproval:
+      type: object
+      additionalProperties: false
+      required: [network_id]
+      properties:
+        network_id: {type: string}
+    RegistrationMutation:
+      type: object
+      required: [registration]
+      properties:
+        registration: {$ref: '#/components/schemas/RegistrationSummary'}

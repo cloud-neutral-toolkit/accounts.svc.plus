@@ -29,6 +29,42 @@ func (h *HTTPHandler) Exchange(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+func (h *HTTPHandler) Register(c *gin.Context) {
+	noStore(c)
+	var request RegistrationRequest
+	if !decodeJSONLimit(c, &request, 64*1024) {
+		return
+	}
+	response, err := h.Service.Register(c.Request.Context(), request)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	noStore(c)
+	c.JSON(http.StatusCreated, response)
+}
+
+func (h *HTTPHandler) RegistrationExchange(c *gin.Context) {
+	noStore(c)
+	token, ok := bearer(c.GetHeader("Authorization"), "Bearer")
+	if !ok {
+		writeError(c, ErrInvalidRegistrationToken)
+		return
+	}
+	response, pending, err := h.Service.ExchangeRegistration(c.Request.Context(), c.Param("registrationID"), token)
+	if errors.Is(err, ErrRegistrationPending) {
+		noStore(c)
+		c.JSON(http.StatusAccepted, pending)
+		return
+	}
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	noStore(c)
+	c.JSON(http.StatusOK, response)
+}
+
 func (h *HTTPHandler) MintSession(c *gin.Context) {
 	credential, ok := bearer(c.GetHeader("Authorization"), "Device")
 	if !ok {
@@ -177,7 +213,11 @@ func (h *HTTPHandler) AckUser(c *gin.Context, userID string) {
 }
 
 func decodeJSON(c *gin.Context, target any) bool {
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+	return decodeJSONLimit(c, target, 1<<20)
+}
+
+func decodeJSONLimit(c *gin.Context, target any, limit int64) bool {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
@@ -230,6 +270,20 @@ func writeError(c *gin.Context, err error) {
 		status, code = http.StatusBadRequest, "invalid_request"
 	case errors.Is(err, ErrInvalidToken):
 		status, code = http.StatusUnauthorized, "invalid_token"
+	case errors.Is(err, ErrInvalidRegistrationToken):
+		status, code = http.StatusUnauthorized, "invalid_registration_token"
+	case errors.Is(err, ErrRegistrationNotAvailable):
+		status, code = http.StatusNotFound, "registration_not_available"
+	case errors.Is(err, ErrRegistrationLimited):
+		status, code = http.StatusTooManyRequests, "registration_limited"
+	case errors.Is(err, ErrRegistrationRejected):
+		status, code = http.StatusConflict, "registration_rejected"
+	case errors.Is(err, ErrRegistrationConsumed):
+		status, code = http.StatusConflict, "registration_consumed"
+	case errors.Is(err, ErrRegistrationNotPending):
+		status, code = http.StatusConflict, "registration_not_pending"
+	case errors.Is(err, ErrRegistrationExpired):
+		status, code = http.StatusGone, "registration_expired"
 	case errors.Is(err, ErrInviteConstraint):
 		status, code = http.StatusForbidden, "invite_constraint_mismatch"
 	case errors.Is(err, ErrForbidden):

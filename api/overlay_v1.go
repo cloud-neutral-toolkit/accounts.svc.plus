@@ -15,6 +15,8 @@ func (h *handler) registerOverlayV1Routes(r *gin.Engine) {
 	}
 	overlayHTTP := overlay.NewHTTPHandler(h.overlayService)
 	group := r.Group("/api/overlay/v1")
+	group.POST("/registrations", overlayHTTP.Register)
+	group.POST("/registrations/:registrationID/exchange", overlayHTTP.RegistrationExchange)
 	group.POST("/join-tokens/exchange", overlayHTTP.Exchange)
 	group.POST("/device/session", overlayHTTP.MintSession)
 	group.GET("/enrollment/signed-config", overlayHTTP.EnrollmentConfig)

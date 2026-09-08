@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var overlayDeviceIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
@@ -34,6 +35,17 @@ type Service struct {
 }
 
 const adminDeviceACKRecentWindow = 5 * time.Minute
+
+const (
+	registrationTTL               = 15 * time.Minute
+	registrationPollInterval      = 5
+	registrationPendingLimit      = 20
+	registrationCreateWindow      = 15 * time.Minute
+	registrationCreateWindowLimit = 20
+	registrationDailyCreateWindow = 24 * time.Hour
+	registrationDailyCreateLimit  = 100
+	registrationAdminPageSize     = 100
+)
 
 func NewService(db *gorm.DB, cfg Config) (*Service, error) {
 	if db == nil {
@@ -376,7 +388,346 @@ func (s *Service) SigningKeys(now time.Time) []SigningKey {
 	return []SigningKey{{KeyID: s.keyID, Algorithm: "Ed25519", PublicKey: base64.StdEncoding.EncodeToString(s.privateKey.Public().(ed25519.PublicKey)), Status: "current", NotBefore: now.Add(-time.Minute)}}
 }
 
+// Register records a request for an owner to approve a One identity. This is
+// deliberately not an enrollment path: no device, route, credential, peer, or
+// signed configuration is created until a later approved exchange succeeds.
+func (s *Service) Register(ctx context.Context, request RegistrationRequest) (RegistrationResponse, error) {
+	request.NetworkID = strings.TrimSpace(request.NetworkID)
+	request.DeviceID = strings.TrimSpace(request.DeviceID)
+	request.Name = strings.TrimSpace(request.Name)
+	request.Hostname = strings.TrimSpace(request.Hostname)
+	request.Platform = strings.TrimSpace(request.Platform)
+	request.WireGuardPublicKey = strings.TrimSpace(request.WireGuardPublicKey)
+	publicKey, keyErr := base64.StdEncoding.DecodeString(request.WireGuardPublicKey)
+	if keyErr != nil {
+		publicKey, keyErr = base64.RawStdEncoding.DecodeString(request.WireGuardPublicKey)
+	}
+	if request.NetworkID == "" || len(request.NetworkID) > 128 || !overlayDeviceIDPattern.MatchString(request.DeviceID) || keyErr != nil || len(publicKey) != 32 || len(request.Name) > 255 || len(request.Hostname) > 255 {
+		return RegistrationResponse{}, ErrInvalidInput
+	}
+	switch request.Platform {
+	case "linux", "darwin", "windows":
+	default:
+		return RegistrationResponse{}, ErrInvalidInput
+	}
+	// Persist one canonical representation. The fingerprint is derived from
+	// the decoded 32-byte key, never from caller-controlled base64 spelling.
+	request.WireGuardPublicKey = base64.StdEncoding.EncodeToString(publicKey)
+	publicKeyFingerprint := fingerprintWireGuardPublicKey(publicKey)
+
+	now := s.now()
+	token := newOpaqueToken("xrt_")
+	record := RegistrationRecord{
+		ID:                            newID("xreg"),
+		NetworkID:                     request.NetworkID,
+		DeviceID:                      request.DeviceID,
+		Name:                          request.Name,
+		Hostname:                      request.Hostname,
+		Platform:                      request.Platform,
+		WireGuardPublicKey:            request.WireGuardPublicKey,
+		WireGuardPublicKeyFingerprint: publicKeyFingerprint,
+		TokenHash:                     HashSecret(token),
+		Status:                        RegistrationStatusPending,
+		ExpiresAt:                     canonicalTime(now.Add(registrationTTL)),
+		CreatedAt:                     canonicalTime(now),
+		UpdatedAt:                     canonicalTime(now),
+	}
+	err := s.repo.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		network, err := s.repo.networkTx(tx, record.NetworkID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return ErrRegistrationNotAvailable
+			}
+			return err
+		}
+		if strings.TrimSpace(network.OwnerUserID) == "" {
+			return ErrRegistrationNotAvailable
+		}
+		record.OwnerUserID = network.OwnerUserID
+
+		var existingDevices int64
+		if err := tx.Model(&DeviceRecord{}).Where("network_id = ? AND (id = ? OR wireguard_public_key = ?)", record.NetworkID, record.DeviceID, record.WireGuardPublicKey).Count(&existingDevices).Error; err != nil {
+			return err
+		}
+		if existingDevices != 0 {
+			return ErrDeviceConflict
+		}
+		var sameIdentity int64
+		if err := tx.Model(&RegistrationRecord{}).Where("network_id = ? AND device_id = ? AND wireguard_public_key_fingerprint = ? AND status = ? AND expires_at > ?", record.NetworkID, record.DeviceID, record.WireGuardPublicKeyFingerprint, RegistrationStatusPending, now).Count(&sameIdentity).Error; err != nil {
+			return err
+		}
+		if sameIdentity != 0 {
+			return ErrRegistrationLimited
+		}
+		var pending int64
+		if err := tx.Model(&RegistrationRecord{}).Where("network_id = ? AND status = ? AND expires_at > ?", record.NetworkID, RegistrationStatusPending, now).Count(&pending).Error; err != nil {
+			return err
+		}
+		if pending >= registrationPendingLimit {
+			return ErrRegistrationLimited
+		}
+		var recentCreates int64
+		if err := tx.Model(&RegistrationRecord{}).Where("network_id = ? AND created_at >= ?", record.NetworkID, now.Add(-registrationCreateWindow)).Count(&recentCreates).Error; err != nil {
+			return err
+		}
+		if recentCreates >= registrationCreateWindowLimit {
+			return ErrRegistrationLimited
+		}
+		var dailyCreates int64
+		if err := tx.Model(&RegistrationRecord{}).Where("network_id = ? AND created_at >= ?", record.NetworkID, now.Add(-registrationDailyCreateWindow)).Count(&dailyCreates).Error; err != nil {
+			return err
+		}
+		if dailyCreates >= registrationDailyCreateLimit {
+			return ErrRegistrationLimited
+		}
+		return tx.Create(&record).Error
+	})
+	if err != nil {
+		return RegistrationResponse{}, err
+	}
+	return RegistrationResponse{RegistrationID: record.ID, RegistrationToken: token, Status: record.Status, ExpiresAt: record.ExpiresAt, Interval: registrationPollInterval}, nil
+}
+
+// ExchangeRegistration uses only the approved stored declaration. It never
+// accepts caller-supplied platform, role, public key, owner, or network fields.
+func (s *Service) ExchangeRegistration(ctx context.Context, registrationID, token string) (ExchangeResponse, RegistrationPendingResponse, error) {
+	registrationID = strings.TrimSpace(registrationID)
+	token = strings.TrimSpace(token)
+	if registrationID == "" || !validOpaque(token, "xrt_") {
+		return ExchangeResponse{}, RegistrationPendingResponse{}, ErrInvalidRegistrationToken
+	}
+	now := s.now()
+	credentialRawID := randomHex(16)
+	credentialID := "xdcid_" + credentialRawID
+	credentialSecret := "xdc_" + credentialRawID + "." + newOpaqueToken("")
+	enrollmentSecret := newOpaqueToken("xenr_")
+	credentialIssued := canonicalTime(now)
+	credentialExpiry := canonicalTime(now.Add(s.credentialTTL))
+	enrollmentExpiry := canonicalTime(now.Add(s.enrollmentTTL))
+	var device DeviceRecord
+	var network NetworkRecord
+	pending := RegistrationPendingResponse{}
+	terminalErr := error(nil)
+	err := s.repo.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var registration RegistrationRecord
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND token_hash = ?", registrationID, HashSecret(token)).First(&registration).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrInvalidRegistrationToken
+			}
+			return err
+		}
+		switch registration.Status {
+		case RegistrationStatusRejected:
+			return ErrRegistrationRejected
+		case RegistrationStatusConsumed:
+			return ErrRegistrationConsumed
+		case RegistrationStatusExpired:
+			return ErrRegistrationExpired
+		case RegistrationStatusPending, RegistrationStatusApproved:
+		default:
+			return ErrRegistrationNotPending
+		}
+		if !registration.ExpiresAt.After(now) {
+			if err := tx.Model(&RegistrationRecord{}).Where("id = ? AND status IN ?", registration.ID, []string{RegistrationStatusPending, RegistrationStatusApproved}).Updates(map[string]any{"status": RegistrationStatusExpired, "updated_at": now}).Error; err != nil {
+				return err
+			}
+			terminalErr = ErrRegistrationExpired
+			return nil
+		}
+		if registration.Status == RegistrationStatusPending {
+			pending = RegistrationPendingResponse{Status: RegistrationStatusPending, ExpiresAt: registration.ExpiresAt.UTC(), Interval: registrationPollInterval}
+			return ErrRegistrationPending
+		}
+		networkRecord, err := s.repo.networkTx(tx, registration.NetworkID)
+		if err != nil {
+			return err
+		}
+		if networkRecord.OwnerUserID != registration.OwnerUserID {
+			return ErrRegistrationNotAvailable
+		}
+		var existing int64
+		if err := tx.Model(&DeviceRecord{}).Where("network_id = ? AND (id = ? OR wireguard_public_key = ?)", registration.NetworkID, registration.DeviceID, registration.WireGuardPublicKey).Count(&existing).Error; err != nil {
+			return err
+		}
+		if existing != 0 {
+			return ErrDeviceConflict
+		}
+		address, err := s.repo.allocateAddress(tx, networkRecord)
+		if err != nil {
+			return err
+		}
+		device = DeviceRecord{ID: registration.DeviceID, UserUUID: networkRecord.OwnerUserID, UserID: networkRecord.OwnerUserID, NetworkID: networkRecord.ID, Role: RoleOne, Name: registration.Name, Platform: registration.Platform, Hostname: registration.Hostname, WireGuardPublicKey: registration.WireGuardPublicKey, WireGuardAddress: address, Status: "active", CreatedAt: now, UpdatedAt: now}
+		if err := tx.Create(&device).Error; err != nil {
+			return err
+		}
+		consumedAt := now
+		result := tx.Model(&RegistrationRecord{}).Where("id = ? AND status = ? AND consumed_at IS NULL", registration.ID, RegistrationStatusApproved).Updates(map[string]any{"status": RegistrationStatusConsumed, "consumed_at": consumedAt, "updated_at": now})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrRegistrationConsumed
+		}
+		if err := tx.Model(&NetworkRecord{}).Where("id = ?", networkRecord.ID).UpdateColumn("config_generation", gorm.Expr("config_generation + 1")).Error; err != nil {
+			return err
+		}
+		networkRecord.ConfigGeneration++
+		credential := CredentialRecord{ID: newID("cred"), DeviceID: device.ID, CredentialID: credentialID, TokenHash: HashSecret(credentialSecret), IssuedAt: credentialIssued, ExpiresAt: credentialExpiry}
+		enrollment := EnrollmentRecord{ID: newID("enr"), DeviceID: device.ID, TokenHash: HashSecret(enrollmentSecret), IssuedAt: credentialIssued, ExpiresAt: enrollmentExpiry}
+		if err := tx.Create(&credential).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&enrollment).Error; err != nil {
+			return err
+		}
+		network = networkRecord
+		return nil
+	})
+	if terminalErr != nil {
+		return ExchangeResponse{}, RegistrationPendingResponse{}, terminalErr
+	}
+	if err != nil {
+		return ExchangeResponse{}, pending, err
+	}
+	return ExchangeResponse{EnrollmentToken: enrollmentSecret, TokenType: TokenTypeBearer, ExpiresAt: enrollmentExpiry, Scope: []string{ScopeConfigRead, ScopeConfigAck, ScopeDeviceRevoke}, DeviceCredential: DeviceCredential{CredentialID: credentialID, Credential: credentialSecret, TokenType: TokenTypeDevice, IssuedAt: credentialIssued, ExpiresAt: credentialExpiry, Scope: []string{ScopeSessionMint, ScopeRotate, ScopeDeviceRevoke}}, Device: toDevice(device), Network: toNetwork(network), SigningKeys: s.SigningKeys(now)}, RegistrationPendingResponse{}, nil
+}
+
+func (s *Service) AdminRegistrations(ctx context.Context, ownerUserID, cursor string) (RegistrationPage, error) {
+	ownerUserID, cursor = strings.TrimSpace(ownerUserID), strings.TrimSpace(cursor)
+	if ownerUserID == "" {
+		return RegistrationPage{}, ErrInvalidInput
+	}
+	now := s.now()
+	// An approved request still has an absolute exchange deadline. Mark both
+	// actionable states expired for a stable owner-facing read model.
+	if err := s.repo.DB.WithContext(ctx).Model(&RegistrationRecord{}).
+		Where("owner_user_id = ? AND status IN ? AND expires_at <= ?", ownerUserID, []string{RegistrationStatusPending, RegistrationStatusApproved}, now).
+		Updates(map[string]any{"status": RegistrationStatusExpired, "updated_at": now}).Error; err != nil {
+		return RegistrationPage{}, err
+	}
+	query := s.repo.DB.WithContext(ctx).Model(&RegistrationRecord{}).
+		Select("overlay_registrations.*").
+		Joins("JOIN overlay_networks ON overlay_networks.id = overlay_registrations.network_id").
+		Where("overlay_registrations.owner_user_id = ? AND overlay_networks.owner_user_id = ?", ownerUserID, ownerUserID)
+	if cursor != "" {
+		var anchor RegistrationRecord
+		if err := s.repo.DB.WithContext(ctx).Model(&RegistrationRecord{}).
+			Joins("JOIN overlay_networks ON overlay_networks.id = overlay_registrations.network_id").
+			Where("overlay_registrations.id = ? AND overlay_registrations.owner_user_id = ? AND overlay_networks.owner_user_id = ?", cursor, ownerUserID, ownerUserID).
+			First(&anchor).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return RegistrationPage{}, ErrNotFound
+			}
+			return RegistrationPage{}, err
+		}
+		query = query.Where("(overlay_registrations.created_at < ?) OR (overlay_registrations.created_at = ? AND overlay_registrations.id < ?)", anchor.CreatedAt, anchor.CreatedAt, anchor.ID)
+	}
+	var records []RegistrationRecord
+	if err := query.Order("overlay_registrations.created_at DESC").Order("overlay_registrations.id DESC").Limit(registrationAdminPageSize + 1).Find(&records).Error; err != nil {
+		return RegistrationPage{}, err
+	}
+	page := RegistrationPage{Registrations: make([]RegistrationSummary, 0, min(len(records), registrationAdminPageSize))}
+	if len(records) > registrationAdminPageSize {
+		page.HasMore = true
+		records = records[:registrationAdminPageSize]
+		page.NextCursor = records[len(records)-1].ID
+	}
+	for _, record := range records {
+		page.Registrations = append(page.Registrations, toRegistrationSummary(record))
+	}
+	return page, nil
+}
+
+func (s *Service) AdminApproveRegistration(ctx context.Context, ownerUserID, registrationID, networkID string) (RegistrationSummary, error) {
+	return s.adminTransitionRegistration(ctx, ownerUserID, registrationID, networkID, RegistrationStatusApproved)
+}
+
+func (s *Service) AdminRejectRegistration(ctx context.Context, ownerUserID, registrationID string) (RegistrationSummary, error) {
+	return s.adminTransitionRegistration(ctx, ownerUserID, registrationID, "", RegistrationStatusRejected)
+}
+
+func (s *Service) adminTransitionRegistration(ctx context.Context, ownerUserID, registrationID, requestedNetworkID, nextStatus string) (RegistrationSummary, error) {
+	ownerUserID, registrationID, requestedNetworkID = strings.TrimSpace(ownerUserID), strings.TrimSpace(registrationID), strings.TrimSpace(requestedNetworkID)
+	if ownerUserID == "" || registrationID == "" || nextStatus != RegistrationStatusApproved && nextStatus != RegistrationStatusRejected || nextStatus == RegistrationStatusApproved && requestedNetworkID == "" {
+		return RegistrationSummary{}, ErrInvalidInput
+	}
+	now := s.now()
+	var result RegistrationRecord
+	terminalErr := error(nil)
+	err := s.repo.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var registration RegistrationRecord
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND owner_user_id = ?", registrationID, ownerUserID).First(&registration).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if nextStatus == RegistrationStatusApproved && requestedNetworkID != registration.NetworkID {
+			return ErrNotFound
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND owner_user_id = ?", registration.NetworkID, ownerUserID).First(&NetworkRecord{}).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if registration.Status != RegistrationStatusPending {
+			return ErrRegistrationNotPending
+		}
+		if !registration.ExpiresAt.After(now) {
+			if err := tx.Model(&RegistrationRecord{}).Where("id = ? AND status = ?", registration.ID, RegistrationStatusPending).Updates(map[string]any{"status": RegistrationStatusExpired, "updated_at": now}).Error; err != nil {
+				return err
+			}
+			terminalErr = ErrRegistrationExpired
+			return nil
+		}
+		updates := map[string]any{"status": nextStatus, "updated_at": now}
+		if nextStatus == RegistrationStatusApproved {
+			updates["approved_at"] = now
+		} else {
+			updates["rejected_at"] = now
+		}
+		update := tx.Model(&RegistrationRecord{}).Where("id = ? AND status = ?", registration.ID, RegistrationStatusPending).Updates(updates)
+		if update.Error != nil {
+			return update.Error
+		}
+		if update.RowsAffected != 1 {
+			return ErrRegistrationNotPending
+		}
+		registration.Status = nextStatus
+		if nextStatus == RegistrationStatusApproved {
+			registration.ApprovedAt = &now
+		} else {
+			registration.RejectedAt = &now
+		}
+		result = registration
+		return nil
+	})
+	if terminalErr != nil {
+		return RegistrationSummary{}, terminalErr
+	}
+	if err != nil {
+		return RegistrationSummary{}, err
+	}
+	return toRegistrationSummary(result), nil
+}
+
+func toRegistrationSummary(record RegistrationRecord) RegistrationSummary {
+	return RegistrationSummary{RegistrationID: record.ID, NetworkID: record.NetworkID, DeviceID: record.DeviceID, Name: record.Name, Hostname: record.Hostname, Platform: record.Platform, Status: record.Status, WireGuardPublicKeyFingerprint: record.WireGuardPublicKeyFingerprint, ExpiresAt: record.ExpiresAt.UTC(), CreatedAt: record.CreatedAt.UTC(), ApprovedAt: record.ApprovedAt, RejectedAt: record.RejectedAt, ConsumedAt: record.ConsumedAt}
+}
+
+func fingerprintWireGuardPublicKey(publicKey []byte) string {
+	sum := sha256.Sum256(publicKey)
+	return hex.EncodeToString(sum[:])
+}
+
 func (s *Service) Exchange(ctx context.Context, request ExchangeRequest) (ExchangeResponse, error) {
+	// Registration capabilities are purpose-bound. Reject an xrt token before
+	// normal invitation validation so neither pending nor approved requests can
+	// ever be consumed through the legacy invite endpoint.
+	if validOpaque(strings.TrimSpace(request.JoinToken), "xrt_") {
+		return ExchangeResponse{}, ErrInvalidToken
+	}
 	if request.Role == "" {
 		request.Role = RoleOne
 	}
