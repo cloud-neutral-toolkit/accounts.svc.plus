@@ -88,6 +88,98 @@ func TestAdminResourcesAreIsolatedByOwner(t *testing.T) {
 	}
 }
 
+func TestAdminDevicesProjectionReportsACKStateAndOwnerScope(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:admin-device-projection-%d?mode=memory&cache=shared", time.Now().UnixNano())), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, signer, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	service, err := NewService(db, Config{SigningPrivateKey: signer, Clock: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seedNetwork := func(owner, networkID, cidr, gatewayID, gatewayAddress, token string) {
+		t.Helper()
+		_, err := service.Seed(t.Context(), BootstrapConfig{
+			Network: BootstrapNetwork{ID: networkID, DisplayName: networkID, CIDR: cidr, GatewayID: gatewayID, GatewayWireGuardKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), GatewayWireGuardAddress: gatewayAddress, GatewayEndpointHost: gatewayID + ".example.test", GatewayEndpointPort: 51820, TransportServerName: gatewayID + ".example.test", TransportPort: 443, TransportAuthID: "11111111-1111-1111-1111-111111111111", OwnerUserID: owner},
+			Invite:  BootstrapInvite{DeviceID: "seed-" + owner, Platform: "linux", Role: RoleOne, ExpiresAt: now.Add(time.Hour)},
+		}, token)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedNetwork("user-a", "network-a", "10.91.0.0/28", "gateway-a", "10.91.0.1/32", "seed-a")
+	seedNetwork("user-b", "network-b", "10.92.0.0/28", "gateway-b", "10.92.0.1/32", "seed-b")
+	if err := db.Model(&NetworkRecord{}).Where("id = ?", "network-a").Update("config_generation", uint64(2)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	recent := now.Add(-time.Minute)
+	stale := now.Add(-6 * time.Minute)
+	future := now.Add(time.Minute)
+	devices := []DeviceRecord{
+		{ID: "active-recent", UserID: "user-a", NetworkID: "network-a", Role: RoleOne, Name: "Recent", Platform: "linux", Hostname: "recent", WireGuardPublicKey: "key-recent", WireGuardAddress: "10.91.0.2/32", Status: "active", LastSeenAt: &recent, CreatedAt: now, UpdatedAt: now},
+		{ID: "active-stale", UserID: "user-a", NetworkID: "network-a", Role: RoleOne, Name: "Stale", Platform: "linux", Hostname: "stale", WireGuardPublicKey: "key-stale", WireGuardAddress: "10.91.0.3/32", Status: "active", LastSeenAt: &stale, CreatedAt: now, UpdatedAt: now},
+		{ID: "active-old-generation", UserID: "user-a", NetworkID: "network-a", Role: RoleOne, Name: "Old generation", Platform: "linux", Hostname: "old-generation", WireGuardPublicKey: "key-old", WireGuardAddress: "10.91.0.4/32", Status: "active", LastSeenAt: &recent, CreatedAt: now, UpdatedAt: now},
+		{ID: "revoked-gateway", UserID: "user-a", NetworkID: "network-a", Role: RoleGateway, Name: "Revoked gateway", Platform: "linux", Hostname: "revoked", WireGuardPublicKey: "key-revoked", WireGuardAddress: "10.91.0.1/32", Status: "revoked", LastSeenAt: &recent, CreatedAt: now, UpdatedAt: now},
+		{ID: "active-future-ack", UserID: "user-a", NetworkID: "network-a", Role: RoleOne, Name: "Future ACK", Platform: "linux", Hostname: "future", WireGuardPublicKey: "key-future", WireGuardAddress: "10.91.0.5/32", Status: "active", CreatedAt: now, UpdatedAt: now},
+		{ID: "foreign-device", UserID: "user-b", NetworkID: "network-b", Role: RoleGateway, Name: "Foreign", Platform: "linux", Hostname: "foreign", WireGuardPublicKey: "key-foreign", WireGuardAddress: "10.92.0.1/32", Status: "active", CreatedAt: now, UpdatedAt: now},
+	}
+	if err := db.Create(&devices).Error; err != nil {
+		t.Fatal(err)
+	}
+	acks := []AckRecord{
+		{ID: "ack-recent", DeviceID: "active-recent", NetworkID: "network-a", Generation: 2, ConfigID: configID("network-a", "active-recent", 2), AppliedAt: recent, ReceivedAt: recent},
+		{ID: "ack-stale", DeviceID: "active-stale", NetworkID: "network-a", Generation: 2, ConfigID: configID("network-a", "active-stale", 2), AppliedAt: stale, ReceivedAt: stale},
+		{ID: "ack-old-generation", DeviceID: "active-old-generation", NetworkID: "network-a", Generation: 1, ConfigID: configID("network-a", "active-old-generation", 1), AppliedAt: recent, ReceivedAt: recent},
+		{ID: "ack-revoked", DeviceID: "revoked-gateway", NetworkID: "network-a", Generation: 2, ConfigID: configID("network-a", "revoked-gateway", 2), AppliedAt: recent, ReceivedAt: recent},
+		{ID: "ack-future", DeviceID: "active-future-ack", NetworkID: "network-a", Generation: 2, ConfigID: configID("network-a", "active-future-ack", 2), AppliedAt: future, ReceivedAt: future},
+	}
+	if err := db.Create(&acks).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	listed, err := service.AdminDevices(t.Context(), "user-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 5 {
+		t.Fatalf("expected five owner-scoped devices, got %#v", listed)
+	}
+	byID := make(map[string]AdminDevice, len(listed))
+	for _, device := range listed {
+		byID[device.ID] = device
+	}
+	want := map[string]struct {
+		role, status, connectionStatus string
+	}{
+		"active-recent":         {RoleOne, "active", "recent_ack"},
+		"active-stale":          {RoleOne, "active", "stale"},
+		"active-old-generation": {RoleOne, "active", "never_seen"},
+		"revoked-gateway":       {RoleGateway, "revoked", "revoked"},
+		"active-future-ack":     {RoleOne, "active", "stale"},
+	}
+	for id, expected := range want {
+		device, ok := byID[id]
+		if !ok || device.Role != expected.role || device.Status != expected.status || device.ConnectionStatus != expected.connectionStatus {
+			t.Fatalf("unexpected admin device %q: got %#v want role=%q status=%q connection_status=%q", id, device, expected.role, expected.status, expected.connectionStatus)
+		}
+	}
+	if byID["active-old-generation"].LastSeenAt == nil || byID["revoked-gateway"].LastSeenAt == nil {
+		t.Fatal("admin projection should preserve nullable last_seen_at values")
+	}
+
+	foreign, err := service.AdminDevices(t.Context(), "user-b")
+	if err != nil || len(foreign) != 1 || foreign[0].ID != "foreign-device" {
+		t.Fatalf("owner B projection leaked resources: %#v err=%v", foreign, err)
+	}
+}
+
 func TestBootstrapCannotTakeOverAnotherUsersNetwork(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:bootstrap-isolation-%d?mode=memory&cache=shared", time.Now().UnixNano())), &gorm.Config{})
 	if err != nil {
