@@ -369,6 +369,11 @@ func (r *Repository) ack(ctx context.Context, request SignedConfigAckRequest, de
 		if existing.ConfigID != request.ConfigID || existing.DeviceID != request.DeviceID {
 			return SignedConfigAckResponse{}, ErrGenerationConflict
 		}
+		if err := r.DB.WithContext(ctx).Model(&DeviceRecord{}).Where("id = ?", device.ID).Updates(map[string]any{
+			"last_seen_at": now.UTC(), "updated_at": now.UTC(),
+		}).Error; err != nil {
+			return SignedConfigAckResponse{}, err
+		}
 		return ackResponse(existing, true), nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -376,6 +381,11 @@ func (r *Repository) ack(ctx context.Context, request SignedConfigAckRequest, de
 	}
 	record := AckRecord{ID: uuid.NewString(), DeviceID: device.ID, NetworkID: network.ID, Generation: request.Generation, ConfigID: request.ConfigID, AppliedAt: request.AppliedAt.UTC().Truncate(time.Second), ReceivedAt: now.UTC().Truncate(time.Second)}
 	if err := r.DB.WithContext(ctx).Create(&record).Error; err != nil {
+		return SignedConfigAckResponse{}, err
+	}
+	if err := r.DB.WithContext(ctx).Model(&DeviceRecord{}).Where("id = ?", device.ID).Updates(map[string]any{
+		"last_seen_at": now.UTC(), "updated_at": now.UTC(),
+	}).Error; err != nil {
 		return SignedConfigAckResponse{}, err
 	}
 	return ackResponse(record, false), nil

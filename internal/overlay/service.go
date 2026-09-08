@@ -85,7 +85,7 @@ func (s *Service) AdminOverview(ctx context.Context, ownerUserID string) (AdminO
 	if ownerUserID == "" {
 		return AdminOverview{}, ErrInvalidInput
 	}
-	var networks, devices, gateways int64
+	var networks, devices, gateways, ones, connectedGateways, connectedOnes int64
 	if err := s.repo.DB.WithContext(ctx).Model(&NetworkRecord{}).Where("owner_user_id = ?", ownerUserID).Count(&networks).Error; err != nil {
 		return AdminOverview{}, err
 	}
@@ -96,7 +96,45 @@ func (s *Service) AdminOverview(ctx context.Context, ownerUserID string) (AdminO
 	if err := s.repo.DB.WithContext(ctx).Model(&DeviceRecord{}).Where("network_id IN (?) AND role = ? AND status = ?", ownedNetworks, RoleGateway, "active").Count(&gateways).Error; err != nil {
 		return AdminOverview{}, err
 	}
-	return AdminOverview{Status: "available", NetworkCount: networks, DeviceCount: devices, GatewayCount: gateways, SigningKeyID: s.keyID}, nil
+	if err := s.repo.DB.WithContext(ctx).Model(&DeviceRecord{}).Where("network_id IN (?) AND role = ? AND status = ?", ownedNetworks, RoleOne, "active").Count(&ones).Error; err != nil {
+		return AdminOverview{}, err
+	}
+	connectedSince := s.now().Add(-5 * time.Minute)
+	if err := s.repo.DB.WithContext(ctx).Model(&DeviceRecord{}).Where("network_id IN (?) AND role = ? AND status = ? AND last_seen_at >= ?", ownedNetworks, RoleGateway, "active", connectedSince).Count(&connectedGateways).Error; err != nil {
+		return AdminOverview{}, err
+	}
+	if err := s.repo.DB.WithContext(ctx).Model(&DeviceRecord{}).Where("network_id IN (?) AND role = ? AND status = ? AND last_seen_at >= ?", ownedNetworks, RoleOne, "active", connectedSince).Count(&connectedOnes).Error; err != nil {
+		return AdminOverview{}, err
+	}
+	return AdminOverview{
+		Status:        "available",
+		NetworkCount:  networks,
+		DeviceCount:   devices,
+		GatewayCount:  gateways,
+		OneCount:      ones,
+		GatewayStatus: overlayResourceStatus(gateways, connectedGateways, networks),
+		OneStatus:     overlayResourceStatus(ones, connectedOnes, networks),
+		SigningKeyID:  s.keyID,
+	}, nil
+}
+
+// The admin read model reports enrollment state, not a fabricated network
+// handshake. A device becomes "active" only after Accounts has persisted its
+// enrollment; the lab/gateway heartbeat and WireGuard handshake remain the
+// data-plane verification signals. Keeping that distinction explicit prevents
+// the Portal from claiming a live tunnel merely because a record exists.
+
+func overlayResourceStatus(activeCount, connectedCount, networkCount int64) string {
+	if connectedCount > 0 {
+		return "connected"
+	}
+	if activeCount > 0 {
+		return "active"
+	}
+	if networkCount > 0 {
+		return "pending"
+	}
+	return "not_configured"
 }
 
 func (s *Service) AdminNetworks(ctx context.Context, ownerUserID string) ([]Network, error) {
