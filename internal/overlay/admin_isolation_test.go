@@ -58,7 +58,7 @@ func TestAdminResourcesAreIsolatedByOwner(t *testing.T) {
 	}
 
 	overview, err := service.AdminOverview(t.Context(), "user-a")
-	if err != nil || overview.NetworkCount != 1 || overview.DeviceCount != 1 || overview.GatewayCount != 0 {
+	if err != nil || overview.NetworkCount != 1 || overview.DeviceCount != 1 || overview.GatewayCount != 0 || overview.OneCount != 1 || overview.OneStatus != "active" || overview.GatewayStatus != "pending" {
 		t.Fatalf("user A overview leaked resources: %#v err=%v", overview, err)
 	}
 	networks, err := service.AdminNetworks(t.Context(), "user-a")

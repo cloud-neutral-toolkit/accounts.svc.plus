@@ -140,6 +140,13 @@ func TestOverlayLifecyclePersistsHashesAndSignsConfig(t *testing.T) {
 	if ackResp.Code != http.StatusOK || !bytes.Contains(ackResp.Body.Bytes(), []byte(`"acked":true`)) {
 		t.Fatalf("ack status=%d body=%s", ackResp.Code, ackResp.Body.String())
 	}
+	var acknowledgedDevice DeviceRecord
+	if err := service.repo.DB.Where("id = ?", "one-laptop").First(&acknowledgedDevice).Error; err != nil {
+		t.Fatal(err)
+	}
+	if acknowledgedDevice.LastSeenAt == nil {
+		t.Fatal("successful signed-config ACK did not update device activity")
+	}
 
 	replayReq := httptest.NewRequest(http.MethodPost, "/api/overlay/v1/join-tokens/exchange", bytes.NewBufferString(payload))
 	replayResp := httptest.NewRecorder()

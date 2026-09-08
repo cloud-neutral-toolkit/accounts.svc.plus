@@ -258,11 +258,14 @@ type PolicyRule struct {
 }
 
 type AdminOverview struct {
-	Status       string `json:"status"`
-	NetworkCount int64  `json:"networkCount"`
-	DeviceCount  int64  `json:"deviceCount"`
-	GatewayCount int64  `json:"gatewayCount"`
-	SigningKeyID string `json:"signingKeyId"`
+	Status        string `json:"status"`
+	NetworkCount  int64  `json:"networkCount"`
+	DeviceCount   int64  `json:"deviceCount"`
+	GatewayCount  int64  `json:"gatewayCount"`
+	OneCount      int64  `json:"oneCount"`
+	GatewayStatus string `json:"gatewayStatus"`
+	OneStatus     string `json:"oneStatus"`
+	SigningKeyID  string `json:"signingKeyId"`
 }
 
 type InviteSummary struct {
