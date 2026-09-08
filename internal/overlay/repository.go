@@ -113,6 +113,31 @@ type AckRecord struct {
 
 func (AckRecord) TableName() string { return "overlay_signed_config_acks" }
 
+// RegistrationRecord stores a requested One identity before owner approval.
+// The raw token is returned once and never persists; the public key is a
+// declaration, not hardware attestation.
+type RegistrationRecord struct {
+	ID                            string     `gorm:"column:id;type:text;primaryKey"`
+	NetworkID                     string     `gorm:"column:network_id;type:text;not null;index"`
+	OwnerUserID                   string     `gorm:"column:owner_user_id;type:text;not null;index"`
+	DeviceID                      string     `gorm:"column:device_id;type:text;not null;index"`
+	Name                          string     `gorm:"column:name;type:text;not null;default:''"`
+	Hostname                      string     `gorm:"column:hostname;type:text;not null;default:''"`
+	Platform                      string     `gorm:"column:platform;type:text;not null"`
+	WireGuardPublicKey            string     `gorm:"column:wireguard_public_key;type:text;not null"`
+	WireGuardPublicKeyFingerprint string     `gorm:"column:wireguard_public_key_fingerprint;type:text;not null;index"`
+	TokenHash                     string     `gorm:"column:token_hash;type:text;not null;uniqueIndex"`
+	Status                        string     `gorm:"column:status;type:text;not null;index"`
+	ExpiresAt                     time.Time  `gorm:"column:expires_at;not null;index"`
+	ApprovedAt                    *time.Time `gorm:"column:approved_at"`
+	RejectedAt                    *time.Time `gorm:"column:rejected_at"`
+	ConsumedAt                    *time.Time `gorm:"column:consumed_at"`
+	CreatedAt                     time.Time  `gorm:"column:created_at;not null;autoCreateTime;index"`
+	UpdatedAt                     time.Time  `gorm:"column:updated_at;not null;autoUpdateTime"`
+}
+
+func (RegistrationRecord) TableName() string { return "overlay_registrations" }
+
 type Repository struct{ DB *gorm.DB }
 
 func NewRepository(db *gorm.DB) (*Repository, error) {
@@ -126,7 +151,7 @@ func AutoMigrate(db *gorm.DB) error {
 	if db == nil {
 		return errors.New("overlay migration requires a database")
 	}
-	return db.AutoMigrate(&NetworkRecord{}, &InviteRecord{}, &DeviceRecord{}, &CredentialRecord{}, &EnrollmentRecord{}, &AckRecord{})
+	return db.AutoMigrate(&NetworkRecord{}, &InviteRecord{}, &DeviceRecord{}, &CredentialRecord{}, &EnrollmentRecord{}, &AckRecord{}, &RegistrationRecord{})
 }
 
 func HashSecret(secret string) string {

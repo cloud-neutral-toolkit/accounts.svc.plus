@@ -27,13 +27,21 @@ const (
 )
 
 var (
-	ErrInvalidToken       = errors.New("invalid or expired overlay token")
-	ErrInviteConstraint   = errors.New("overlay invite constraints do not match")
-	ErrDeviceConflict     = errors.New("overlay device registration conflicts")
-	ErrNotFound           = errors.New("overlay resource not found")
-	ErrGenerationConflict = errors.New("overlay configuration generation conflict")
-	ErrForbidden          = errors.New("overlay resource access denied")
-	ErrInvalidInput       = errors.New("invalid overlay request")
+	ErrInvalidToken             = errors.New("invalid or expired overlay token")
+	ErrInviteConstraint         = errors.New("overlay invite constraints do not match")
+	ErrDeviceConflict           = errors.New("overlay device registration conflicts")
+	ErrNotFound                 = errors.New("overlay resource not found")
+	ErrGenerationConflict       = errors.New("overlay configuration generation conflict")
+	ErrForbidden                = errors.New("overlay resource access denied")
+	ErrInvalidInput             = errors.New("invalid overlay request")
+	ErrRegistrationNotAvailable = errors.New("overlay registration is not available")
+	ErrRegistrationLimited      = errors.New("overlay registration is limited")
+	ErrInvalidRegistrationToken = errors.New("invalid overlay registration token")
+	ErrRegistrationPending      = errors.New("overlay registration is pending")
+	ErrRegistrationRejected     = errors.New("overlay registration was rejected")
+	ErrRegistrationExpired      = errors.New("overlay registration expired")
+	ErrRegistrationConsumed     = errors.New("overlay registration was consumed")
+	ErrRegistrationNotPending   = errors.New("overlay registration is not pending")
 )
 
 type Network struct {
@@ -185,6 +193,72 @@ type ExchangeResponse struct {
 	Device           Device           `json:"device"`
 	Network          Network          `json:"network"`
 	SigningKeys      []SigningKey     `json:"signing_keys"`
+}
+
+const (
+	RegistrationStatusPending  = "pending"
+	RegistrationStatusApproved = "approved"
+	RegistrationStatusRejected = "rejected"
+	RegistrationStatusExpired  = "expired"
+	RegistrationStatusConsumed = "consumed"
+)
+
+// RegistrationRequest is intentionally unauthenticated. It is only a request
+// for an owner to review a declared One identity; it grants no device, route,
+// credential, peer, or configuration until an owner approves and the device
+// performs a separately authenticated exchange.
+type RegistrationRequest struct {
+	NetworkID          string `json:"network_id"`
+	DeviceID           string `json:"device_id"`
+	Name               string `json:"name,omitempty"`
+	Hostname           string `json:"hostname,omitempty"`
+	Platform           string `json:"platform"`
+	WireGuardPublicKey string `json:"wireguard_public_key"`
+}
+
+type RegistrationResponse struct {
+	RegistrationID    string    `json:"registration_id"`
+	RegistrationToken string    `json:"registration_token"`
+	Status            string    `json:"status"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	Interval          int       `json:"interval"`
+}
+
+type RegistrationPendingResponse struct {
+	Status    string    `json:"status"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Interval  int       `json:"interval"`
+}
+
+// RegistrationSummary is owner-scoped, public identity metadata. It never
+// includes a registration token, token digest, enrollment token, credential,
+// peer, configuration, IP address, or WireGuard private key.
+type RegistrationSummary struct {
+	RegistrationID                string     `json:"registration_id"`
+	NetworkID                     string     `json:"network_id"`
+	DeviceID                      string     `json:"device_id"`
+	Name                          string     `json:"name"`
+	Hostname                      string     `json:"hostname"`
+	Platform                      string     `json:"platform"`
+	WireGuardPublicKeyFingerprint string     `json:"wireguard_public_key_fingerprint"`
+	Status                        string     `json:"status"`
+	ExpiresAt                     time.Time  `json:"expires_at"`
+	CreatedAt                     time.Time  `json:"created_at"`
+	ApprovedAt                    *time.Time `json:"approved_at,omitempty"`
+	RejectedAt                    *time.Time `json:"rejected_at,omitempty"`
+	ConsumedAt                    *time.Time `json:"consumed_at,omitempty"`
+}
+
+// RegistrationPage is deliberately bounded so an owner cannot accidentally
+// request an unbounded audit history from the Portal.
+type RegistrationPage struct {
+	Registrations []RegistrationSummary `json:"registrations"`
+	HasMore       bool                  `json:"has_more"`
+	NextCursor    string                `json:"next_cursor,omitempty"`
+}
+
+type ApproveRegistrationRequest struct {
+	NetworkID string `json:"network_id"`
 }
 
 type DeviceSessionRequest struct {

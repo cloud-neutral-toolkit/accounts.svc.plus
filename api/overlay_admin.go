@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -59,6 +61,9 @@ func (h *handler) registerOverlayAdminRoutes(r *gin.Engine) {
 	group.GET("/devices", h.overlayAdminDevices)
 	group.GET("/invites", h.overlayAdminInvites)
 	group.POST("/invites", h.overlayAdminCreateInvite)
+	group.GET("/registrations", h.overlayAdminRegistrations)
+	group.POST("/registrations/:registrationID/approve", h.overlayAdminApproveRegistration)
+	group.POST("/registrations/:registrationID/reject", h.overlayAdminRejectRegistration)
 	group.GET("/networks/:networkID/policy", h.overlayAdminPolicy)
 	group.POST("/networks/bootstrap", h.overlayAdminBootstrap)
 	group.PUT("/networks/:networkID/policy", h.overlayAdminUpdatePolicy)
@@ -129,6 +134,67 @@ func (h *handler) overlayAdminCreateInvite(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusCreated, result)
+}
+
+func (h *handler) overlayAdminRegistrations(c *gin.Context) {
+	if _, ok := h.requireXConnectZeroAccess(c, permissionXConnectZeroManage); !ok {
+		return
+	}
+	registrations, err := h.overlayService.AdminRegistrations(c.Request.Context(), auth.GetUserID(c), c.Query("cursor"))
+	if err != nil {
+		respondOverlayAdminError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, registrations)
+}
+
+func (h *handler) overlayAdminApproveRegistration(c *gin.Context) {
+	if _, ok := h.requireXConnectZeroAccess(c, permissionXConnectZeroManage); !ok {
+		return
+	}
+	var request overlay.ApproveRegistrationRequest
+	if !decodeOverlayAdminJSON(c, &request) {
+		return
+	}
+	registration, err := h.overlayService.AdminApproveRegistration(c.Request.Context(), auth.GetUserID(c), c.Param("registrationID"), request.NetworkID)
+	if err != nil {
+		respondOverlayAdminError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"registration": registration})
+}
+
+func (h *handler) overlayAdminRejectRegistration(c *gin.Context) {
+	if _, ok := h.requireXConnectZeroAccess(c, permissionXConnectZeroManage); !ok {
+		return
+	}
+	// Reject has no request contract, but still bounds and rejects an accidental
+	// non-empty JSON body rather than silently accepting unreviewed fields.
+	if c.Request.ContentLength != 0 {
+		respondError(c, http.StatusBadRequest, "invalid_request", "XConnect Zero registration rejection does not accept a request body")
+		return
+	}
+	registration, err := h.overlayService.AdminRejectRegistration(c.Request.Context(), auth.GetUserID(c), c.Param("registrationID"))
+	if err != nil {
+		respondOverlayAdminError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"registration": registration})
+}
+
+func decodeOverlayAdminJSON(c *gin.Context, target any) bool {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64*1024)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_request", "invalid XConnect Zero registration request")
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		respondError(c, http.StatusBadRequest, "invalid_request", "invalid XConnect Zero registration request")
+		return false
+	}
+	return true
 }
 
 func (h *handler) overlayAdminBootstrap(c *gin.Context) {
@@ -278,6 +344,14 @@ func respondOverlayAdminError(c *gin.Context, err error) {
 		status, code, message = http.StatusNotFound, "not_found", "XConnect Zero resource not found"
 	case errors.Is(err, overlay.ErrInvalidInput):
 		status, code, message = http.StatusBadRequest, "invalid_request", "invalid XConnect Zero resource"
+	case errors.Is(err, overlay.ErrRegistrationExpired):
+		status, code, message = http.StatusGone, "registration_expired", "XConnect One registration expired"
+	case errors.Is(err, overlay.ErrRegistrationNotPending):
+		status, code, message = http.StatusConflict, "registration_not_pending", "XConnect One registration is stale"
+	case errors.Is(err, overlay.ErrRegistrationRejected):
+		status, code, message = http.StatusConflict, "registration_rejected", "XConnect One registration was rejected"
+	case errors.Is(err, overlay.ErrRegistrationConsumed):
+		status, code, message = http.StatusConflict, "registration_consumed", "XConnect One registration was already consumed"
 	case errors.Is(err, overlay.ErrForbidden):
 		status, code, message = http.StatusForbidden, "forbidden", "XConnect Zero resource belongs to another user"
 	}
