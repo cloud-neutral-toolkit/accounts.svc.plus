@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,5 +112,49 @@ func TestBootstrapCannotTakeOverAnotherUsersNetwork(t *testing.T) {
 	}, "takeover-token")
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("expected cross-user bootstrap rejection, got %v", err)
+	}
+}
+
+func TestAdminCreateInviteIsOwnerScopedAndDeviceBound(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:admin-create-invite-%d?mode=memory&cache=shared", time.Now().UnixNano())), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, signer, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	service, err := NewService(db, Config{SigningPrivateKey: signer, Clock: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Seed(t.Context(), BootstrapConfig{
+		Network: BootstrapNetwork{ID: "network-owner-a", DisplayName: "Owner A", CIDR: "10.94.0.0/29", GatewayID: "gateway-a", GatewayWireGuardKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), GatewayWireGuardAddress: "10.94.0.1/32", GatewayEndpointHost: "gateway-a.example.test", GatewayEndpointPort: 51820, TransportServerName: "gateway-a.example.test", TransportPort: 443, TransportAuthID: "11111111-1111-1111-1111-111111111111", OwnerUserID: "user-a"},
+		Invite:  BootstrapInvite{DeviceID: "linux-a", Platform: "linux", Role: RoleOne, ExpiresAt: now.Add(time.Hour)},
+	}, "seed-owner-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := service.AdminCreateInvite(t.Context(), "user-a", "https://accounts.example.test", AdminInviteRequest{NetworkID: "network-owner-a", DeviceID: "mac-owner-a", Platform: "darwin", Role: RoleOne, ExpiresAt: now.Add(30 * time.Minute)})
+	if err != nil {
+		t.Fatalf("create owner invite: %v", err)
+	}
+	if result.Invite.NetworkID != "network-owner-a" || result.Invite.DeviceID != "mac-owner-a" || result.Invite.Platform != "darwin" || result.Invite.RemainingUses != 1 {
+		t.Fatalf("unexpected invite summary: %#v", result.Invite)
+	}
+	if !strings.HasPrefix(result.JoinURI, "xconnect://join/xjt_") || !strings.Contains(result.JoinURI, "controller=https%3A%2F%2Faccounts.example.test") {
+		t.Fatalf("unexpected join URI shape: %q", result.JoinURI)
+	}
+	if _, err := service.AdminCreateInvite(t.Context(), "user-b", "https://accounts.example.test", AdminInviteRequest{NetworkID: "network-owner-a", DeviceID: "mac-owner-b", Platform: "darwin", Role: RoleOne, ExpiresAt: now.Add(30 * time.Minute)}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-owner invite creation should be hidden, got %v", err)
+	}
+	var stored InviteRecord
+	if err := db.Where("id = ?", result.Invite.ID).First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result.JoinURI, stored.TokenHash) || stored.TokenHash == "" {
+		t.Fatalf("invite persistence exposed raw token: %#v", stored)
 	}
 }
