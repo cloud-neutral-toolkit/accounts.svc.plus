@@ -974,6 +974,39 @@ func TestSyncConfigAckReturnsReceipt(t *testing.T) {
 	}
 }
 
+func TestXConnectZeroRootAccessUsesRoleAndOwnerScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	user := &store.User{
+		Name:          "Zero Root",
+		Email:         "root-owner@example.test",
+		EmailVerified: true,
+		Role:          store.RoleRoot,
+		Level:         store.LevelAdmin,
+		Active:        true,
+	}
+	if err := st.CreateUser(ctx, user); err != nil {
+		t.Fatalf("create root user: %v", err)
+	}
+	if err := st.CreateSession(ctx, "root-owner-session", user.ID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("create root session: %v", err)
+	}
+
+	h := &handler{store: st}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	req := httptest.NewRequest(http.MethodGet, "/api/overlay/v1/admin/overview", nil)
+	req.Header.Set("Authorization", "Bearer root-owner-session")
+	c.Request = req
+
+	got, ok := h.requireXConnectZeroAccess(c, permissionXConnectZeroRead)
+	if !ok || got == nil || got.ID != user.ID {
+		t.Fatalf("expected active root owner to access Zero resources, got ok=%v user=%#v body=%s", ok, got, rec.Body.String())
+	}
+}
+
 func TestOverlayDeviceRegisterAndConfigContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OVERLAY_TRANSPORT_UUID", "11111111-1111-1111-1111-111111111111")
